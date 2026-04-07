@@ -378,6 +378,12 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
       selectedStripItem.type === "speedRun" &&
       selectedStripItem.runId !== "best"
     ) {
+      const runId = selectedStripItem.runId;
+      const ranked = [...rows]
+        .map((r) => ({ r, t: getSpeedRunDurationMs(r, runId) }))
+        .filter((x): x is { r: Entry; t: number } => x.t != null)
+        .sort((a, b) => (a.t !== b.t ? a.t - b.t : a.r.startNumber - b.r.startNumber));
+      const leader = ranked[0]?.t ?? null;
       columns = [
         "Pos",
         "#",
@@ -385,12 +391,12 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
         "Time",
         "Diff",
       ];
-      tableRows = rows.map((r, i) => [
+      tableRows = ranked.map(({ r, t }, i) => [
         String(i + 1),
         String(r.startNumber),
         r.driver || "—",
-        "—",
-        "—",
+        formatDurationMs(t),
+        leader == null || t <= leader ? "—" : `+${formatDiffDurationMs(t - leader)}`,
       ]);
     } else {
       columns = ["Pos", "#", "Driver", "Co-driver", "Car", "Time", "Diff"];
