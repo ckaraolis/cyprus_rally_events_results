@@ -1,0 +1,286 @@
+{
+  "site": {
+    "resultsPageTitle": "Cyprus Rally Championships",
+    "resultsPageSubtitle": "Cyprus Rally Events — live timing & results",
+    "resultsStatusLabel": "Setup",
+    "featuredEventId": null,
+    "publicFooterNote": ""
+  },
+  "events": [
+    {
+      "id": "21a9ffcb-be6f-41c2-8395-b12b0514bb84",
+      "name": "Larnaca Rally 2026",
+      "logoUrl": "/uploads/rally-logos/1775545169810-cd7cf759-1ce0-4e22-b4ae-4998a1fdd641.jpg",
+      "type": "rally",
+      "dateStart": "2026-04-03",
+      "dateEnd": "2026-04-30",
+      "location": "Larnaca",
+      "status": "live",
+      "speedRunImportStatus": {
+        "trial": "scheduled",
+        "run1": "scheduled",
+        "run2": "scheduled"
+      },
+      "algeTriggerCountByKey": {},
+      "stages": [
+        {
+          "id": "9850ca3a-d500-4dab-9705-5384ce51e0cb",
+          "name": "Klavdia 1",
+          "order": 1,
+          "leg": 1,
+          "distanceKm": 10.35,
+          "firstCarStartTime": "12:23",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "de7ff3a9-eb0e-406d-8901-4cc284003d37",
+          "name": "Petrofani 1",
+          "order": 2,
+          "leg": 1,
+          "distanceKm": 13.18,
+          "firstCarStartTime": "13:16",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "5eb77306-8b58-4c93-ad83-2377f9dd8a60",
+          "name": "Klavdia 2",
+          "order": 3,
+          "leg": 1,
+          "distanceKm": 10.35,
+          "firstCarStartTime": "14:59",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "27decc64-0c59-40e4-a350-f78e7416ddec",
+          "name": "Petrofani 2",
+          "order": 4,
+          "leg": 1,
+          "distanceKm": 13.18,
+          "firstCarStartTime": "15:52",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "da4d4a3b-4a6f-4db1-b274-de3f4182ea9c",
+          "name": "Athienou Super Special",
+          "order": 5,
+          "leg": 1,
+          "distanceKm": 1.8,
+          "firstCarStartTime": "17:00",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "5d04e1fc-5087-4565-8938-ef3868f14c4c",
+          "name": "Kotsiatis 1",
+          "order": 6,
+          "leg": 2,
+          "distanceKm": 10.9,
+          "firstCarStartTime": "10:28",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "ee6dfba7-813c-4a7d-836d-c9fec5a93e94",
+          "name": "Yeri 1",
+          "order": 7,
+          "leg": 2,
+          "distanceKm": 9.37,
+          "firstCarStartTime": "11:21",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "9293b533-a8cf-4e87-bc22-ae3c2c19f6c8",
+          "name": "Kotsiatis 2",
+          "order": 8,
+          "leg": 2,
+          "distanceKm": 10.9,
+          "firstCarStartTime": "13:44",
+          "progressStatus": "pending"
+        },
+        {
+          "id": "5487fa05-0b7f-47d4-9a9f-58e1e72c2321",
+          "name": "Yeri 2",
+          "order": 9,
+          "leg": 2,
+          "distanceKm": 9.37,
+          "firstCarStartTime": "14:37",
+          "progressStatus": "pending"
+        }
+      ],
+      "entries": [
+        {
+          "id": "ed7ca182-615d-45a9-9cc8-d615fb0d80c9",
+          "startNumber": 1,
+          "entrance": "Petrolina",
+          "start": true,
+          "trialStartTime": "",
+          "trialFinishTime": "",
+          "run1StartTime": "",
+          "run1FinishTime": "",
+          "run2StartTime": "",
+          "run2FinishTime": "",
+          "driver": "simos",
+          "coDriver": "antonakis",
+          "car": "skoda",
+          "class": "R5",
+          "driverCountryCode": "CY",
+          "coDriverCountryCode": "GR"
+        },
+        {
+          "id": "7577a58f-b9c6-4e91-a4ef-e4f575a73fcb",
+          "startNumber": 2,
+          "entrance": "",
+          "start": true,
+          "trialStartTime": "",
+          "trialFinishTime": "",
+          "run1StartTime": "",
+          "run1FinishTime": "",
+          "run2StartTime": "",
+          "run2FinishTime": "",
+          "driver": "george",
+          "coDriver": "pantazis",
+          "car": "rav4",
+          "class": "Hisotric",
+          "driverCountryCode": "BR",
+          "coDriverCountryCode": "BG"
+        },
+        {
+          "id": "ca031127-5d5c-4e05-a9d2-b084db988405",
+          "startNumber": 3,
+          "entrance": "",
+          "start": true,
+          "trialStartTime": "",
+          "trialFinishTime": "",
+          "run1StartTime": "",
+          "run1FinishTime": "",
+          "run2StartTime": "",
+          "run2FinishTime": "",
+          "driver": "egw",
+          "coDriver": "esi",
+          "car": "f1",
+          "class": "R6",
+          "driverCountryCode": "",
+          "coDriverCountryCode": ""
+        },
+        {
+          "id": "75c6613a-bfbc-4000-8596-30e59f380b14",
+          "startNumber": 4,
+          "entrance": "",
+          "start": true,
+          "trialStartTime": "",
+          "trialFinishTime": "",
+          "run1StartTime": "",
+          "run1FinishTime": "",
+          "run2StartTime": "",
+          "run2FinishTime": "",
+          "driver": "N.Thomas",
+          "coDriver": "A.Loizidis",
+          "car": "Peugeot 207",
+          "class": "RC2",
+          "driverCountryCode": "",
+          "coDriverCountryCode": ""
+        }
+      ]
+    },
+    {
+      "id": "b70b829a-e2fb-4e93-b04e-4d6ef729986b",
+      "name": "Dionysos Rally Sprint",
+      "logoUrl": "",
+      "type": "speed",
+      "dateStart": "2026-04-07",
+      "dateEnd": "2026-04-19",
+      "location": "",
+      "status": "live",
+      "speedRunImportStatus": {
+        "trial": "completed",
+        "run1": "completed",
+        "run2": "completed"
+      },
+      "algeTriggerCountByKey": {},
+      "stages": [
+        {
+          "id": "547c2bcc-835e-4620-bc2d-9697232eb822",
+          "name": "Trial",
+          "order": 1,
+          "leg": 1,
+          "distanceKm": null,
+          "firstCarStartTime": null,
+          "progressStatus": "pending"
+        },
+        {
+          "id": "10a4f03f-7d74-472f-a344-ee6bcd5f2c03",
+          "name": "1st Run",
+          "order": 2,
+          "leg": 1,
+          "distanceKm": null,
+          "firstCarStartTime": null,
+          "progressStatus": "pending"
+        },
+        {
+          "id": "5d0af0fe-f8f4-467e-b61c-17d8d7be7e85",
+          "name": "2nd Run",
+          "order": 3,
+          "leg": 1,
+          "distanceKm": null,
+          "firstCarStartTime": null,
+          "progressStatus": "pending"
+        }
+      ],
+      "entries": [
+        {
+          "id": "0bc1fe7f-da6a-4b77-a409-e281734abe55",
+          "startNumber": 1,
+          "entrance": "Test",
+          "start": true,
+          "trialStartTime": "15:45:38.56",
+          "trialFinishTime": "15:46:31.34",
+          "run1StartTime": "16:57:48.68",
+          "run1FinishTime": "17:04:18.39",
+          "run2StartTime": "17:05:51.05",
+          "run2FinishTime": "17:06:25.80",
+          "driver": "Chris",
+          "coDriver": "",
+          "car": "honda",
+          "class": "RC2",
+          "driverCountryCode": "",
+          "coDriverCountryCode": ""
+        },
+        {
+          "id": "a352484a-6a2c-48a1-ac52-17396ec70a8a",
+          "startNumber": 2,
+          "entrance": "Test 2",
+          "start": true,
+          "trialStartTime": "15:55:28.55",
+          "trialFinishTime": "15:55:54.57",
+          "run1StartTime": "17:03:46.30",
+          "run1FinishTime": "17:04:28.83",
+          "run2StartTime": "17:06:03.11",
+          "run2FinishTime": "17:06:30.36",
+          "driver": "Marios",
+          "coDriver": "",
+          "car": "subaru",
+          "class": "",
+          "driverCountryCode": "",
+          "coDriverCountryCode": ""
+        },
+        {
+          "id": "0f689597-534f-416c-8913-fbd756c2f026",
+          "startNumber": 3,
+          "entrance": "Test 3 ",
+          "start": true,
+          "trialStartTime": "15:55:38.27",
+          "trialFinishTime": "15:56:01.31",
+          "run1StartTime": "17:03:55.03",
+          "run1FinishTime": "17:04:34.59",
+          "run2StartTime": "17:06:08.43",
+          "run2FinishTime": "17:06:34.84",
+          "driver": "Pampos",
+          "coDriver": "",
+          "car": "cross kart",
+          "class": "",
+          "driverCountryCode": "",
+          "coDriverCountryCode": ""
+        }
+      ]
+    }
+  ],
+  "updatedAt": "2026-04-07T14:26:15.491Z"
+}

@@ -1,0 +1,252 @@
+@import "tailwindcss";
+
+/* Default = dark (current public site look). html.light = light theme. */
+:root {
+  --background: #0c0c0c;
+  --foreground: #e8e8e8;
+  --ewrc-bg: #0c0c0c;
+  --ewrc-fg: #e8e8e8;
+  --ewrc-header-bg: #050505;
+  --ewrc-footer-bg: #080808;
+  --ewrc-border: #2a2a2a;
+  --ewrc-border-ui: #333333;
+  --ewrc-border-ui-hover: #555555;
+  --ewrc-gradient-top: #141414;
+  --ewrc-gradient-bottom: #0c0c0c;
+  --ewrc-crumbs: #666666;
+  --ewrc-brand: #ff2b2b;
+  --ewrc-muted: #888888;
+  --ewrc-muted-2: #777777;
+  --ewrc-muted-3: #666666;
+  --ewrc-subtext: #9a9a9a;
+  --ewrc-pipe: #444444;
+  --ewrc-heading: #ffffff;
+  --ewrc-accent-text: #aaaaaa;
+  --ewrc-strong: #cccccc;
+  --ewrc-body-secondary: #b0b0b0;
+  --ewrc-tab-active-border: #ff2b2b;
+  --ewrc-tab-inactive: #888888;
+  --ewrc-tab-hover: #cccccc;
+  --ewrc-nav: #aaaaaa;
+  --ewrc-nav-dim: #666666;
+  --ewrc-panel-text: #888888;
+  --ewrc-h3: #cccccc;
+  --ewrc-time-placeholder: #555555;
+  --ewrc-chip-bg: #181818;
+  --ewrc-chip-border: #333333;
+  --ewrc-chip-hover-bg: #1e1e1e;
+  --ewrc-chip-hover-border: #555555;
+  --ewrc-chip-on-bg: #252525;
+  --ewrc-chip-on-ring: rgba(255, 43, 43, 0.4);
+  --ewrc-toggle-off-bg: #141414;
+  --ewrc-toggle-on-bg: #2a1515;
+  --ewrc-strip-sep: #3f3f3f;
+  --ewrc-ss: #ff6b6b;
+  --ewrc-crew: #ececec;
+  --ewrc-car: #777777;
+  --ewrc-class: #888888;
+  --ewrc-pos: #cccccc;
+  --ewrc-leg-heading: #c41e1e;
+  --ewrc-itin-time: #e8e8e8;
+  --ewrc-line: #333333;
+  --ewrc-leg-amber: #d97706;
+  --ewrc-leg-cream: #e8dcc8;
+  --ewrc-leg-card-border: #4a3a28;
+  --ewrc-leg-card-bg: #1a1610;
+  --ewrc-leg-card-hover-border: #6b542c;
+  --ewrc-leg-card-hover-bg: #221c14;
+  --ewrc-leg-on-border: #b45309;
+  --ewrc-leg-on-bg: #2a1f14;
+  --ewrc-leg-on-ring: rgba(217, 119, 6, 0.45);
+  --ewrc-status-live-bg: #1a3d1a;
+  --ewrc-status-live-fg: #6ee76e;
+  --ewrc-status-final-bg: #2a2a2a;
+  --ewrc-status-final-fg: #cccccc;
+  --ewrc-status-draft-bg: #3a2a1a;
+  --ewrc-status-draft-fg: #e9a84a;
+  --ewrc-yellow: #eab308;
+  --ewrc-green: #22c55e;
+  --ewrc-red: #ef4444;
+  --ewrc-input-bg: #141414;
+  --ewrc-input-fg: #e0e0e0;
+  --ewrc-surface-raised: #141414;
+  --ewrc-link-other-bg: #141414;
+  --ewrc-link-other-border: #333333;
+  --ewrc-link-other-text: #bbbbbb;
+  --ewrc-dot-ring: rgba(0, 0, 0, 0.4);
+  --ewrc-panel-bg: #141414;
+  --ewrc-panel-border: #2a2a2a;
+  --ewrc-table-head-bg: #1f1f1f;
+  --ewrc-table-head-border: #333333;
+  --ewrc-table-cell-border: #252525;
+  --ewrc-row-alt-bg: #181818;
+  --ewrc-stat-label: #666666;
+  --ewrc-focus-ring: rgba(255, 43, 43, 0.45);
+}
+
+html.light {
+  --background: #fafafa;
+  --foreground: #18181b;
+  --ewrc-bg: #fafafa;
+  --ewrc-fg: #18181b;
+  --ewrc-header-bg: #ffffff;
+  --ewrc-footer-bg: #f4f4f5;
+  --ewrc-border: #e4e4e7;
+  --ewrc-border-ui: #d4d4d8;
+  --ewrc-border-ui-hover: #a1a1aa;
+  --ewrc-gradient-top: #ffffff;
+  --ewrc-gradient-bottom: #f4f4f5;
+  --ewrc-crumbs: #71717a;
+  --ewrc-brand: #dc2626;
+  --ewrc-muted: #71717a;
+  --ewrc-muted-2: #52525b;
+  --ewrc-muted-3: #71717a;
+  --ewrc-subtext: #52525b;
+  --ewrc-pipe: #d4d4d8;
+  --ewrc-heading: #09090b;
+  --ewrc-accent-text: #52525b;
+  --ewrc-strong: #3f3f46;
+  --ewrc-body-secondary: #52525b;
+  --ewrc-tab-active-border: #dc2626;
+  --ewrc-tab-inactive: #71717a;
+  --ewrc-tab-hover: #3f3f46;
+  --ewrc-nav: #52525b;
+  --ewrc-nav-dim: #a1a1aa;
+  --ewrc-panel-text: #52525b;
+  --ewrc-h3: #3f3f46;
+  --ewrc-time-placeholder: #a1a1aa;
+  --ewrc-chip-bg: #f4f4f5;
+  --ewrc-chip-border: #d4d4d8;
+  --ewrc-chip-hover-bg: #e4e4e7;
+  --ewrc-chip-hover-border: #a1a1aa;
+  --ewrc-chip-on-bg: #fef2f2;
+  --ewrc-chip-on-ring: rgba(220, 38, 38, 0.35);
+  --ewrc-toggle-off-bg: #f4f4f5;
+  --ewrc-toggle-on-bg: #fef2f2;
+  --ewrc-strip-sep: #d4d4d8;
+  --ewrc-ss: #dc2626;
+  --ewrc-crew: #18181b;
+  --ewrc-car: #52525b;
+  --ewrc-class: #71717a;
+  --ewrc-pos: #3f3f46;
+  --ewrc-leg-heading: #b91c1c;
+  --ewrc-itin-time: #18181b;
+  --ewrc-line: #d4d4d8;
+  --ewrc-leg-amber: #b45309;
+  --ewrc-leg-cream: #422006;
+  --ewrc-leg-card-border: #fcd34d;
+  --ewrc-leg-card-bg: #fffbeb;
+  --ewrc-leg-card-hover-border: #f59e0b;
+  --ewrc-leg-card-hover-bg: #fef3c7;
+  --ewrc-leg-on-border: #d97706;
+  --ewrc-leg-on-bg: #fff7ed;
+  --ewrc-leg-on-ring: rgba(217, 119, 6, 0.35);
+  --ewrc-status-live-bg: #dcfce7;
+  --ewrc-status-live-fg: #166534;
+  --ewrc-status-final-bg: #e4e4e7;
+  --ewrc-status-final-fg: #3f3f46;
+  --ewrc-status-draft-bg: #ffedd5;
+  --ewrc-status-draft-fg: #9a3412;
+  --ewrc-yellow: #ca8a04;
+  --ewrc-green: #16a34a;
+  --ewrc-red: #dc2626;
+  --ewrc-input-bg: #ffffff;
+  --ewrc-input-fg: #18181b;
+  --ewrc-surface-raised: #ffffff;
+  --ewrc-link-other-bg: #ffffff;
+  --ewrc-link-other-border: #d4d4d8;
+  --ewrc-link-other-text: #3f3f46;
+  --ewrc-dot-ring: rgba(0, 0, 0, 0.12);
+  --ewrc-panel-bg: #ffffff;
+  --ewrc-panel-border: #e4e4e7;
+  --ewrc-table-head-bg: #f4f4f5;
+  --ewrc-table-head-border: #e4e4e7;
+  --ewrc-table-cell-border: #f4f4f5;
+  --ewrc-row-alt-bg: #fafafa;
+  --ewrc-stat-label: #71717a;
+  --ewrc-focus-ring: rgba(220, 38, 38, 0.35);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+.font-ewrc-heading {
+  font-family: var(--font-oswald), "Arial Narrow", Impact, system-ui, sans-serif;
+}
+
+/* eWRC-inspired results UI — theme via CSS variables */
+.ewrc-page .ewrc-panel {
+  border: 1px solid var(--ewrc-panel-border);
+  border-radius: 2px;
+  background: var(--ewrc-panel-bg);
+}
+
+.ewrc-table {
+  border-collapse: collapse;
+}
+
+.ewrc-table thead tr {
+  background: var(--ewrc-table-head-bg);
+  border-bottom: 1px solid var(--ewrc-table-head-border);
+}
+
+.ewrc-table th {
+  padding: 0.65rem 1rem;
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ewrc-muted);
+}
+
+.ewrc-table td {
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid var(--ewrc-table-cell-border);
+  vertical-align: middle;
+}
+
+.ewrc-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.ewrc-table.ewrc-table-entry-list th,
+.ewrc-table.ewrc-table-entry-list td {
+  text-align: center;
+}
+
+/* Home event list: keep first column left, center all others. */
+.ewrc-table.ewrc-table-events-list th:nth-child(n + 2),
+.ewrc-table.ewrc-table-events-list td:nth-child(n + 2) {
+  text-align: center;
+}
+
+.ewrc-table.ewrc-table-speed-run th:not(:nth-child(3)),
+.ewrc-table.ewrc-table-speed-run td:not(:nth-child(3)) {
+  text-align: center;
+}
+
+/* Speed final: keep Driver column left, center all others. */
+.ewrc-table.ewrc-table-speed-final th:not(:nth-child(3)),
+.ewrc-table.ewrc-table-speed-final td:not(:nth-child(3)) {
+  text-align: center;
+}
+
+.ewrc-table.ewrc-table-speed-best th:not(:nth-child(3)),
+.ewrc-table.ewrc-table-speed-best td:not(:nth-child(3)) {
+  text-align: center;
+}
+
+.ewrc-row-alt {
+  background: var(--ewrc-row-alt-bg);
+}

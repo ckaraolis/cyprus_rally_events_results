@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model SiteSettings {
+  id                 Int      @id @default(1)
+  resultsPageTitle   String
+  resultsPageSubtitle String
+  resultsStatusLabel String
+  featuredEventId    String?
+  publicFooterNote   String
+  updatedAt          DateTime @updatedAt
+}
+
+model Event {
+  id                          String   @id
+  name                        String
+  logoUrl                     String
+  type                        String
+  dateStart                   String
+  dateEnd                     String
+  location                    String
+  status                      String
+  speedRunImportStatusTrial   String
+  speedRunImportStatusRun1    String
+  speedRunImportStatusRun2    String
+  algeTriggerCountByKey       Json
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+  stages                      Stage[]
+  entries                     Entry[]
+}
+
+model Stage {
+  id                String   @id
+  eventId           String
+  name              String
+  order             Int
+  leg               Int
+  distanceKm        Float?
+  firstCarStartTime String?
+  progressStatus    String
+  event             Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, order])
+}
+
+model Entry {
+  id                  String  @id
+  eventId             String
+  startNumber         Int
+  entrance            String
+  start               Boolean
+  trialStartTime      String
+  trialFinishTime     String
+  run1StartTime       String
+  run1FinishTime      String
+  run2StartTime       String
+  run2FinishTime      String
+  driver              String
+  coDriver            String
+  car                 String
+  class               String
+  driverCountryCode   String
+  coDriverCountryCode String
+  event               Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+
+  @@index([eventId, startNumber])
+}
