@@ -29,12 +29,6 @@ export function EwrcChrome({
             >
               Home
             </Link>
-            <Link
-              href="/admin"
-              className="text-[var(--ewrc-nav-dim)] transition-colors hover:text-[var(--ewrc-brand)]"
-            >
-              Admin
-            </Link>
           </nav>
         </div>
       </header>

@@ -48,14 +48,8 @@ export default async function Home() {
         <main className="mx-auto max-w-6xl px-4 py-16 text-center sm:px-6">
           <div className="ewrc-panel mx-auto max-w-lg p-10">
             <p className="text-sm text-[var(--ewrc-muted)]">
-              No events yet. Create a rally in{" "}
-              <Link
-                href="/admin/events"
-                className="font-medium text-[var(--ewrc-brand)] hover:underline"
-              >
-                Admin → Events & entries
-              </Link>{" "}
-              to show entry list, stages, and itinerary here.
+              No events yet. Open `/admin/events` to create a rally and show
+              entry list, stages, and itinerary here.
             </p>
           </div>
         </main>
