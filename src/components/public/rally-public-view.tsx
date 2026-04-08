@@ -266,6 +266,10 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
     resultsStripItems.find((x) => x.id === selectedStripId) ??
     resultsStripItems[0] ??
     null;
+  const normalizedLogoUrl = useMemo(
+    () => normalizeLogoUrl(event.logoUrl),
+    [event.logoUrl],
+  );
   const onStageSpeedRows = useMemo(() => {
     if (
       event.type !== "speed" ||
@@ -322,7 +326,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
           ? `LEG${selectedStripItem.leg} Results`
           : selectedStripItem.label;
     const headingMode = "Results";
-    const logoUrl = event.logoUrl.trim();
+    const logoUrl = normalizedLogoUrl;
 
     let columns: string[] = [];
     let tableRows: string[][] = [];
@@ -502,6 +506,88 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
     doc.close();
   }
 
+  function printSpeedFinalResultsPdf() {
+    if (event.type !== "speed") return;
+    const ranked = [...entriesStartedSorted]
+      .map((row) => {
+        const trial = getSpeedRunDurationMs(row, "trial");
+        const run1 = getSpeedRunDurationMs(row, "run1");
+        const run2 = getSpeedRunDurationMs(row, "run2");
+        const best =
+          run1 == null ? run2 : run2 == null ? run1 : Math.min(run1, run2);
+        const sortValue = best ?? trial;
+        return { row, trial, run1, run2, best, sortValue };
+      })
+      .filter((x) => x.sortValue != null)
+      .sort((a, b) =>
+        a.best != null && b.best == null
+          ? -1
+          : a.best == null && b.best != null
+            ? 1
+            : (a.sortValue ?? Number.MAX_SAFE_INTEGER) -
+                (b.sortValue ?? Number.MAX_SAFE_INTEGER) || a.row.startNumber - b.row.startNumber,
+      );
+    const leaderBest = ranked.find((x) => x.best != null)?.best ?? null;
+    const columns = ["Pos", "#", "Driver", "Car", "Class", "Trial", "1st Run", "2nd Run", "Best", "Diff"];
+    const tableRows = ranked.map(({ row, trial, run1, run2, best }, i) => [
+      String(i + 1),
+      String(row.startNumber),
+      row.driver || "—",
+      row.car || "—",
+      row.class || "—",
+      formatDurationMs(trial),
+      formatDurationMs(run1),
+      formatDurationMs(run2),
+      formatDurationMs(best),
+      leaderBest == null || best == null || best <= leaderBest
+        ? "—"
+        : `+${formatDiffDurationMs(best - leaderBest)}`,
+    ]);
+
+    const headHtml = columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
+    const bodyHtml =
+      tableRows.length > 0
+        ? tableRows
+            .map((r) => `<tr>${r.map((v) => `<td>${escapeHtml(v)}</td>`).join("")}</tr>`)
+            .join("")
+        : `<tr><td colspan="${columns.length}" style="text-align:center;color:#666;">No entries.</td></tr>`;
+    const logoUrl = normalizedLogoUrl;
+    const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(event.name)} - Final Results</title><style>
+    body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #111; }
+    .page { max-width: 1120px; margin: 0 auto; }
+    .header { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 14px; text-align: center; }
+    .logo { max-height: 72px; width: auto; }
+    h1 { margin: 0; font-size: 22px; line-height: 1.15; }
+    h2 { margin: 6px 0 0; font-size: 16px; font-weight: 600; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 auto; }
+    th, td { border: 1px solid #cfcfcf; padding: 6px 8px; vertical-align: middle; }
+    th { background: #f4f4f4; text-align: left; }
+    @media print { @page { size: A4 portrait; margin: 12mm; } }
+    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Rally logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results</h2></div><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+    const iframe = document.createElement("iframe");
+    iframe.style.position = "fixed";
+    iframe.style.right = "0";
+    iframe.style.bottom = "0";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.setAttribute("aria-hidden", "true");
+    document.body.appendChild(iframe);
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } finally {
+        window.setTimeout(() => iframe.remove(), 1000);
+      }
+    };
+    const doc = iframe.contentDocument;
+    if (!doc) return;
+    doc.open();
+    doc.write(html);
+    doc.close();
+  }
+
   useEffect(() => {
     if (tab === "stage-results") setResultsSubView("stage");
   }, [tab]);
@@ -541,12 +627,13 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--ewrc-brand)]">
                 {event.type === "speed" ? "SPEED" : "RALLY"}
               </p>
-              {event.logoUrl.trim() ? (
+              {normalizedLogoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img
-                  src={event.logoUrl.trim()}
+                  src={normalizedLogoUrl}
                   alt={`${event.name} logo`}
-                  className="mt-2 h-16 w-auto rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1"
+                  className="mt-2 h-auto w-full max-w-[300px] rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1 object-contain"
+                  style={{ aspectRatio: "1333 / 537" }}
                   loading="lazy"
                 />
               ) : null}
@@ -1101,6 +1188,17 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                 ? "Speed final classification after timing is connected. Positions and times below are placeholders (drivers listed by start order)."
                 : "Overall classification after timing is connected. Positions and times below are placeholders (crews listed by start order)."}
             </p>
+            {event.type === "speed" ? (
+              <div>
+                <button
+                  type="button"
+                  onClick={printSpeedFinalResultsPdf}
+                  className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                >
+                  Print PDF
+                </button>
+              </div>
+            ) : null}
             <div className="ewrc-panel overflow-hidden p-0">
               <div className="overflow-x-auto">
                 {event.type === "speed" ? (
@@ -1717,6 +1815,14 @@ function formatEventDateRange(startIso: string, endIso: string): string {
   }
 
   return `${formatEventDate(startIso)} - ${formatEventDate(endIso)}`;
+}
+
+function normalizeLogoUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) return "";
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith("/")) return value;
+  return `/${value}`;
 }
 
 function parseClockToDayMs(value: string): number | null {

@@ -58,16 +58,26 @@ export async function POST(req: Request) {
       );
     }
 
-    const uploadDir = path.join(process.cwd(), "public", "uploads", "rally-logos");
-    await fs.mkdir(uploadDir, { recursive: true });
-
-    const fileName = `${Date.now()}-${crypto.randomUUID()}${ext}`;
-    const absPath = path.join(uploadDir, fileName);
     const buf = Buffer.from(await raw.arrayBuffer());
-    await fs.writeFile(absPath, buf);
-
-    const publicUrl = `/uploads/rally-logos/${fileName}`;
-    return Response.json({ url: publicUrl });
+    try {
+      const uploadDir = path.join(
+        process.cwd(),
+        "public",
+        "uploads",
+        "rally-logos",
+      );
+      await fs.mkdir(uploadDir, { recursive: true });
+      const fileName = `${Date.now()}-${crypto.randomUUID()}${ext}`;
+      const absPath = path.join(uploadDir, fileName);
+      await fs.writeFile(absPath, buf);
+      const publicUrl = `/uploads/rally-logos/${fileName}`;
+      return Response.json({ url: publicUrl });
+    } catch {
+      // Fallback for runtimes where filesystem writes are not persistent.
+      const mime = raw.type || "image/png";
+      const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
+      return Response.json({ url: dataUrl, fallback: "data-url" });
+    }
   } catch {
     return Response.json({ error: "Upload failed." }, { status: 500 });
   }
