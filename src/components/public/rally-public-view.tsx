@@ -1820,6 +1820,8 @@ function formatEventDateRange(startIso: string, endIso: string): string {
 function normalizeLogoUrl(raw: string): string {
   const value = raw.trim();
   if (!value) return "";
+  if (/^data:/i.test(value)) return value;
+  if (/^blob:/i.test(value)) return value;
   if (/^https?:\/\//i.test(value)) return value;
   if (value.startsWith("/")) return value;
   return `/${value}`;
