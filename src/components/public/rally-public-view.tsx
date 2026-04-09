@@ -124,6 +124,70 @@ function EntryClassFilterBar({
   );
 }
 
+function isMobilePrintClient(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
+}
+
+function printHtmlDocument(html: string): void {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+
+  if (isMobilePrintClient()) {
+    const w = window.open("", "_blank", "noopener,noreferrer");
+    if (w) {
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+      window.setTimeout(() => {
+        try {
+          w.focus();
+          w.print();
+        } catch {
+          // ignore print-block errors on some browsers
+        }
+      }, 350);
+      return;
+    }
+  }
+
+  const iframe = document.createElement("iframe");
+  iframe.style.position = "fixed";
+  iframe.style.right = "0";
+  iframe.style.bottom = "0";
+  iframe.style.width = "0";
+  iframe.style.height = "0";
+  iframe.style.border = "0";
+  iframe.setAttribute("aria-hidden", "true");
+  document.body.appendChild(iframe);
+
+  const cleanup = () => {
+    window.setTimeout(() => {
+      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
+    }, 1000);
+  };
+
+  iframe.onload = () => {
+    try {
+      const win = iframe.contentWindow;
+      if (!win) return;
+      win.focus();
+      win.print();
+    } finally {
+      cleanup();
+    }
+  };
+
+  const doc = iframe.contentDocument;
+  if (!doc) {
+    cleanup();
+    return;
+  }
+  doc.open();
+  doc.write(html);
+  doc.close();
+}
+
 export function RallyPublicView({ site, event, topCrumb }: Props) {
   const router = useRouter();
   const [tab, setTab] = useState<TabId>("overview");
@@ -477,41 +541,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
 </body>
 </html>`;
 
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    iframe.setAttribute("aria-hidden", "true");
-    document.body.appendChild(iframe);
-
-    const cleanup = () => {
-      window.setTimeout(() => {
-        if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-      }, 1000);
-    };
-
-    iframe.onload = () => {
-      try {
-        const w = iframe.contentWindow;
-        if (!w) return;
-        w.focus();
-        w.print();
-      } finally {
-        cleanup();
-      }
-    };
-
-    const doc = iframe.contentDocument;
-    if (!doc) {
-      cleanup();
-      return;
-    }
-    doc.open();
-    doc.write(html);
-    doc.close();
+    printHtmlDocument(html);
   }
 
   function printSpeedFinalResultsPdf() {
@@ -571,28 +601,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
     th { background: #f4f4f4; text-align: left; }
     @media print { @page { size: A4 portrait; margin: 12mm; } }
     </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Rally logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results</h2></div><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
-    const iframe = document.createElement("iframe");
-    iframe.style.position = "fixed";
-    iframe.style.right = "0";
-    iframe.style.bottom = "0";
-    iframe.style.width = "0";
-    iframe.style.height = "0";
-    iframe.style.border = "0";
-    iframe.setAttribute("aria-hidden", "true");
-    document.body.appendChild(iframe);
-    iframe.onload = () => {
-      try {
-        iframe.contentWindow?.focus();
-        iframe.contentWindow?.print();
-      } finally {
-        window.setTimeout(() => iframe.remove(), 1000);
-      }
-    };
-    const doc = iframe.contentDocument;
-    if (!doc) return;
-    doc.open();
-    doc.write(html);
-    doc.close();
+    printHtmlDocument(html);
   }
 
   useEffect(() => {
@@ -1614,7 +1623,7 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
   const leaderBest = sorted[0]?.best ?? null;
 
   return (
-    <table className="ewrc-table ewrc-table-speed-best min-w-[620px] w-full text-sm">
+    <table className="ewrc-table ewrc-table-speed-best min-w-[520px] w-full text-sm sm:min-w-[620px]">
       <thead>
         <tr>
           <th className="w-12 !text-center">Pos</th>

@@ -14,7 +14,7 @@ export default async function AdminHomePage() {
   return (
     <div className="space-y-8">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
+        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">Overview</h1>
       </div>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -29,10 +29,13 @@ export default async function AdminHomePage() {
           ) : (
             <ul className="mt-4 space-y-2 text-sm">
               {runningNow.map((e) => (
-                <li key={e.id} className="flex items-center justify-between gap-3">
+                <li
+                  key={e.id}
+                  className="flex flex-col items-start gap-1 rounded-lg border border-zinc-100 p-2 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:p-0"
+                >
                   <Link
                     href={`/admin/events/${e.id}`}
-                    className="font-medium text-red-700 hover:underline dark:text-red-400"
+                    className="w-full break-words font-medium text-red-700 hover:underline dark:text-red-400"
                   >
                     {e.name}
                   </Link>
@@ -56,10 +59,13 @@ export default async function AdminHomePage() {
           ) : (
             <ul className="mt-4 space-y-2 text-sm">
               {upcoming.map((e) => (
-                <li key={e.id} className="flex items-center justify-between gap-3">
+                <li
+                  key={e.id}
+                  className="flex flex-col items-start gap-1 rounded-lg border border-zinc-100 p-2 dark:border-zinc-800 sm:flex-row sm:items-center sm:justify-between sm:border-0 sm:p-0"
+                >
                   <Link
                     href={`/admin/events/${e.id}`}
-                    className="font-medium text-red-700 hover:underline dark:text-red-400"
+                    className="w-full break-words font-medium text-red-700 hover:underline dark:text-red-400"
                   >
                     {e.name}
                   </Link>
