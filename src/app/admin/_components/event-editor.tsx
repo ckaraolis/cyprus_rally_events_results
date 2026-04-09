@@ -22,6 +22,7 @@ import { AdminCountrySelect } from "./admin-country-select";
 type Props = { event: RallyEvent };
 type AdminTab = "details" | "stages" | "entries" | "timing";
 type SpeedTimingRun = "trial" | "run1" | "run2";
+type SpeedTimingOutcome = "dns" | "dnf" | null;
 
 function timingSignature(meta: {
   speedRunImportStatus: {
@@ -42,6 +43,20 @@ function timingSignature(meta: {
       run2FinishTime: e.run2FinishTime ?? "",
     })),
   });
+}
+
+function parseTimingOutcome(startValue: string, finishValue: string): SpeedTimingOutcome {
+  const start = startValue.trim().toUpperCase();
+  const finish = finishValue.trim().toUpperCase();
+  if (start === "DNS" || finish === "DNS") return "dns";
+  if (start === "DNF" || finish === "DNF") return "dnf";
+  return null;
+}
+
+function formatTimingOutcomeLabel(outcome: SpeedTimingOutcome): string | null {
+  if (outcome === "dns") return "Do Not Start";
+  if (outcome === "dnf") return "Do Not Finish";
+  return null;
 }
 
 export function EventEditor({ event: initial }: Props) {
@@ -642,12 +657,37 @@ export function EventEditor({ event: initial }: Props) {
     ).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
   };
   const computeTotalTime = (startValue: string, finishValue: string): string => {
+    const outcome = parseTimingOutcome(startValue, finishValue);
+    const outcomeLabel = formatTimingOutcomeLabel(outcome);
+    if (outcomeLabel) return outcomeLabel;
     const startMs = parseTimeToMs(startValue);
     const finishMs = parseTimeToMs(finishValue);
     if (startMs == null || finishMs == null) return "—";
     const diff = finishMs - startMs;
     if (diff < 0) return "—";
     return formatDuration(diff);
+  };
+  const setTimingOutcomeForEntry = (
+    entryId: string,
+    nextOutcome: "dns" | "dnf",
+    currentOutcome: SpeedTimingOutcome,
+  ) => {
+    const marker = nextOutcome === "dns" ? "DNS" : "DNF";
+    const clear = currentOutcome === nextOutcome;
+    setEntries((prev) => {
+      const next = prev.map((x) =>
+        x.id === entryId
+          ? {
+              ...x,
+              [timingStartField]: clear ? "" : marker,
+              [timingFinishField]: clear ? "" : marker,
+            }
+          : x,
+      );
+      entriesRef.current = next;
+      return next;
+    });
+    queueTimingAutosave();
   };
 
   return (
@@ -1494,7 +1534,109 @@ export function EventEditor({ event: initial }: Props) {
               </pre>
             ) : null}
           </div>
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 space-y-3 sm:hidden">
+            {entries
+              .slice()
+              .sort((a, b) => a.startNumber - b.startNumber)
+              .map((row) => {
+                const startValue = (row[timingStartField] as string) ?? "";
+                const finishValue = (row[timingFinishField] as string) ?? "";
+                const outcome = parseTimingOutcome(startValue, finishValue);
+                return (
+                  <div
+                    key={`mobile-${timingRun}-${row.id}`}
+                    className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700"
+                  >
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <p className="font-mono text-sm text-zinc-600 dark:text-zinc-300">
+                        #{row.startNumber}
+                      </p>
+                      <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                        {row.driver || "—"}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-1 gap-2">
+                      <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                        Start
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
+                          placeholder="HH:mm:ss.cc"
+                          className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          value={startValue}
+                          onChange={(e) =>
+                            setEntries((prev) =>
+                              prev.map((x) =>
+                                x.id === row.id
+                                  ? {
+                                      ...x,
+                                      [timingStartField]: e.target.value.trim(),
+                                    }
+                                  : x,
+                              ),
+                            )
+                          }
+                          title="24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc"
+                        />
+                      </label>
+                      <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                        Finish
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
+                          placeholder="HH:mm:ss.cc"
+                          className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          value={finishValue}
+                          onChange={(e) =>
+                            setEntries((prev) =>
+                              prev.map((x) =>
+                                x.id === row.id
+                                  ? {
+                                      ...x,
+                                      [timingFinishField]: e.target.value.trim(),
+                                    }
+                                  : x,
+                              ),
+                            )
+                          }
+                          title="24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc"
+                        />
+                      </label>
+                    </div>
+                    <p className="mt-2 font-mono text-sm text-zinc-700 dark:text-zinc-200">
+                      Total: {computeTotalTime(startValue, finishValue)}
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTimingOutcomeForEntry(row.id, "dns", outcome)}
+                        className={`rounded border px-3 py-2 text-sm font-medium ${
+                          outcome === "dns"
+                            ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                            : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        }`}
+                      >
+                        DNS
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimingOutcomeForEntry(row.id, "dnf", outcome)}
+                        className={`rounded border px-3 py-2 text-sm font-medium ${
+                          outcome === "dnf"
+                            ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                            : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        }`}
+                      >
+                        DNF
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+          </div>
+          <div className="mt-4 hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[560px] text-left text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
@@ -1503,17 +1645,22 @@ export function EventEditor({ event: initial }: Props) {
                   <th className="pb-2 pr-2 w-32">Start</th>
                   <th className="pb-2 pr-2 w-32">Finish</th>
                   <th className="pb-2 pr-2 w-36">Total time</th>
+                  <th className="pb-2 pr-2 w-28">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {entries
                   .slice()
                   .sort((a, b) => a.startNumber - b.startNumber)
-                  .map((row) => (
-                    <tr
-                      key={`${timingRun}-${row.id}`}
-                      className="border-b border-zinc-100 dark:border-zinc-800"
-                    >
+                  .map((row) => {
+                    const startValue = (row[timingStartField] as string) ?? "";
+                    const finishValue = (row[timingFinishField] as string) ?? "";
+                    const outcome = parseTimingOutcome(startValue, finishValue);
+                    return (
+                      <tr
+                        key={`${timingRun}-${row.id}`}
+                        className="border-b border-zinc-100 dark:border-zinc-800"
+                      >
                       <td className="py-2 pr-2 font-mono text-zinc-600 dark:text-zinc-300">
                         {row.startNumber}
                       </td>
@@ -1527,7 +1674,7 @@ export function EventEditor({ event: initial }: Props) {
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
                           placeholder="HH:mm:ss.cc"
                           className="w-full rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          value={(row[timingStartField] as string) ?? ""}
+                          value={startValue}
                           onChange={(e) =>
                             setEntries((prev) =>
                               prev.map((x) =>
@@ -1550,7 +1697,7 @@ export function EventEditor({ event: initial }: Props) {
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
                           placeholder="HH:mm:ss.cc"
                           className="w-full rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          value={(row[timingFinishField] as string) ?? ""}
+                          value={finishValue}
                           onChange={(e) =>
                             setEntries((prev) =>
                               prev.map((x) =>
@@ -1568,12 +1715,39 @@ export function EventEditor({ event: initial }: Props) {
                       </td>
                       <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
                         {computeTotalTime(
-                          (row[timingStartField] as string) ?? "",
-                          (row[timingFinishField] as string) ?? "",
+                          startValue,
+                          finishValue,
                         )}
                       </td>
+                      <td className="py-2 pr-2">
+                        <div className="flex flex-wrap gap-1">
+                          <button
+                            type="button"
+                            onClick={() => setTimingOutcomeForEntry(row.id, "dns", outcome)}
+                            className={`rounded border px-2 py-1 text-xs font-medium ${
+                              outcome === "dns"
+                                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                            }`}
+                          >
+                            DNS
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setTimingOutcomeForEntry(row.id, "dnf", outcome)}
+                            className={`rounded border px-2 py-1 text-xs font-medium ${
+                              outcome === "dnf"
+                                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                            }`}
+                          >
+                            DNF
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
               </tbody>
             </table>
           </div>

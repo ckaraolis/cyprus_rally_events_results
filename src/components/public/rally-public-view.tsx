@@ -137,6 +137,8 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
   const [entryListClassFilter, setEntryListClassFilter] = useState("");
   /** Stage results tab (stage + overall sub-views): same filter semantics. */
   const [stageResultsClassFilter, setStageResultsClassFilter] = useState("");
+  /** Final results tab: same filter semantics. */
+  const [finalResultsClassFilter, setFinalResultsClassFilter] = useState("");
 
   const stagesSorted = useMemo(
     () => [...event.stages].sort((a, b) => a.order - b.order),
@@ -180,6 +182,10 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
   const entriesForStageResults = useMemo(
     () => filterEntriesByClass(entriesStartedSorted, stageResultsClassFilter),
     [entriesStartedSorted, stageResultsClassFilter],
+  );
+  const entriesForFinalResults = useMemo(
+    () => filterEntriesByClass(entriesStartedSorted, finalResultsClassFilter),
+    [entriesStartedSorted, finalResultsClassFilter],
   );
 
   const totalKm = useMemo(
@@ -311,7 +317,9 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
     }
     const runId = selectedStripItem.runId as "trial" | "run1" | "run2";
     return entriesForStageResults.filter(
-      (row) => getSpeedRunDurationMs(row, runId) != null,
+      (row) =>
+        getSpeedRunDurationMs(row, runId) != null ||
+        getSpeedRunOutcomeLabel(row, runId) != null,
     );
   }, [entriesForStageResults, selectedStripItem]);
 
@@ -508,7 +516,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
 
   function printSpeedFinalResultsPdf() {
     if (event.type !== "speed") return;
-    const ranked = [...entriesStartedSorted]
+    const ranked = [...entriesForFinalResults]
       .map((row) => {
         const trial = getSpeedRunDurationMs(row, "trial");
         const run1 = getSpeedRunDurationMs(row, "run1");
@@ -518,11 +526,10 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
         const sortValue = best ?? trial;
         return { row, trial, run1, run2, best, sortValue };
       })
-      .filter((x) => x.sortValue != null)
       .sort((a, b) =>
-        a.best != null && b.best == null
+        a.sortValue != null && b.sortValue == null
           ? -1
-          : a.best == null && b.best != null
+          : a.sortValue == null && b.sortValue != null
             ? 1
             : (a.sortValue ?? Number.MAX_SAFE_INTEGER) -
                 (b.sortValue ?? Number.MAX_SAFE_INTEGER) || a.row.startNumber - b.row.startNumber,
@@ -650,7 +657,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                 ) : null}
               </p>
             </div>
-            <div className="flex flex-col items-end gap-2">
+            <div className="flex w-full flex-col items-start gap-2 sm:w-auto sm:items-end">
               <span
                 className={
                   "inline-flex items-center rounded px-2.5 py-1 text-xs font-bold uppercase tracking-wide " +
@@ -684,7 +691,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                 aria-selected={tab === t.id}
                 onClick={() => setTab(t.id)}
                 className={
-                  "relative shrink-0 border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors sm:px-4 sm:text-sm " +
+                  "relative shrink-0 border-b-2 px-3 py-3 text-sm font-semibold transition-colors sm:px-4 " +
                   (tab === t.id
                     ? "border-[var(--ewrc-brand)] text-[var(--ewrc-heading)]"
                     : "border-transparent text-[var(--ewrc-muted)] hover:text-[var(--ewrc-strong)]")
@@ -1188,6 +1195,16 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                 ? "Speed final classification after timing is connected. Positions and times below are placeholders (drivers listed by start order)."
                 : "Overall classification after timing is connected. Positions and times below are placeholders (crews listed by start order)."}
             </p>
+            <div className="ewrc-panel overflow-hidden p-0">
+              <EntryClassFilterBar
+                id="final-results-class-filter"
+                value={finalResultsClassFilter}
+                onChange={setFinalResultsClassFilter}
+                options={entryListClassOptions}
+                filteredCount={entriesForFinalResults.length}
+                totalCount={entriesStartedSorted.length}
+              />
+            </div>
             {event.type === "speed" ? (
               <div>
                 <button
@@ -1202,15 +1219,19 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
             <div className="ewrc-panel overflow-hidden p-0">
               <div className="overflow-x-auto">
                 {event.type === "speed" ? (
-                  <SpeedFinalTable rows={entriesStartedSorted} />
+                  <SpeedFinalTable rows={entriesForFinalResults} />
                 ) : (
-                  <OverallClassificationTable rows={entriesStartedSorted} />
+                  <OverallClassificationTable rows={entriesForFinalResults} />
                 )}
               </div>
               {entriesStartedSorted.length === 0 ? (
                 <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
                   No entries — add crews in Admin to build the final results
                   grid.
+                </p>
+              ) : entriesForFinalResults.length === 0 ? (
+                <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
+                  No crews in this class. Pick another class or &quot;All classes&quot;.
                 </p>
               ) : null}
             </div>
@@ -1505,7 +1526,8 @@ function SpeedRunTable({
             <DriverOnlyCell row={row} />
             <td className="align-middle !text-center">
               <span className="flex w-full justify-center text-center font-mono text-[var(--ewrc-strong)]">
-                {formatDurationMs(getSpeedRunDurationMs(row, runId))}
+                {getSpeedRunOutcomeLabel(row, runId) ??
+                  formatDurationMs(getSpeedRunDurationMs(row, runId))}
               </span>
             </td>
             <td className="align-middle !text-center">
@@ -1644,22 +1666,10 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
           const sortValue = best ?? trial;
           return { row, trial, run1, run2, best, sortValue };
         })
-        .filter(
-          (
-            x,
-          ): x is {
-            row: Entry;
-            trial: number | null;
-            run1: number | null;
-            run2: number | null;
-            best: number | null;
-            sortValue: number | null;
-          } => x.sortValue != null,
-        )
         .sort((a, b) =>
-          a.best != null && b.best == null
+          a.sortValue != null && b.sortValue == null
             ? -1
-            : a.best == null && b.best != null
+            : a.sortValue == null && b.sortValue != null
               ? 1
               : a.sortValue !== b.sortValue
                 ? (a.sortValue ?? Number.MAX_SAFE_INTEGER) -
@@ -1703,13 +1713,13 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
               {row.class || "—"}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {formatDurationMs(trial)}
+              {getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {formatDurationMs(run1)}
+              {getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {formatDurationMs(run2)}
+              {getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {formatDurationMs(best)}
@@ -1849,6 +1859,7 @@ function getSpeedRunDurationMs(
   row: Entry,
   runId: "trial" | "run1" | "run2",
 ): number | null {
+  if (getSpeedRunOutcomeLabel(row, runId)) return null;
   const startMs = getSpeedRunStartMs(row, runId);
   const finishMs = getSpeedRunFinishMs(row, runId);
   if (startMs == null || finishMs == null) return null;
@@ -1875,6 +1886,29 @@ function getSpeedRunFinishMs(row: Entry, runId: "trial" | "run1" | "run2"): numb
         ? row.run1FinishTime
         : row.run2FinishTime;
   return parseClockToDayMs(finishRaw ?? "");
+}
+
+function getSpeedRunOutcomeLabel(
+  row: Entry,
+  runId: "trial" | "run1" | "run2",
+): "DNS" | "DNF" | null {
+  const startRaw =
+    runId === "trial"
+      ? row.trialStartTime
+      : runId === "run1"
+        ? row.run1StartTime
+        : row.run2StartTime;
+  const finishRaw =
+    runId === "trial"
+      ? row.trialFinishTime
+      : runId === "run1"
+        ? row.run1FinishTime
+        : row.run2FinishTime;
+  const start = (startRaw ?? "").trim().toUpperCase();
+  const finish = (finishRaw ?? "").trim().toUpperCase();
+  if (start === "DNS" || finish === "DNS") return "DNS";
+  if (start === "DNF" || finish === "DNF") return "DNF";
+  return null;
 }
 
 function formatDurationMs(ms: number | null): string {

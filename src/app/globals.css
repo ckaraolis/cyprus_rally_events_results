@@ -250,3 +250,20 @@ body {
 .ewrc-row-alt {
   background: var(--ewrc-row-alt-bg);
 }
+
+@media (max-width: 640px) {
+  .ewrc-table th {
+    padding: 0.45rem 0.55rem;
+    font-size: 9px;
+    letter-spacing: 0.05em;
+  }
+
+  .ewrc-table td {
+    padding: 0.45rem 0.55rem;
+    font-size: 12px;
+  }
+
+  .ewrc-table .font-mono {
+    font-size: 11px;
+  }
+}
