@@ -7,6 +7,7 @@ import type {
   Entry,
   EventStatus,
   EventType,
+  OfficialNoticeCategory,
   RallyEvent,
   RallySiteConfig,
   SiteSettings,
@@ -19,6 +20,72 @@ const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
 const DB_WRITES = process.env.RALLY_DB_WRITES === "1";
 const FILE_WRITES = process.env.RALLY_FILE_WRITES !== "0";
+
+const OFFICIAL_NOTICE_DEFAULT_CATEGORIES: OfficialNoticeCategory[] = [
+  "Supplementary Regulations",
+  "Bulletins",
+  "Steward Decisions",
+  "Other",
+];
+
+function normalizeOfficialNoticeCategory(v: unknown): string {
+  if (typeof v !== "string") return "Other";
+  const s = v.trim();
+  if (!s) return "Other";
+  return s.slice(0, 80);
+}
+
+function normalizeOfficialNoticeCustomCategories(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  const dedupe = new Set<string>();
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const v = item.trim().slice(0, 80);
+    if (!v) continue;
+    if (OFFICIAL_NOTICE_DEFAULT_CATEGORIES.includes(v as OfficialNoticeCategory)) {
+      continue;
+    }
+    dedupe.add(v);
+  }
+  return [...dedupe];
+}
+
+function normalizeOfficialNoticeDocuments(
+  raw: unknown,
+): RallyEvent["officialNoticeDocuments"] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const o =
+        item && typeof item === "object"
+          ? (item as Record<string, unknown>)
+          : {};
+      const id =
+        typeof o.id === "string" && o.id.trim()
+          ? o.id.trim()
+          : crypto.randomUUID();
+      const title =
+        typeof o.title === "string" && o.title.trim() ? o.title.trim().slice(0, 180) : "";
+      const url = typeof o.url === "string" ? o.url.trim() : "";
+      if (!title || !url) return null;
+      const fileName =
+        typeof o.fileName === "string" && o.fileName.trim()
+          ? o.fileName.trim().slice(0, 220)
+          : "document";
+      return {
+        id,
+        title,
+        category: normalizeOfficialNoticeCategory(o.category),
+        url,
+        fileName,
+        uploadedAt:
+          typeof o.uploadedAt === "string" && o.uploadedAt.trim()
+            ? o.uploadedAt
+            : new Date().toISOString(),
+      };
+    })
+    .filter((x): x is RallyEvent["officialNoticeDocuments"][number] => Boolean(x));
+}
 
 function normalizeProgressStatus(v: unknown): StageProgressStatus {
   if (v === "live" || v === "completed" || v === "pending") return v;
@@ -143,6 +210,8 @@ function normalizeEvent(raw: unknown): RallyEvent {
         run2: "scheduled",
       },
       algeTriggerCountByKey: {},
+      officialNoticeCustomCategories: [],
+      officialNoticeDocuments: [],
       stages: [],
       entries: [],
     };
@@ -188,6 +257,12 @@ function normalizeEvent(raw: unknown): RallyEvent {
             ),
           )
         : {},
+    officialNoticeCustomCategories: normalizeOfficialNoticeCustomCategories(
+      o.officialNoticeCustomCategories,
+    ),
+    officialNoticeDocuments: normalizeOfficialNoticeDocuments(
+      o.officialNoticeDocuments,
+    ),
     stages,
     entries,
   };

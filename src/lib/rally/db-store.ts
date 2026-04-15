@@ -84,6 +84,41 @@ function toEvent(row: {
     !Array.isArray(row.algeTriggerCountByKey)
       ? (row.algeTriggerCountByKey as Record<string, unknown>)
       : {};
+  const noticeDataRaw =
+    algeMap.__officialNoticeData &&
+    typeof algeMap.__officialNoticeData === "object" &&
+    !Array.isArray(algeMap.__officialNoticeData)
+      ? (algeMap.__officialNoticeData as Record<string, unknown>)
+      : {};
+  const customCategories = Array.isArray(noticeDataRaw.customCategories)
+    ? noticeDataRaw.customCategories
+        .filter((x): x is string => typeof x === "string")
+        .map((x) => x.trim())
+        .filter(Boolean)
+    : [];
+  const officialDocs = Array.isArray(noticeDataRaw.documents)
+    ? noticeDataRaw.documents
+        .map((item) => {
+          if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+          const o = item as Record<string, unknown>;
+          const id = typeof o.id === "string" ? o.id.trim() : "";
+          const title = typeof o.title === "string" ? o.title.trim() : "";
+          const category = typeof o.category === "string" ? o.category.trim() : "";
+          const url = typeof o.url === "string" ? o.url.trim() : "";
+          const fileName = typeof o.fileName === "string" ? o.fileName.trim() : "";
+          const uploadedAt = typeof o.uploadedAt === "string" ? o.uploadedAt.trim() : "";
+          if (!id || !title || !url) return null;
+          return {
+            id,
+            title,
+            category: category || "Other",
+            url,
+            fileName: fileName || "document",
+            uploadedAt: uploadedAt || new Date().toISOString(),
+          };
+        })
+        .filter((x): x is RallyEvent["officialNoticeDocuments"][number] => Boolean(x))
+    : [];
   return {
     id: row.id,
     name: row.name,
@@ -108,8 +143,12 @@ function toEvent(row: {
         : "scheduled",
     },
     algeTriggerCountByKey: Object.fromEntries(
-      Object.entries(algeMap).map(([k, v]) => [k, typeof v === "number" ? v : 0]),
+      Object.entries(algeMap)
+        .filter(([k]) => k !== "__officialNoticeData")
+        .map(([k, v]) => [k, typeof v === "number" ? v : 0]),
     ),
+    officialNoticeCustomCategories: customCategories,
+    officialNoticeDocuments: officialDocs,
     stages: row.stages.map(toStage),
     entries: row.entries.map(toEntry),
   };
@@ -168,7 +207,13 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
           speedRunImportStatusTrial: e.speedRunImportStatus.trial,
           speedRunImportStatusRun1: e.speedRunImportStatus.run1,
           speedRunImportStatusRun2: e.speedRunImportStatus.run2,
-          algeTriggerCountByKey: e.algeTriggerCountByKey,
+          algeTriggerCountByKey: {
+            ...e.algeTriggerCountByKey,
+            __officialNoticeData: {
+              customCategories: e.officialNoticeCustomCategories,
+              documents: e.officialNoticeDocuments,
+            },
+          },
         },
         update: {
           name: e.name,
@@ -181,7 +226,13 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
           speedRunImportStatusTrial: e.speedRunImportStatus.trial,
           speedRunImportStatusRun1: e.speedRunImportStatus.run1,
           speedRunImportStatusRun2: e.speedRunImportStatus.run2,
-          algeTriggerCountByKey: e.algeTriggerCountByKey,
+          algeTriggerCountByKey: {
+            ...e.algeTriggerCountByKey,
+            __officialNoticeData: {
+              customCategories: e.officialNoticeCustomCategories,
+              documents: e.officialNoticeDocuments,
+            },
+          },
         },
       });
 

@@ -1,6 +1,11 @@
 export type EventStatus = "draft" | "upcoming" | "live" | "completed";
 export type EventType = "rally" | "speed";
 export type SpeedRunImportStatus = "scheduled" | "live" | "completed";
+export type OfficialNoticeCategory =
+  | "Supplementary Regulations"
+  | "Bulletins"
+  | "Steward Decisions"
+  | "Other";
 
 /** Public “Stage results” bar: dot colour (yellow / green / red). */
 export type StageProgressStatus = "pending" | "live" | "completed";
@@ -73,6 +78,17 @@ export interface RallyEvent {
   };
   /** Last observed ALGE trigger counts per polling key. */
   algeTriggerCountByKey: Record<string, number>;
+  /** Custom category names for Official Notice Board. */
+  officialNoticeCustomCategories: string[];
+  /** Uploaded documents for Speed Official Notice Board. */
+  officialNoticeDocuments: Array<{
+    id: string;
+    title: string;
+    category: OfficialNoticeCategory | string;
+    url: string;
+    fileName: string;
+    uploadedAt: string;
+  }>;
   stages: Stage[];
   entries: Entry[];
 }

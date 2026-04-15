@@ -20,9 +20,26 @@ import type {
 import { AdminCountrySelect } from "./admin-country-select";
 
 type Props = { event: RallyEvent };
-type AdminTab = "details" | "stages" | "entries" | "timing";
+type AdminTab =
+  | "details"
+  | "stages"
+  | "entries"
+  | "timing"
+  | "penalties"
+  | "notice-board";
 type SpeedTimingRun = "trial" | "run1" | "run2";
-type SpeedTimingOutcome = "dns" | "dnf" | null;
+type SpeedTimingOutcome = "ret" | "dnf" | null;
+type RallyStageTimingBlob = Record<
+  string,
+  { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
+>;
+const RALLY_PENALTY_KEY = "__event_penalty__";
+const NOTICE_BOARD_DEFAULT_CATEGORIES = [
+  "Supplementary Regulations",
+  "Bulletins",
+  "Steward Decisions",
+  "Other",
+] as const;
 
 function timingSignature(meta: {
   speedRunImportStatus: {
@@ -48,15 +65,42 @@ function timingSignature(meta: {
 function parseTimingOutcome(startValue: string, finishValue: string): SpeedTimingOutcome {
   const start = startValue.trim().toUpperCase();
   const finish = finishValue.trim().toUpperCase();
-  if (start === "DNS" || finish === "DNS") return "dns";
+  if (start === "RET" || finish === "RET") return "ret";
   if (start === "DNF" || finish === "DNF") return "dnf";
   return null;
 }
 
 function formatTimingOutcomeLabel(outcome: SpeedTimingOutcome): string | null {
-  if (outcome === "dns") return "Do Not Start";
+  if (outcome === "ret") return "Retired";
   if (outcome === "dnf") return "Do Not Finish";
   return null;
+}
+
+function normalizePenaltyInput(raw: string): string {
+  return raw.replace(/[^0-9:]/g, "").slice(0, 6);
+}
+
+function parseRallyStageTimingBlob(raw: string): RallyStageTimingBlob {
+  const trimmed = raw.trim();
+  if (!trimmed || !trimmed.startsWith("{")) return {};
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: RallyStageTimingBlob = {};
+    for (const [stageId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const item = value as Record<string, unknown>;
+      out[stageId] = {
+        startTime: typeof item.startTime === "string" ? item.startTime : "",
+        finishTime: typeof item.finishTime === "string" ? item.finishTime : "",
+        penalty: typeof item.penalty === "string" ? item.penalty : "",
+        penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
 }
 
 export function EventEditor({ event: initial }: Props) {
@@ -64,6 +108,13 @@ export function EventEditor({ event: initial }: Props) {
   const [pending, startTransition] = useTransition();
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoUploadError, setLogoUploadError] = useState<string | null>(null);
+  const [docUploading, setDocUploading] = useState(false);
+  const [docUploadError, setDocUploadError] = useState<string | null>(null);
+  const [newDocTitle, setNewDocTitle] = useState("");
+  const [newDocCategory, setNewDocCategory] = useState<string>(
+    NOTICE_BOARD_DEFAULT_CATEGORIES[0],
+  );
+  const [newCustomCategory, setNewCustomCategory] = useState("");
   const [meta, setMeta] = useState({
     name: initial.name,
     logoUrl: initial.logoUrl ?? "",
@@ -78,6 +129,8 @@ export function EventEditor({ event: initial }: Props) {
       run2: "scheduled",
     },
     algeTriggerCountByKey: initial.algeTriggerCountByKey ?? {},
+    officialNoticeCustomCategories: initial.officialNoticeCustomCategories ?? [],
+    officialNoticeDocuments: initial.officialNoticeDocuments ?? [],
   });
   const [stages, setStages] = useState<Stage[]>(() =>
     [...initial.stages]
@@ -128,6 +181,13 @@ export function EventEditor({ event: initial }: Props) {
   const [activeTab, setActiveTab] = useState<AdminTab>("details");
   const [timingRun, setTimingRun] = useState<SpeedTimingRun>("trial");
   const timingRunRef = useRef<SpeedTimingRun>("trial");
+  const [rallyTimingStageId, setRallyTimingStageId] = useState<string>("");
+  const rallyTimingStageIdRef = useRef<string>("");
+  const [showAssignStartModal, setShowAssignStartModal] = useState(false);
+  const [assignStartFromCar, setAssignStartFromCar] = useState("1");
+  const [assignStartToCar, setAssignStartToCar] = useState("1");
+  const [assignStartFirstTime, setAssignStartFirstTime] = useState("10:00");
+  const [assignStartIntervalMin, setAssignStartIntervalMin] = useState("2");
   const metaRef = useRef(meta);
   const entriesRef = useRef(entries);
   const timingAutosaveInFlightRef = useRef(false);
@@ -141,6 +201,10 @@ export function EventEditor({ event: initial }: Props) {
   }, [timingRun]);
 
   useEffect(() => {
+    rallyTimingStageIdRef.current = rallyTimingStageId;
+  }, [rallyTimingStageId]);
+
+  useEffect(() => {
     metaRef.current = meta;
   }, [meta]);
 
@@ -152,6 +216,16 @@ export function EventEditor({ event: initial }: Props) {
     () => [...stages].sort((a, b) => a.order - b.order),
     [stages],
   );
+
+  useEffect(() => {
+    if (meta.type !== "rally") return;
+    if (sortedStages.length === 0) {
+      setRallyTimingStageId("");
+      return;
+    }
+    if (sortedStages.some((s) => s.id === rallyTimingStageId)) return;
+    setRallyTimingStageId(sortedStages[0]?.id ?? "");
+  }, [meta.type, rallyTimingStageId, sortedStages]);
 
   function saveMeta() {
     setFlash(null);
@@ -178,6 +252,15 @@ export function EventEditor({ event: initial }: Props) {
     startTransition(async () => {
       await replaceEntries(eventId, entries);
       setFlash("Entries saved.");
+      router.refresh();
+    });
+  }
+
+  function savePenalties() {
+    setFlash(null);
+    startTransition(async () => {
+      await replaceEntries(eventId, entries);
+      setFlash("Penalties saved.");
       router.refresh();
     });
   }
@@ -257,10 +340,58 @@ export function EventEditor({ event: initial }: Props) {
     })();
   }
 
+  function applyTriggerTimingValue(
+    row: Entry,
+    trigger: "start" | "finish",
+    triggerTime: string,
+  ): Entry {
+    if (metaRef.current.type === "rally") {
+      const stageId = rallyTimingStageIdRef.current.trim();
+      if (!stageId) return row;
+      const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+      const current = blob[stageId] ?? {};
+      blob[stageId] =
+        trigger === "start"
+          ? { ...current, startTime: triggerTime }
+          : { ...current, finishTime: triggerTime };
+      return {
+        ...row,
+        trialStartTime: JSON.stringify(blob),
+        trialFinishTime: "",
+        run1StartTime: "",
+        run1FinishTime: "",
+        run2StartTime: "",
+        run2FinishTime: "",
+      };
+    }
+
+    const activeRun = timingRunRef.current;
+    if (activeRun === "trial") {
+      return trigger === "start"
+        ? { ...row, trialStartTime: triggerTime }
+        : { ...row, trialFinishTime: triggerTime };
+    }
+    if (activeRun === "run1") {
+      return trigger === "start"
+        ? { ...row, run1StartTime: triggerTime }
+        : { ...row, run1FinishTime: triggerTime };
+    }
+    return trigger === "start"
+      ? { ...row, run2StartTime: triggerTime }
+      : { ...row, run2FinishTime: triggerTime };
+  }
+
   async function connectStompStream() {
-    if (!algeStartDeviceId.trim()) {
-      setFlash("Set Device ID first.");
-      return;
+    if (metaRef.current.type === "rally") {
+      if (!algeFinishDeviceId.trim()) {
+        setFlash("Set Finish Device ID first.");
+        return;
+      }
+    } else {
+      if (!algeStartDeviceId.trim()) {
+        setFlash("Set Device ID first.");
+        return;
+      }
     }
     setFlash(null);
     if (stompRef.current) await disconnectStompStream();
@@ -273,8 +404,12 @@ export function EventEditor({ event: initial }: Props) {
         (sockJsMod as unknown as { default?: new (url: string) => WebSocket })
           .default ??
         (sockJsMod as unknown as new (url: string) => WebSocket);
+      const defaultDeviceId =
+        metaRef.current.type === "rally"
+          ? algeFinishDeviceId.trim()
+          : algeStartDeviceId.trim();
       const topic =
-        algeWsTopic.trim() || `/topic/device/${algeStartDeviceId.trim()}/trigger`;
+        algeWsTopic.trim() || `/topic/device/${defaultDeviceId}/trigger`;
       const client = new Client({
         webSocketFactory: () => new SockJS(algeWsEndpoint.trim()),
         connectHeaders: algeWsToken.trim()
@@ -335,38 +470,26 @@ export function EventEditor({ event: initial }: Props) {
               Number.isNaN(timeOffsetNum) ? 0 : timeOffsetNum,
             );
             let matched = false;
-            const activeRun = timingRunRef.current;
             const finishChannelNum = Number.parseInt(algeFinishChannelId, 10);
-            const startChannelNum = Number.parseInt(algeStartChannelId, 10);
             const activeTrigger: "start" | "finish" =
-              !Number.isNaN(timingChannelNum) &&
-              !Number.isNaN(finishChannelNum) &&
-              timingChannelNum === finishChannelNum
+              metaRef.current.type === "rally"
                 ? "finish"
                 : !Number.isNaN(timingChannelNum) &&
-                    !Number.isNaN(startChannelNum) &&
-                    timingChannelNum === startChannelNum
-                  ? "start"
-                  : "start";
+                    !Number.isNaN(finishChannelNum) &&
+                    timingChannelNum === finishChannelNum
+                  ? "finish"
+                  : !Number.isNaN(timingChannelNum) &&
+                      !Number.isNaN(Number.parseInt(algeStartChannelId, 10)) &&
+                      timingChannelNum === Number.parseInt(algeStartChannelId, 10)
+                    ? "start"
+                    : "start";
             let nextEntriesSnapshot: Entry[] | null = null;
             setEntries((prev) =>
               {
                 const next = prev.map((x) => {
                   if (x.startNumber !== startNumber) return x;
                   matched = true;
-                  if (activeRun === "trial") {
-                    return activeTrigger === "start"
-                      ? { ...x, trialStartTime: triggerTime }
-                      : { ...x, trialFinishTime: triggerTime };
-                  }
-                  if (activeRun === "run1") {
-                    return activeTrigger === "start"
-                      ? { ...x, run1StartTime: triggerTime }
-                      : { ...x, run1FinishTime: triggerTime };
-                  }
-                  return activeTrigger === "start"
-                    ? { ...x, run2StartTime: triggerTime }
-                    : { ...x, run2FinishTime: triggerTime };
+                  return applyTriggerTimingValue(x, activeTrigger, triggerTime);
                 });
                 nextEntriesSnapshot = next;
                 return next;
@@ -374,6 +497,8 @@ export function EventEditor({ event: initial }: Props) {
             );
             if (matched && nextEntriesSnapshot) {
               queueLiveEntriesSave(nextEntriesSnapshot);
+              // Keep autosave path active too, so trigger-applied times are always persisted.
+              queueTimingAutosave();
             }
             setStreamInfo(
               matched
@@ -411,7 +536,7 @@ export function EventEditor({ event: initial }: Props) {
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (activeTab !== "timing") return;
-      if (metaRef.current.type !== "speed") return;
+      if (metaRef.current.type !== "speed" && metaRef.current.type !== "rally") return;
       queueTimingAutosave();
     }, 2000);
     return () => window.clearInterval(timer);
@@ -610,12 +735,101 @@ export function EventEditor({ event: initial }: Props) {
     }
   }
 
+  const officialNoticeCategoryOptions = useMemo(() => {
+    const fromDocs = meta.officialNoticeDocuments
+      .map((x) => x.category?.trim() ?? "")
+      .filter(Boolean);
+    const merged = new Set<string>([
+      ...NOTICE_BOARD_DEFAULT_CATEGORIES,
+      ...meta.officialNoticeCustomCategories,
+      ...fromDocs,
+    ]);
+    return [...merged];
+  }, [meta.officialNoticeCustomCategories, meta.officialNoticeDocuments]);
+
+  function addOfficialNoticeCustomCategory() {
+    const value = newCustomCategory.trim();
+    if (!value) return;
+    setMeta((m) => {
+      if (m.officialNoticeCustomCategories.includes(value)) return m;
+      return {
+        ...m,
+        officialNoticeCustomCategories: [...m.officialNoticeCustomCategories, value],
+      };
+    });
+    setNewDocCategory(value);
+    setNewCustomCategory("");
+  }
+
+  function removeOfficialNoticeDocument(id: string) {
+    setMeta((m) => ({
+      ...m,
+      officialNoticeDocuments: m.officialNoticeDocuments.filter((x) => x.id !== id),
+    }));
+  }
+
+  async function uploadOfficialNoticeDocument(file: File) {
+    setDocUploadError(null);
+    if (meta.type !== "speed") {
+      setDocUploadError("Official Notice Board is only available for Speed events.");
+      return;
+    }
+    const title = newDocTitle.trim() || file.name;
+    const category = newDocCategory.trim() || "Other";
+    setDocUploading(true);
+    try {
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("title", title);
+      fd.set("category", category);
+      const res = await fetch("/api/uploads/official-notice-document", {
+        method: "POST",
+        body: fd,
+      });
+      const data = (await res.json()) as { url?: string; fileName?: string; error?: string };
+      if (!res.ok || !data.url) {
+        setDocUploadError(data.error ?? "Document upload failed.");
+        return;
+      }
+      setMeta((m) => ({
+        ...m,
+        officialNoticeDocuments: [
+          {
+            id: crypto.randomUUID(),
+            title,
+            category,
+            url: data.url!,
+            fileName: data.fileName?.trim() || file.name,
+            uploadedAt: new Date().toISOString(),
+          },
+          ...m.officialNoticeDocuments,
+        ],
+        officialNoticeCustomCategories:
+          NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
+            category as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
+          ) || m.officialNoticeCustomCategories.includes(category)
+            ? m.officialNoticeCustomCategories
+            : [...m.officialNoticeCustomCategories, category],
+      }));
+      setNewDocTitle("");
+      setFlash("Document uploaded. Click Save details to publish it.");
+    } catch {
+      setDocUploadError("Document upload failed. Please try again.");
+    } finally {
+      setDocUploading(false);
+    }
+  }
+
   const timingRunLabel =
     timingRun === "trial"
       ? "Trial"
       : timingRun === "run1"
         ? "1st Run"
         : "2nd Run";
+  const selectedRallyTimingStage =
+    meta.type === "rally"
+      ? sortedStages.find((s) => s.id === rallyTimingStageId) ?? sortedStages[0] ?? null
+      : null;
   const timingStartField: keyof Entry =
     timingRun === "trial"
       ? "trialStartTime"
@@ -629,6 +843,127 @@ export function EventEditor({ event: initial }: Props) {
         ? "run1FinishTime"
         : "run2FinishTime";
   const timingRunStatus = meta.speedRunImportStatus[timingRun];
+  const getTimingValuesForEntry = (
+    row: Entry,
+  ): {
+    startValue: string;
+    finishValue: string;
+    penaltyValue: string;
+    penaltyNoteValue: string;
+  } => {
+    if (meta.type !== "rally") {
+      return {
+        startValue: (row[timingStartField] as string) ?? "",
+        finishValue: (row[timingFinishField] as string) ?? "",
+        penaltyValue: "",
+        penaltyNoteValue: "",
+      };
+    }
+    if (!selectedRallyTimingStage) {
+      return {
+        startValue: "",
+        finishValue: "",
+        penaltyValue: "",
+        penaltyNoteValue: "",
+      };
+    }
+    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+    const current = blob[selectedRallyTimingStage.id] ?? {};
+    return {
+      startValue: current.startTime?.trim() ?? "",
+      finishValue: current.finishTime?.trim() ?? "",
+      penaltyValue: current.penalty?.trim() ?? "",
+      penaltyNoteValue: current.penaltyNote?.trim() ?? "",
+    };
+  };
+  const updateEntryTimingValues = (
+    row: Entry,
+    startValue: string,
+    finishValue: string,
+  ): Entry => {
+    if (meta.type !== "rally") {
+      return {
+        ...row,
+        [timingStartField]: startValue,
+        [timingFinishField]: finishValue,
+      };
+    }
+    if (!selectedRallyTimingStage) return row;
+    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+    const current = blob[selectedRallyTimingStage.id] ?? {};
+    blob[selectedRallyTimingStage.id] = {
+      startTime: startValue,
+      finishTime: finishValue,
+      penalty: current.penalty ?? "",
+      penaltyNote: current.penaltyNote ?? "",
+    };
+    return {
+      ...row,
+      trialStartTime: JSON.stringify(blob),
+      trialFinishTime: "",
+      run1StartTime: "",
+      run1FinishTime: "",
+      run2StartTime: "",
+      run2FinishTime: "",
+    };
+  };
+  const updateEntryTimingPenaltyValues = (
+    row: Entry,
+    penaltyValue: string,
+    penaltyNoteValue: string,
+  ): Entry => {
+    if (meta.type !== "rally" || !selectedRallyTimingStage) return row;
+    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+    const current = blob[selectedRallyTimingStage.id] ?? {};
+    blob[selectedRallyTimingStage.id] = {
+      startTime: current.startTime ?? "",
+      finishTime: current.finishTime ?? "",
+      penalty: penaltyValue,
+      penaltyNote: penaltyNoteValue,
+    };
+    return {
+      ...row,
+      trialStartTime: JSON.stringify(blob),
+      trialFinishTime: "",
+      run1StartTime: "",
+      run1FinishTime: "",
+      run2StartTime: "",
+      run2FinishTime: "",
+    };
+  };
+  const getPenaltyValuesForEntry = (
+    row: Entry,
+  ): { penaltyValue: string; penaltyNoteValue: string } => {
+    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+    const current = blob[RALLY_PENALTY_KEY] ?? {};
+    return {
+      penaltyValue: current.penalty?.trim() ?? "",
+      penaltyNoteValue: current.penaltyNote?.trim() ?? "",
+    };
+  };
+  const updateEntryPenaltyValues = (
+    row: Entry,
+    penaltyValue: string,
+    penaltyNoteValue: string,
+  ): Entry => {
+    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+    const current = blob[RALLY_PENALTY_KEY] ?? {};
+    blob[RALLY_PENALTY_KEY] = {
+      startTime: current.startTime ?? "",
+      finishTime: current.finishTime ?? "",
+      penalty: penaltyValue,
+      penaltyNote: penaltyNoteValue,
+    };
+    return {
+      ...row,
+      trialStartTime: JSON.stringify(blob),
+      trialFinishTime: "",
+      run1StartTime: "",
+      run1FinishTime: "",
+      run2StartTime: "",
+      run2FinishTime: "",
+    };
+  };
   const parseTimeToMs = (value: string): number | null => {
     const raw = value.trim();
     if (!raw) return null;
@@ -669,24 +1004,74 @@ export function EventEditor({ event: initial }: Props) {
   };
   const setTimingOutcomeForEntry = (
     entryId: string,
-    nextOutcome: "dns" | "dnf",
+    nextOutcome: "ret" | "dnf",
     currentOutcome: SpeedTimingOutcome,
   ) => {
-    const marker = nextOutcome === "dns" ? "DNS" : "DNF";
+    const marker = nextOutcome === "ret" ? "RET" : "DNF";
     const clear = currentOutcome === nextOutcome;
     setEntries((prev) => {
       const next = prev.map((x) =>
         x.id === entryId
-          ? {
-              ...x,
-              [timingStartField]: clear ? "" : marker,
-              [timingFinishField]: clear ? "" : marker,
-            }
+          ? updateEntryTimingValues(x, clear ? "" : marker, clear ? "" : marker)
           : x,
       );
       entriesRef.current = next;
       return next;
     });
+    queueTimingAutosave();
+  };
+  const formatClockFromMs = (totalMs: number): string => {
+    const safeMs = ((totalMs % 86_400_000) + 86_400_000) % 86_400_000;
+    const h = Math.floor(safeMs / 3_600_000);
+    const m = Math.floor((safeMs % 3_600_000) / 60_000);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  };
+  const openAssignStartTimesModal = () => {
+    const sorted = entries
+      .filter((e) => e.start !== false)
+      .map((e) => e.startNumber)
+      .sort((a, b) => a - b);
+    const first = sorted[0] ?? 1;
+    const last = sorted[sorted.length - 1] ?? first;
+    setAssignStartFromCar(String(first));
+    setAssignStartToCar(String(last));
+    setAssignStartFirstTime("10:00");
+    setAssignStartIntervalMin("2");
+    setShowAssignStartModal(true);
+  };
+  const applyBulkStartTimes = () => {
+    if (meta.type !== "rally" || !selectedRallyTimingStage) return;
+    const from = Number.parseInt(assignStartFromCar, 10);
+    const to = Number.parseInt(assignStartToCar, 10);
+    const interval = Number.parseInt(assignStartIntervalMin, 10);
+    const baseMs = parseTimeToMs(assignStartFirstTime);
+    if (
+      Number.isNaN(from) ||
+      Number.isNaN(to) ||
+      Number.isNaN(interval) ||
+      baseMs == null
+    ) {
+      setFlash("Set valid car range, first start time, and interval.");
+      return;
+    }
+    const startNo = Math.min(from, to);
+    const endNo = Math.max(from, to);
+    const intervalMs = Math.max(0, interval) * 60_000;
+    setEntries((prev) => {
+      const next = prev.map((row) => {
+        if (row.startNumber < startNo || row.startNumber > endNo) return row;
+        const offsetIndex = row.startNumber - startNo;
+        const scheduled = formatClockFromMs(baseMs + offsetIndex * intervalMs);
+        const current = getTimingValuesForEntry(row);
+        return updateEntryTimingValues(row, scheduled, current.finishValue);
+      });
+      entriesRef.current = next;
+      return next;
+    });
+    setShowAssignStartModal(false);
+    setFlash(
+      `Assigned start times for cars ${startNo}-${endNo} on SS ${selectedRallyTimingStage.order}.`,
+    );
     queueTimingAutosave();
   };
 
@@ -731,7 +1116,7 @@ export function EventEditor({ event: initial }: Props) {
           >
             Entries
           </button>
-          {meta.type === "speed" ? (
+          {meta.type === "speed" || meta.type === "rally" ? (
             <button
               type="button"
               onClick={() => setActiveTab("timing")}
@@ -742,6 +1127,32 @@ export function EventEditor({ event: initial }: Props) {
               }`}
             >
               Timing control
+            </button>
+          ) : null}
+          {meta.type === "rally" ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("penalties")}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                activeTab === "penalties"
+                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+              }`}
+            >
+              Penalties
+            </button>
+          ) : null}
+          {meta.type === "speed" ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("notice-board")}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                activeTab === "notice-board"
+                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+              }`}
+            >
+              Official Notice Board
             </button>
           ) : null}
         </div>
@@ -904,6 +1315,140 @@ export function EventEditor({ event: initial }: Props) {
             Delete event
           </button>
         </div>
+        </section>
+      ) : null}
+
+      {activeTab === "notice-board" && meta.type === "speed" ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Official Notice Board
+            </h2>
+            <button
+              type="button"
+              onClick={saveMeta}
+              disabled={pending}
+              className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50 dark:bg-red-600"
+            >
+              Save notice board
+            </button>
+          </div>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            Upload PDF/DOC files like Supplementary Regulations, Bulletins, Steward
+            Decisions, and custom categories.
+          </p>
+
+          <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto]">
+            <input
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              placeholder="New custom category (e.g. Competitor Briefing)"
+              value={newCustomCategory}
+              onChange={(e) => setNewCustomCategory(e.target.value)}
+            />
+            <button
+              type="button"
+              onClick={addOfficialNoticeCustomCategory}
+              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+            >
+              Add category
+            </button>
+          </div>
+
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <input
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              placeholder="Document title (optional)"
+              value={newDocTitle}
+              onChange={(e) => setNewDocTitle(e.target.value)}
+            />
+            <select
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              value={newDocCategory}
+              onChange={(e) => setNewDocCategory(e.target.value)}
+            >
+              {officialNoticeCategoryOptions.map((cat) => (
+                <option key={cat} value={cat}>
+                  {cat}
+                </option>
+              ))}
+            </select>
+            <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800">
+              Upload document
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.xlsx,.xls"
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void uploadOfficialNoticeDocument(file);
+                  e.currentTarget.value = "";
+                }}
+              />
+            </label>
+          </div>
+          {docUploading ? (
+            <p className="mt-2 text-xs text-zinc-500">Uploading document…</p>
+          ) : null}
+          {docUploadError ? (
+            <p className="mt-2 text-xs text-red-600 dark:text-red-400">{docUploadError}</p>
+          ) : null}
+
+          <div className="mt-6 overflow-x-auto">
+            <table className="w-full min-w-[760px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
+                  <th className="pb-2 pr-2">Category</th>
+                  <th className="pb-2 pr-2">Title</th>
+                  <th className="pb-2 pr-2">File</th>
+                  <th className="pb-2 pr-2">Uploaded</th>
+                  <th className="pb-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {meta.officialNoticeDocuments.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
+                    >
+                      No documents uploaded yet.
+                    </td>
+                  </tr>
+                ) : (
+                  [...meta.officialNoticeDocuments]
+                    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
+                    .map((doc) => (
+                      <tr key={doc.id} className="border-b border-zinc-100 dark:border-zinc-800">
+                        <td className="py-2 pr-2">{doc.category}</td>
+                        <td className="py-2 pr-2">{doc.title}</td>
+                        <td className="py-2 pr-2">
+                          <a
+                            href={doc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-blue-700 hover:underline dark:text-blue-400"
+                          >
+                            {doc.fileName}
+                          </a>
+                        </td>
+                        <td className="py-2 pr-2 text-xs text-zinc-500 dark:text-zinc-400">
+                          {new Date(doc.uploadedAt).toLocaleString()}
+                        </td>
+                        <td className="py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => removeOfficialNoticeDocument(doc.id)}
+                            className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
+                          >
+                            Remove
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </section>
       ) : null}
 
@@ -1341,7 +1886,7 @@ export function EventEditor({ event: initial }: Props) {
         </section>
       ) : null}
 
-      {meta.type === "speed" && activeTab === "timing" ? (
+      {(meta.type === "speed" || meta.type === "rally") && activeTab === "timing" ? (
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
@@ -1357,190 +1902,242 @@ export function EventEditor({ event: initial }: Props) {
             </button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setTimingRun("trial")}
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                timingRun === "trial"
-                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
-                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
-              }`}
-            >
-              Trial
-            </button>
-            <button
-              type="button"
-              onClick={() => setTimingRun("run1")}
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                timingRun === "run1"
-                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
-                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
-              }`}
-            >
-              1st Run
-            </button>
-            <button
-              type="button"
-              onClick={() => setTimingRun("run2")}
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                timingRun === "run2"
-                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
-                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
-              }`}
-            >
-              2nd Run
-            </button>
+            {meta.type === "speed" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setTimingRun("trial")}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    timingRun === "trial"
+                      ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                      : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                  }`}
+                >
+                  Trial
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimingRun("run1")}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    timingRun === "run1"
+                      ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                      : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                  }`}
+                >
+                  1st Run
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTimingRun("run2")}
+                  className={`rounded-lg px-3 py-1.5 text-sm ${
+                    timingRun === "run2"
+                      ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                      : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                  }`}
+                >
+                  2nd Run
+                </button>
+              </>
+            ) : sortedStages.length > 0 ? (
+              sortedStages.map((stage) => {
+                const active = (selectedRallyTimingStage?.id ?? "") === stage.id;
+                return (
+                  <button
+                    key={stage.id}
+                    type="button"
+                    onClick={() => setRallyTimingStageId(stage.id)}
+                    className={`rounded-lg px-3 py-1.5 text-sm ${
+                      active
+                        ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                        : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                    }`}
+                  >
+                    SS {stage.order}
+                  </button>
+                );
+              })
+            ) : (
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Add stages first to enter rally timings.
+              </span>
+            )}
           </div>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Enter start and finish times for each driver on {timingRunLabel}.
-            This tab stores all run timings with entries.
+            Enter start and finish times for each driver on{" "}
+            {meta.type === "speed"
+              ? timingRunLabel
+              : selectedRallyTimingStage
+                ? `SS ${selectedRallyTimingStage.order} (${selectedRallyTimingStage.name})`
+                : "the selected stage"}
+            This tab stores all timing values with entries.
           </p>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Import status
-            </label>
-            <select
-              className="rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              value={timingRunStatus}
-              onChange={(e) =>
-                setMeta((m) => ({
-                  ...m,
-                  speedRunImportStatus: {
-                    ...m.speedRunImportStatus,
-                    [timingRun]: e.target.value as SpeedRunImportStatus,
-                  },
-                }))
-              }
-            >
-              <option value="scheduled">Scheduled</option>
-              <option value="live">Live</option>
-              <option value="completed">Completed</option>
-            </select>
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              ALGE import will be allowed only when status is Live.
-            </span>
-          </div>
-          <div className="mt-3 flex flex-wrap items-end gap-2">
-            <div>
-              <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Start Device ID
-              </label>
-              <input
-                className="mt-1 w-36 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                value={algeStartDeviceId}
-                onChange={(e) => setAlgeStartDeviceId(e.target.value)}
-                placeholder="190801013"
-              />
+          {meta.type === "rally" && selectedRallyTimingStage ? (
+            <div className="mt-3">
+              <button
+                type="button"
+                onClick={openAssignStartTimesModal}
+                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+              >
+                Assign start times
+              </button>
             </div>
-            <div>
-              <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Start Channel
-              </label>
-              <input
-                className="mt-1 w-20 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                value={algeStartChannelId}
-                onChange={(e) => setAlgeStartChannelId(e.target.value)}
-                placeholder="0"
-              />
-            </div>
-          </div>
-          <div className="mt-3 flex flex-wrap items-end gap-2">
-            <div>
-              <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Finish Device ID
-              </label>
-              <input
-                className="mt-1 w-36 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                value={algeFinishDeviceId}
-                onChange={(e) => setAlgeFinishDeviceId(e.target.value)}
-                placeholder="190801013"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                Finish Channel
-              </label>
-              <input
-                className="mt-1 w-20 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                value={algeFinishChannelId}
-                onChange={(e) => setAlgeFinishChannelId(e.target.value)}
-                placeholder="1"
-              />
-            </div>
-          </div>
-          <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Live trigger stream (STOMP/SockJS)
-            </p>
-            <div className="mt-2 flex flex-wrap items-end gap-2">
-              <div>
+          ) : null}
+          <>
+            {meta.type === "speed" ? (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                  Endpoint
+                  Import status
                 </label>
-                <input
-                  className="mt-1 w-80 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                  value={algeWsEndpoint}
-                  onChange={(e) => setAlgeWsEndpoint(e.target.value)}
-                  placeholder="https://www.alge-results.com/devices"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                  Topic (optional)
-                </label>
-                <input
-                  className="mt-1 w-80 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                  value={algeWsTopic}
-                  onChange={(e) => setAlgeWsTopic(e.target.value)}
-                  placeholder="/topic/device/190801013/trigger"
-                />
-              </div>
-              <div>
-                <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                  Token (optional)
-                </label>
-                <input
-                  className="mt-1 w-72 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                  value={algeWsToken}
-                  onChange={(e) => setAlgeWsToken(e.target.value)}
-                  placeholder="authorization token"
-                />
-              </div>
-              {!streamConnected ? (
-                <button
-                  type="button"
-                  onClick={connectStompStream}
-                  disabled={pending}
-                  className="rounded-lg border border-green-300 px-3 py-1.5 text-sm text-green-700 dark:border-green-700 dark:text-green-400"
+                <select
+                  className="rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  value={timingRunStatus}
+                  onChange={(e) =>
+                    setMeta((m) => ({
+                      ...m,
+                      speedRunImportStatus: {
+                        ...m.speedRunImportStatus,
+                        [timingRun]: e.target.value as SpeedRunImportStatus,
+                      },
+                    }))
+                  }
                 >
-                  Connect stream
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={disconnectStompStream}
-                  className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-800 dark:text-red-400"
-                >
-                  Disconnect stream
-                </button>
-              )}
-            </div>
-            <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-              Status: {streamInfo}
-            </p>
-            {streamLastPayload ? (
-              <pre className="mt-2 max-h-32 overflow-auto rounded bg-zinc-50 p-2 text-[11px] text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
-                {streamLastPayload}
-              </pre>
+                  <option value="scheduled">Scheduled</option>
+                  <option value="live">Live</option>
+                  <option value="completed">Completed</option>
+                </select>
+                <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                  ALGE import will be allowed only when status is Live.
+                </span>
+              </div>
+            ) : (
+              <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                ALGE live trigger read is enabled for the selected rally stage tab.
+              </p>
+            )}
+            {meta.type === "speed" ? (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Start Device ID
+                  </label>
+                  <input
+                    className="mt-1 w-36 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    value={algeStartDeviceId}
+                    onChange={(e) => setAlgeStartDeviceId(e.target.value)}
+                    placeholder="190801013"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Start Channel
+                  </label>
+                  <input
+                    className="mt-1 w-20 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    value={algeStartChannelId}
+                    onChange={(e) => setAlgeStartChannelId(e.target.value)}
+                    placeholder="0"
+                  />
+                </div>
+              </div>
             ) : null}
-          </div>
+            <div className="mt-3 flex flex-wrap items-end gap-2">
+                <div>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Finish Device ID
+                  </label>
+                  <input
+                    className="mt-1 w-36 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    value={algeFinishDeviceId}
+                    onChange={(e) => setAlgeFinishDeviceId(e.target.value)}
+                    placeholder="190801013"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Finish Channel
+                  </label>
+                  <input
+                    className="mt-1 w-20 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                    value={algeFinishChannelId}
+                    onChange={(e) => setAlgeFinishChannelId(e.target.value)}
+                    placeholder="1"
+                  />
+                </div>
+            </div>
+            <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Live trigger stream (STOMP/SockJS)
+                </p>
+                <div className="mt-2 flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Endpoint
+                    </label>
+                    <input
+                      className="mt-1 w-80 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={algeWsEndpoint}
+                      onChange={(e) => setAlgeWsEndpoint(e.target.value)}
+                      placeholder="https://www.alge-results.com/devices"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Topic (optional)
+                    </label>
+                    <input
+                      className="mt-1 w-80 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={algeWsTopic}
+                      onChange={(e) => setAlgeWsTopic(e.target.value)}
+                      placeholder="/topic/device/190801013/trigger"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Token (optional)
+                    </label>
+                    <input
+                      className="mt-1 w-72 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={algeWsToken}
+                      onChange={(e) => setAlgeWsToken(e.target.value)}
+                      placeholder="authorization token"
+                    />
+                  </div>
+                  {!streamConnected ? (
+                    <button
+                      type="button"
+                      onClick={connectStompStream}
+                      disabled={pending}
+                      className="rounded-lg border border-green-300 px-3 py-1.5 text-sm text-green-700 dark:border-green-700 dark:text-green-400"
+                    >
+                      Connect stream
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={disconnectStompStream}
+                      className="rounded-lg border border-red-300 px-3 py-1.5 text-sm text-red-700 dark:border-red-800 dark:text-red-400"
+                    >
+                      Disconnect stream
+                    </button>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                  Status: {streamInfo}
+                </p>
+                {streamLastPayload ? (
+                  <pre className="mt-2 max-h-32 overflow-auto rounded bg-zinc-50 p-2 text-[11px] text-zinc-700 dark:bg-zinc-950 dark:text-zinc-300">
+                    {streamLastPayload}
+                  </pre>
+                ) : null}
+            </div>
+          </>
           <div className="mt-4 space-y-3 sm:hidden">
             {entries
               .slice()
               .sort((a, b) => a.startNumber - b.startNumber)
               .map((row) => {
-                const startValue = (row[timingStartField] as string) ?? "";
-                const finishValue = (row[timingFinishField] as string) ?? "";
+                const { startValue, finishValue, penaltyValue } =
+                  getTimingValuesForEntry(row);
                 const outcome = parseTimingOutcome(startValue, finishValue);
                 return (
                   <div
@@ -1551,9 +2148,14 @@ export function EventEditor({ event: initial }: Props) {
                       <p className="font-mono text-sm text-zinc-600 dark:text-zinc-300">
                         #{row.startNumber}
                       </p>
-                      <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
-                        {row.driver || "—"}
-                      </p>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                          {row.driver || "—"}
+                        </p>
+                        <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                          {row.coDriver || "—"}
+                        </p>
+                      </div>
                     </div>
                     <div className="grid grid-cols-1 gap-2">
                       <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
@@ -1569,10 +2171,11 @@ export function EventEditor({ event: initial }: Props) {
                             setEntries((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
-                                  ? {
-                                      ...x,
-                                      [timingStartField]: e.target.value.trim(),
-                                    }
+                                  ? updateEntryTimingValues(
+                                      x,
+                                      e.target.value.trim(),
+                                      getTimingValuesForEntry(x).finishValue,
+                                    )
                                   : x,
                               ),
                             )
@@ -1593,10 +2196,11 @@ export function EventEditor({ event: initial }: Props) {
                             setEntries((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
-                                  ? {
-                                      ...x,
-                                      [timingFinishField]: e.target.value.trim(),
-                                    }
+                                  ? updateEntryTimingValues(
+                                      x,
+                                      getTimingValuesForEntry(x).startValue,
+                                      e.target.value.trim(),
+                                    )
                                   : x,
                               ),
                             )
@@ -1611,17 +2215,6 @@ export function EventEditor({ event: initial }: Props) {
                     <div className="mt-2 flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setTimingOutcomeForEntry(row.id, "dns", outcome)}
-                        className={`rounded border px-3 py-2 text-sm font-medium ${
-                          outcome === "dns"
-                            ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
-                            : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                        }`}
-                      >
-                        DNS
-                      </button>
-                      <button
-                        type="button"
                         onClick={() => setTimingOutcomeForEntry(row.id, "dnf", outcome)}
                         className={`rounded border px-3 py-2 text-sm font-medium ${
                           outcome === "dnf"
@@ -1631,7 +2224,47 @@ export function EventEditor({ event: initial }: Props) {
                       >
                         DNF
                       </button>
+                      <button
+                        type="button"
+                        onClick={() => setTimingOutcomeForEntry(row.id, "ret", outcome)}
+                        className={`rounded border px-3 py-2 text-sm font-medium ${
+                          outcome === "ret"
+                            ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                            : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        }`}
+                      >
+                        RET
+                      </button>
                     </div>
+                    {meta.type === "rally" ? (
+                      <div className="mt-2 grid grid-cols-1 gap-2">
+                        <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                          Penalty
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="^\\d{1,3}:[0-5]\\d$"
+                            placeholder="mm:ss"
+                            title="Penalty format: mm:ss"
+                            className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={penaltyValue}
+                            onChange={(e) =>
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? updateEntryTimingPenaltyValues(
+                                        x,
+                                        normalizePenaltyInput(e.target.value),
+                                        getTimingValuesForEntry(x).penaltyNoteValue,
+                                      )
+                                    : x,
+                                ),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    ) : null}
                   </div>
                 );
               })}
@@ -1641,11 +2274,16 @@ export function EventEditor({ event: initial }: Props) {
               <thead>
                 <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
                   <th className="pb-2 pr-2 w-14">#</th>
-                  <th className="pb-2 pr-2">Driver</th>
-                  <th className="pb-2 pr-2 w-32">Start</th>
-                  <th className="pb-2 pr-2 w-32">Finish</th>
+                  <th className="pb-2 pr-2">
+                    {meta.type === "rally" ? "Crew" : "Driver"}
+                  </th>
+                  <th className="pb-2 pr-2 w-24">Start</th>
+                  <th className="pb-2 pr-2 w-40">Finish</th>
                   <th className="pb-2 pr-2 w-36">Total time</th>
                   <th className="pb-2 pr-2 w-28">Status</th>
+                  {meta.type === "rally" ? (
+                    <th className="pb-2 pr-2 w-24">Penalty</th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
@@ -1653,8 +2291,8 @@ export function EventEditor({ event: initial }: Props) {
                   .slice()
                   .sort((a, b) => a.startNumber - b.startNumber)
                   .map((row) => {
-                    const startValue = (row[timingStartField] as string) ?? "";
-                    const finishValue = (row[timingFinishField] as string) ?? "";
+                    const { startValue, finishValue, penaltyValue } =
+                      getTimingValuesForEntry(row);
                     const outcome = parseTimingOutcome(startValue, finishValue);
                     return (
                       <tr
@@ -1665,7 +2303,14 @@ export function EventEditor({ event: initial }: Props) {
                         {row.startNumber}
                       </td>
                       <td className="py-2 pr-2">
-                        {row.driver || "—"}
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                            {row.driver || "—"}
+                          </p>
+                          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                            {row.coDriver || "—"}
+                          </p>
+                        </div>
                       </td>
                       <td className="py-2 pr-2">
                         <input
@@ -1673,16 +2318,17 @@ export function EventEditor({ event: initial }: Props) {
                           inputMode="numeric"
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
                           placeholder="HH:mm:ss.cc"
-                          className="w-full rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          className="w-24 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={startValue}
                           onChange={(e) =>
                             setEntries((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
-                                  ? {
-                                      ...x,
-                                      [timingStartField]: e.target.value.trim(),
-                                    }
+                                  ? updateEntryTimingValues(
+                                      x,
+                                      e.target.value.trim(),
+                                      getTimingValuesForEntry(x).finishValue,
+                                    )
                                   : x,
                               ),
                             )
@@ -1696,16 +2342,17 @@ export function EventEditor({ event: initial }: Props) {
                           inputMode="numeric"
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
                           placeholder="HH:mm:ss.cc"
-                          className="w-full rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          className="w-40 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={finishValue}
                           onChange={(e) =>
                             setEntries((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
-                                  ? {
-                                      ...x,
-                                      [timingFinishField]: e.target.value.trim(),
-                                    }
+                                  ? updateEntryTimingValues(
+                                      x,
+                                      getTimingValuesForEntry(x).startValue,
+                                      e.target.value.trim(),
+                                    )
                                   : x,
                               ),
                             )
@@ -1723,17 +2370,6 @@ export function EventEditor({ event: initial }: Props) {
                         <div className="flex flex-wrap gap-1">
                           <button
                             type="button"
-                            onClick={() => setTimingOutcomeForEntry(row.id, "dns", outcome)}
-                            className={`rounded border px-2 py-1 text-xs font-medium ${
-                              outcome === "dns"
-                                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
-                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                            }`}
-                          >
-                            DNS
-                          </button>
-                          <button
-                            type="button"
                             onClick={() => setTimingOutcomeForEntry(row.id, "dnf", outcome)}
                             className={`rounded border px-2 py-1 text-xs font-medium ${
                               outcome === "dnf"
@@ -1743,9 +2379,226 @@ export function EventEditor({ event: initial }: Props) {
                           >
                             DNF
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => setTimingOutcomeForEntry(row.id, "ret", outcome)}
+                            className={`rounded border px-2 py-1 text-xs font-medium ${
+                              outcome === "ret"
+                                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                            }`}
+                          >
+                            RET
+                          </button>
                         </div>
                       </td>
+                      {meta.type === "rally" ? (
+                        <td className="py-2 pr-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="^\\d{1,3}:[0-5]\\d$"
+                            placeholder="mm:ss"
+                            title="Penalty format: mm:ss"
+                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={penaltyValue}
+                            onChange={(e) =>
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? updateEntryTimingPenaltyValues(
+                                        x,
+                                        normalizePenaltyInput(e.target.value),
+                                        getTimingValuesForEntry(x).penaltyNoteValue,
+                                      )
+                                    : x,
+                                ),
+                              )
+                            }
+                          />
+                        </td>
+                      ) : null}
                     </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+          {meta.type === "rally" && showAssignStartModal ? (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+              <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+                <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                  Assign start times
+                </h3>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  Set first-car start and interval for a car range on the selected stage.
+                </p>
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    From car
+                    <input
+                      type="number"
+                      min={1}
+                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={assignStartFromCar}
+                      onChange={(e) => setAssignStartFromCar(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    To car
+                    <input
+                      type="number"
+                      min={1}
+                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={assignStartToCar}
+                      onChange={(e) => setAssignStartToCar(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Car {assignStartFromCar || "1"} start
+                    <input
+                      type="time"
+                      step={60}
+                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={assignStartFirstTime}
+                      onChange={(e) => setAssignStartFirstTime(e.target.value)}
+                    />
+                  </label>
+                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    Interval (min)
+                    <input
+                      type="number"
+                      min={0}
+                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={assignStartIntervalMin}
+                      onChange={(e) => setAssignStartIntervalMin(e.target.value)}
+                    />
+                  </label>
+                </div>
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowAssignStartModal(false)}
+                    className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={applyBulkStartTimes}
+                    className="rounded-lg bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 dark:bg-red-600"
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+      {meta.type === "rally" && activeTab === "penalties" ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Penalties
+            </h2>
+            <button
+              type="button"
+              onClick={savePenalties}
+              disabled={pending}
+              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+            >
+              Save penalties
+            </button>
+          </div>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[640px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
+                  <th className="pb-2 pr-2 w-24">Car Number</th>
+                  <th className="pb-2 pr-2 w-24">Penalty</th>
+                  <th className="pb-2 pr-2">Penalty Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                {entries
+                  .slice()
+                  .sort((a, b) => a.startNumber - b.startNumber)
+                  .map((row) => {
+                    const { penaltyValue, penaltyNoteValue } =
+                      getPenaltyValuesForEntry(row);
+                    return (
+                      <tr
+                        key={`pen-row-${row.id}`}
+                        className="border-b border-zinc-100 dark:border-zinc-800"
+                      >
+                        <td className="py-2 pr-2">
+                          <input
+                            type="number"
+                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={row.startNumber}
+                            onChange={(e) => {
+                              const n = Number.parseInt(e.target.value, 10);
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? {
+                                        ...x,
+                                        startNumber: Number.isNaN(n) ? x.startNumber : n,
+                                      }
+                                    : x,
+                                ),
+                              );
+                            }}
+                          />
+                        </td>
+                        <td className="py-2 pr-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="^\\d{1,3}:[0-5]\\d$"
+                            placeholder="mm:ss"
+                            title="Penalty format: mm:ss"
+                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={penaltyValue}
+                            onChange={(e) =>
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? updateEntryPenaltyValues(
+                                        x,
+                                        normalizePenaltyInput(e.target.value),
+                                        getPenaltyValuesForEntry(x).penaltyNoteValue,
+                                      )
+                                    : x,
+                                ),
+                              )
+                            }
+                          />
+                        </td>
+                        <td className="py-2 pr-2">
+                          <input
+                            type="text"
+                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={penaltyNoteValue}
+                            onChange={(e) =>
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? updateEntryPenaltyValues(
+                                        x,
+                                        getPenaltyValuesForEntry(x).penaltyValue,
+                                        e.target.value,
+                                      )
+                                    : x,
+                                ),
+                              )
+                            }
+                          />
+                        </td>
+                      </tr>
                     );
                   })}
               </tbody>

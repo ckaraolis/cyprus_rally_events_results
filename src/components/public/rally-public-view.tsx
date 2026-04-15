@@ -28,12 +28,19 @@ const SPEED_TABS = [
   { id: "stage-results", label: "Live results" },
   { id: "entries", label: "Entry List" },
   { id: "final-results", label: "Final Results" },
+  { id: "official-notice-board", label: "Official Notice Board" },
 ] as const;
 
-type TabId = (typeof RALLY_TABS)[number]["id"];
+type TabId = (typeof RALLY_TABS | typeof SPEED_TABS)[number]["id"];
 
 type ResultsSubView = "stage" | "overall";
 type SpeedRunId = "trial" | "run1" | "run2" | "best";
+const OFFICIAL_NOTICE_DEFAULT_CATEGORIES = [
+  "Supplementary Regulations",
+  "Bulletins",
+  "Steward Decisions",
+  "Other",
+] as const;
 const SPEED_RUNS: ReadonlyArray<{ id: SpeedRunId; label: string }> = [
   { id: "trial", label: "Trial" },
   { id: "run1", label: "1st Run" },
@@ -82,6 +89,7 @@ function EntryClassFilterBar({
   options,
   filteredCount,
   totalCount,
+  rightAction,
 }: {
   id: string;
   value: string;
@@ -89,37 +97,41 @@ function EntryClassFilterBar({
   options: { nonEmpty: string[]; hasEmpty: boolean };
   filteredCount: number;
   totalCount: number;
+  rightAction?: React.ReactNode;
 }) {
   if (totalCount === 0) return null;
   return (
-    <div className="flex flex-wrap items-center gap-3 border-b border-[var(--ewrc-border)] px-4 py-3">
-      <label
-        htmlFor={id}
-        className="text-xs font-semibold uppercase tracking-wider text-[var(--ewrc-muted)]"
-      >
-        Class
-      </label>
-      <select
-        id={id}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="min-w-[10rem] rounded-md border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-3 py-2 text-sm text-[var(--ewrc-input-fg)] focus:border-[var(--ewrc-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--ewrc-focus-ring)]"
-      >
-        <option value="">All classes</option>
-        {options.hasEmpty ? (
-          <option value="__EMPTY__">No class</option>
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ewrc-border)] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <label
+          htmlFor={id}
+          className="text-xs font-semibold uppercase tracking-wider text-[var(--ewrc-muted)]"
+        >
+          Class
+        </label>
+        <select
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="min-w-[10rem] rounded-md border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-3 py-2 text-sm text-[var(--ewrc-input-fg)] focus:border-[var(--ewrc-brand)] focus:outline-none focus:ring-1 focus:ring-[var(--ewrc-focus-ring)]"
+        >
+          <option value="">All classes</option>
+          {options.hasEmpty ? (
+            <option value="__EMPTY__">No class</option>
+          ) : null}
+          {options.nonEmpty.map((c) => (
+            <option key={c} value={c}>
+              {c}
+            </option>
+          ))}
+        </select>
+        {value !== "" ? (
+          <span className="text-xs text-[var(--ewrc-muted-3)]">
+            {filteredCount} of {totalCount} crews
+          </span>
         ) : null}
-        {options.nonEmpty.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-      {value !== "" ? (
-        <span className="text-xs text-[var(--ewrc-muted-3)]">
-          {filteredCount} of {totalCount} crews
-        </span>
-      ) : null}
+      </div>
+      {rightAction ? <div className="shrink-0">{rightAction}</div> : null}
     </div>
   );
 }
@@ -251,6 +263,24 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
     () => filterEntriesByClass(entriesStartedSorted, finalResultsClassFilter),
     [entriesStartedSorted, finalResultsClassFilter],
   );
+  const officialNoticeDocumentsSorted = useMemo(
+    () =>
+      [...(event.officialNoticeDocuments ?? [])].sort((a, b) =>
+        b.uploadedAt.localeCompare(a.uploadedAt),
+      ),
+    [event.officialNoticeDocuments],
+  );
+  const officialNoticeCategories = useMemo(() => {
+    const fromDocs = officialNoticeDocumentsSorted
+      .map((d) => d.category?.trim() ?? "")
+      .filter(Boolean);
+    const merged = new Set<string>([
+      ...OFFICIAL_NOTICE_DEFAULT_CATEGORIES,
+      ...(event.officialNoticeCustomCategories ?? []),
+      ...fromDocs,
+    ]);
+    return [...merged];
+  }, [event.officialNoticeCustomCategories, officialNoticeDocumentsSorted]);
 
   const totalKm = useMemo(
     () =>
@@ -319,7 +349,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
       }
     }
     return out;
-  }, [event.type, stagesSorted]);
+  }, [event.speedRunImportStatus, event.type, stagesSorted]);
 
   useEffect(() => {
     if (resultsStripItems.length === 0) {
@@ -365,6 +395,42 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
       .filter(
         (x): x is { row: Entry; startMs: number; finishMs: number | null } =>
           x.startMs != null,
+      )
+      .filter((x) => x.startMs <= nowDayMs)
+      .filter((x) => x.finishMs == null)
+      .sort((a, b) => a.startMs - b.startMs);
+  }, [entriesForStageResults, event.type, nowMs, selectedStripItem]);
+  const onStageRallyRows = useMemo(() => {
+    if (
+      event.type !== "rally" ||
+      !selectedStripItem ||
+      selectedStripItem.type !== "stage"
+    ) {
+      return [];
+    }
+    const now = new Date(nowMs);
+    const nowDayMs =
+      now.getHours() * 3_600_000 +
+      now.getMinutes() * 60_000 +
+      now.getSeconds() * 1_000 +
+      now.getMilliseconds();
+    const stageId = selectedStripItem.stage.id;
+    return entriesForStageResults
+      .map((row) => {
+        const values = getRallyStageTimingValues(row, stageId);
+        const startMs = parseClockToDayMs(values.startValue);
+        const finishMs = parseClockToDayMs(values.finishValue);
+        return { row, startMs, finishMs, startValue: values.startValue };
+      })
+      .filter(
+        (
+          x,
+        ): x is {
+          row: Entry;
+          startMs: number;
+          finishMs: number | null;
+          startValue: string;
+        } => x.startMs != null,
       )
       .filter((x) => x.startMs <= nowDayMs)
       .filter((x) => x.finishMs == null)
@@ -763,6 +829,15 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                 options={entryListClassOptions}
                 filteredCount={entriesForStageResults.length}
                 totalCount={entriesSorted.length}
+                rightAction={
+                  <button
+                    type="button"
+                    onClick={printStageResultsPdf}
+                    className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                  >
+                    Print PDF
+                  </button>
+                }
               />
               {resultsStripItems.length === 0 ? (
                 <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
@@ -864,31 +939,6 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                       })}
                     </div>
                   </div>
-                  <div className="flex flex-wrap gap-2 border-t border-[var(--ewrc-border)] px-4 py-3 sm:px-5">
-                    <button
-                      type="button"
-                      onClick={printStageResultsPdf}
-                      className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
-                    >
-                      Print PDF
-                    </button>
-                  </div>
-                  {event.type === "rally" ? (
-                    <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-[var(--ewrc-border)] px-4 py-3 text-xs text-[var(--ewrc-muted-2)] sm:px-5">
-                      <span className="flex items-center gap-2">
-                        <StageProgressDot status="pending" />
-                        Not started
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <StageProgressDot status="live" />
-                        Live
-                      </span>
-                      <span className="flex items-center gap-2">
-                        <StageProgressDot status="completed" />
-                        Completed
-                      </span>
-                    </div>
-                  ) : null}
                 </>
               )}
             </div>
@@ -911,6 +961,26 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                         <p className="mt-0.5 text-xs text-[var(--ewrc-muted-3)]">
                           {selectedStripItem.stage.distanceKm} km
                         </p>
+                      ) : null}
+                      {event.type === "rally" ? (
+                        <div className="mt-2 rounded-md border border-[var(--ewrc-border)] bg-[var(--ewrc-input-bg)] px-3 py-2">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ewrc-muted)]">
+                            On Stage:
+                          </p>
+                          {onStageRallyRows.length > 0 ? (
+                            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--ewrc-strong)]">
+                              {onStageRallyRows.map(({ row, startValue }) => (
+                                <span key={`on-stage-rally-${row.id}`} className="font-mono">
+                                  #{row.startNumber} {row.driver || "—"} ({startValue})
+                                </span>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-1 text-xs text-[var(--ewrc-muted-3)]">
+                              No crew currently on stage.
+                            </p>
+                          )}
+                        </div>
                       ) : null}
                     </>
                   ) : selectedStripItem.type === "legEnd" ? (
@@ -972,7 +1042,10 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                       />
                     )
                   ) : selectedStripItem.type === "stage" ? (
-                    <StageTimesTable entries={entriesForStageResults} />
+                    <StageTimesTable
+                      entries={entriesForStageResults}
+                      stageId={event.type === "rally" ? selectedStripItem.stage.id : undefined}
+                    />
                   ) : (
                     <LegResultsTable
                       entries={entriesForStageResults}
@@ -1246,6 +1319,84 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
             </div>
           </div>
         ) : null}
+
+        {tab === "official-notice-board" && event.type === "speed" ? (
+          <div className="ewrc-panel p-5 sm:p-6">
+            <h2 className="font-ewrc-heading text-sm font-bold uppercase tracking-widest text-[var(--ewrc-muted)]">
+              Official Notice Board
+            </h2>
+            <p className="mt-3 text-sm text-[var(--ewrc-muted-2)]">
+              Supplementary Regulations, Bulletins, Steward Decisions, and additional
+              official documents published by the event admin.
+            </p>
+            {officialNoticeDocumentsSorted.length === 0 ? (
+              <div className="mt-5 rounded-lg border border-[var(--ewrc-border)] bg-[var(--ewrc-input-bg)] px-4 py-5">
+                <p className="text-sm text-[var(--ewrc-muted-3)]">
+                  No notices published yet.
+                </p>
+              </div>
+            ) : (
+              <div className="mt-5 space-y-5">
+                {officialNoticeCategories.map((category) => {
+                  const rows = officialNoticeDocumentsSorted.filter(
+                    (doc) => (doc.category || "Other") === category,
+                  );
+                  if (rows.length === 0) return null;
+                  return (
+                    <section
+                      key={category}
+                      className="overflow-hidden rounded-lg border border-[var(--ewrc-border)]"
+                    >
+                      <div className="border-b border-[var(--ewrc-border)] bg-[var(--ewrc-input-bg)] px-4 py-2.5">
+                        <h3 className="text-xs font-semibold uppercase tracking-wider text-[var(--ewrc-muted)]">
+                          {category}
+                        </h3>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="ewrc-table w-full min-w-[560px] text-sm">
+                          <thead>
+                            <tr>
+                              <th>Document</th>
+                              <th className="w-44 text-center">Published</th>
+                              <th className="w-36 text-center">Open</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.map((doc, idx) => (
+                              <tr key={doc.id} className={idx % 2 === 1 ? "ewrc-row-alt" : ""}>
+                                <td className="py-2.5">
+                                  <p className="font-medium text-[var(--ewrc-heading)]">
+                                    {doc.title}
+                                  </p>
+                                  <p className="text-xs text-[var(--ewrc-muted-3)]">
+                                    {doc.fileName}
+                                  </p>
+                                </td>
+                                <td className="text-center text-xs text-[var(--ewrc-muted-2)]">
+                                  {new Date(doc.uploadedAt).toLocaleString()}
+                                </td>
+                                <td className="text-center">
+                                  <a
+                                    href={doc.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex rounded-md border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--ewrc-heading)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                                  >
+                                    View
+                                  </a>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : null}
       </main>
     </>
   );
@@ -1359,9 +1510,36 @@ function LegResultsTable({
   stagesInLeg: Stage[];
 }) {
   const sorted = useMemo(
-    () => [...entries].sort((a, b) => a.startNumber - b.startNumber),
-    [entries],
+    () =>
+      [...entries]
+        .map((row) => {
+          const stageTimes = stagesInLeg.map((st) => {
+            const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
+            const startMs = parseClockToDayMs(startValue);
+            const finishMs = parseClockToDayMs(finishValue);
+            if (startMs == null || finishMs == null) return null;
+            const duration = finishMs - startMs;
+            return duration >= 0 ? duration : null;
+          });
+          const allTimed = stageTimes.every((t) => t != null);
+          const totalMs = allTimed
+            ? stageTimes.reduce((sum, t) => sum + (t ?? 0), 0)
+            : null;
+          return { row, stageTimes, totalMs };
+        })
+        .sort((a, b) =>
+          a.totalMs != null && b.totalMs == null
+            ? -1
+            : a.totalMs == null && b.totalMs != null
+              ? 1
+              : a.totalMs !== b.totalMs
+                ? (a.totalMs ?? Number.MAX_SAFE_INTEGER) -
+                  (b.totalMs ?? Number.MAX_SAFE_INTEGER)
+                : a.row.startNumber - b.row.startNumber,
+        ),
+    [entries, stagesInLeg],
   );
+  const leaderTotal = sorted.find((x) => x.totalMs != null)?.totalMs ?? null;
 
   if (stagesInLeg.length === 0) {
     return (
@@ -1387,17 +1565,17 @@ function LegResultsTable({
           <th className="w-12 text-right">#</th>
           <th className="min-w-[10rem]">Driver</th>
           {stagesInLeg.map((st) => (
-            <th key={st.id} className="w-24 whitespace-nowrap text-center">
+            <th key={st.id} className="w-24 whitespace-nowrap !text-center">
               SS{st.order}
             </th>
           ))}
-          <th className="w-24 text-center">Penalty</th>
-          <th className="w-28 text-center">Total</th>
-          <th className="w-24 text-center">Diff</th>
+          <th className="w-24 !text-center">Penalty</th>
+          <th className="w-28 !text-center">Total</th>
+          <th className="w-24 !text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
-        {sorted.map((row, i) => (
+        {sorted.map(({ row, stageTimes, totalMs }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
               {i + 1}
@@ -1406,25 +1584,29 @@ function LegResultsTable({
               {row.startNumber}
             </td>
             <CrewStackCell row={row} />
-            {stagesInLeg.map((st) => (
+            {stagesInLeg.map((st, idx) => (
               <td
                 key={st.id}
-                className="align-middle text-center font-mono text-[var(--ewrc-time-placeholder)]"
+                className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs"
               >
-                —
+                {formatDurationMs(stageTimes[idx] ?? null)}
               </td>
             ))}
             <td className="align-middle">
-              <span className="flex w-full justify-center font-mono text-[var(--ewrc-time-placeholder)]">
+              <span className="flex w-full justify-center text-center font-mono text-[var(--ewrc-time-placeholder)]">
                 —
               </span>
             </td>
             <td className="align-middle">
-              <span className="flex w-full justify-center font-mono text-[var(--ewrc-time-placeholder)]">
-                —
+              <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {formatDurationMs(totalMs)}
               </span>
             </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-time-placeholder)]">—</td>
+            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+              {leaderTotal == null || totalMs == null || totalMs <= leaderTotal
+                ? "—"
+                : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -1432,16 +1614,39 @@ function LegResultsTable({
   );
 }
 
-function StageTimesTable({ entries }: { entries: Entry[] }) {
+function StageTimesTable({
+  entries,
+  stageId,
+}: {
+  entries: Entry[];
+  stageId?: string;
+}) {
   const sorted = useMemo(
-    () => [...entries].sort((a, b) => a.startNumber - b.startNumber),
-    [entries],
+    () =>
+      [...entries]
+        .map((row) => {
+          if (!stageId) return { row, durationMs: null as number | null };
+          const { startValue, finishValue } = getRallyStageTimingValues(row, stageId);
+          const startMs = parseClockToDayMs(startValue);
+          const finishMs = parseClockToDayMs(finishValue);
+          if (startMs == null || finishMs == null) return { row, durationMs: null as number | null };
+          const durationMs = finishMs - startMs;
+          return { row, durationMs: durationMs >= 0 ? durationMs : null };
+        })
+        .filter((x): x is { row: Entry; durationMs: number } => x.durationMs != null)
+        .sort((a, b) =>
+          a.durationMs !== b.durationMs
+            ? a.durationMs - b.durationMs
+            : a.row.startNumber - b.row.startNumber,
+        ),
+    [entries, stageId],
   );
+  const leaderMs = sorted[0]?.durationMs ?? null;
 
   if (sorted.length === 0) {
     return (
       <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
-        No entries for this stage list yet.
+        No timed entries for this stage yet.
       </p>
     );
   }
@@ -1452,13 +1657,13 @@ function StageTimesTable({ entries }: { entries: Entry[] }) {
         <tr>
           <th className="w-12 text-right">Pos</th>
           <th className="w-12 text-right">#</th>
-          <th className="min-w-[10rem]">Driver</th>
+          <th className="min-w-[10rem]">Crew</th>
           <th className="w-28 !text-center">Time</th>
           <th className="w-24 !text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
-        {sorted.map((row, i) => (
+        {sorted.map(({ row, durationMs }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
               {i + 1}
@@ -1466,9 +1671,15 @@ function StageTimesTable({ entries }: { entries: Entry[] }) {
             <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
               {row.startNumber}
             </td>
-            <DriverOnlyCell row={row} />
-            <td className="align-middle text-center font-mono text-[var(--ewrc-time-placeholder)]">—</td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-time-placeholder)]">—</td>
+            <CrewStackCell row={row} />
+            <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+              {formatDurationMs(durationMs)}
+            </td>
+            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+              {leaderMs == null || durationMs <= leaderMs
+                ? "—"
+                : `+${formatDiffDurationMs(durationMs - leaderMs)}`}
+            </td>
           </tr>
         ))}
       </tbody>
@@ -1862,6 +2073,39 @@ function parseClockToDayMs(value: string): number | null {
       ? 0
       : Number.parseInt(fracRaw.padEnd(3, "0").slice(0, 3), 10);
   return ((h * 60 + min) * 60 + sec) * 1000 + ms;
+}
+
+function parseRallyStageTimingBlob(raw: string): Record<string, { startTime?: string; finishTime?: string }> {
+  const trimmed = raw.trim();
+  if (!trimmed || !trimmed.startsWith("{")) return {};
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, { startTime?: string; finishTime?: string }> = {};
+    for (const [stageId, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const item = value as Record<string, unknown>;
+      out[stageId] = {
+        startTime: typeof item.startTime === "string" ? item.startTime : "",
+        finishTime: typeof item.finishTime === "string" ? item.finishTime : "",
+      };
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function getRallyStageTimingValues(
+  row: Entry,
+  stageId: string,
+): { startValue: string; finishValue: string } {
+  const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+  const values = blob[stageId] ?? {};
+  return {
+    startValue: values.startTime?.trim() ?? "",
+    finishValue: values.finishTime?.trim() ?? "",
+  };
 }
 
 function getSpeedRunDurationMs(
