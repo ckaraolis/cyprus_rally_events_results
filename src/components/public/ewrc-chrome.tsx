@@ -35,6 +35,13 @@ export function EwrcChrome({
       {children}
       <footer className="border-t border-[var(--ewrc-border)] bg-[var(--ewrc-footer-bg)] py-6 text-center text-xs text-[var(--ewrc-muted-3)]">
         <p>{site.resultsPageSubtitle}</p>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/uploads/hondagalatariotis.png"
+          alt="Hondagalatariotis logo"
+          className="mx-auto mt-3 h-auto max-h-14 w-auto object-contain"
+          loading="lazy"
+        />
       </footer>
     </div>
   );
