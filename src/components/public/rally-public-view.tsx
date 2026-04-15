@@ -1358,7 +1358,6 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                             <tr>
                               <th>Document</th>
                               <th className="w-44 text-center">Published</th>
-                              <th className="w-36 text-center">Open</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1368,22 +1367,17 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
                                   <p className="font-medium text-[var(--ewrc-heading)]">
                                     {doc.title}
                                   </p>
-                                  <p className="text-xs text-[var(--ewrc-muted-3)]">
-                                    {doc.fileName}
-                                  </p>
-                                </td>
-                                <td className="text-center text-xs text-[var(--ewrc-muted-2)]">
-                                  {new Date(doc.uploadedAt).toLocaleString()}
-                                </td>
-                                <td className="text-center">
                                   <a
                                     href={doc.url}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="inline-flex rounded-md border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-3 py-1.5 text-xs font-semibold text-[var(--ewrc-heading)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                                    className="text-xs text-[var(--ewrc-brand)] underline-offset-2 hover:underline"
                                   >
-                                    View
+                                    {doc.fileName}
                                   </a>
+                                </td>
+                                <td className="text-center text-xs text-[var(--ewrc-muted-2)]">
+                                  {new Date(doc.uploadedAt).toLocaleString()}
                                 </td>
                               </tr>
                             ))}
