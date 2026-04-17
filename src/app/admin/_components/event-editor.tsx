@@ -638,10 +638,12 @@ export function EventEditor({ event: initial }: Props) {
         return;
       }
       const ws = wb.Sheets[firstSheetName];
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+      const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, {
+        header: 1,
         defval: "",
+        blankrows: false,
       });
-      if (rows.length === 0) {
+      if (!Array.isArray(grid) || grid.length === 0) {
         setFlash("Excel import failed: no rows found.");
         return;
       }
@@ -659,20 +661,45 @@ export function EventEditor({ event: initial }: Props) {
         return true;
       };
 
-      const headerKeyMap = new Map<string, string>();
-      for (const key of Object.keys(rows[0] ?? {})) {
-        headerKeyMap.set(norm(key), key);
+      const headerRow = (grid[0] ?? []) as unknown[];
+      const dataRows = grid.slice(1).filter((row) => {
+        if (!Array.isArray(row)) return false;
+        return row.some((cell) => toStringValue(cell) !== "");
+      });
+      if (dataRows.length === 0) {
+        setFlash("Excel import failed: no data rows found.");
+        return;
       }
-      const read = (row: Record<string, unknown>, aliases: string[]) => {
-        for (const a of aliases) {
-          const original = headerKeyMap.get(norm(a));
-          if (original && original in row) return row[original];
+
+      const headerIndexMap = new Map<string, number>();
+      headerRow.forEach((header, idx) => {
+        const key = norm(header);
+        if (!key) return;
+        if (!headerIndexMap.has(key)) headerIndexMap.set(key, idx);
+      });
+      const aliasesToIndexes = (aliases: string[]): number[] => {
+        return aliases
+          .map((a) => headerIndexMap.get(norm(a)))
+          .filter((idx): idx is number => typeof idx === "number");
+      };
+      const readCell = (row: unknown[], aliases: string[]) => {
+        const indexes = aliasesToIndexes(aliases);
+        for (const idx of indexes) {
+          const v = row[idx];
+          if (toStringValue(v) !== "") return v;
         }
         return "";
       };
 
-      const imported: Entry[] = rows.map((row, idx) => {
-        const startNumberRaw = read(row, ["#", "No", "Number", "Start Number"]);
+      const importedRows: Array<Omit<Entry, "id">> = dataRows.map((rowRaw, idx) => {
+        const row = Array.isArray(rowRaw) ? rowRaw : [];
+        const startNumberRaw = readCell(row, [
+          "#",
+          "No",
+          "Number",
+          "Start Number",
+          "StartNumber",
+        ]);
         const startNumberParsed = Number.parseInt(
           toStringValue(startNumberRaw),
           10,
@@ -681,28 +708,46 @@ export function EventEditor({ event: initial }: Props) {
           ? idx + 1
           : startNumberParsed;
         return {
-          id: crypto.randomUUID(),
           startNumber,
-          entrance: toStringValue(read(row, ["Entrance"])),
-          start: parseStart(read(row, ["Start"])),
+          entrance: toStringValue(readCell(row, ["Entrance"])),
+          start: parseStart(readCell(row, ["Start"])),
           trialStartTime: "",
           trialFinishTime: "",
           run1StartTime: "",
           run1FinishTime: "",
           run2StartTime: "",
           run2FinishTime: "",
-          driver: toStringValue(read(row, ["Driver"])),
-          coDriver: toStringValue(read(row, ["Co-driver", "Codriver", "Co Driver"])),
-          car: toStringValue(read(row, ["Car"])),
-          class: toStringValue(read(row, ["Class"])),
-          driverCountryCode: toStringValue(read(row, ["Drv", "Driver Country"])),
-          coDriverCountryCode: toStringValue(read(row, ["Co", "Co-driver Country"])),
+          driver: toStringValue(readCell(row, ["Driver", "Driver Name"])),
+          coDriver: toStringValue(
+            readCell(row, ["Co-driver", "Codriver", "Co Driver", "Navigator"]),
+          ),
+          car: toStringValue(readCell(row, ["Car", "Vehicle"])),
+          class: toStringValue(readCell(row, ["Class", "Category"])),
+          driverCountryCode: toStringValue(
+            readCell(row, ["Drv", "Driver Country", "Driver Country Code"]),
+          ),
+          coDriverCountryCode: toStringValue(
+            readCell(row, ["Co", "Co-driver Country", "Co-driver Country Code"]),
+          ),
         };
       });
 
-      setEntries(imported.sort((a, b) => a.startNumber - b.startNumber));
+      setEntries((prev) => {
+        const byStartNo = new Map<number, Entry>();
+        for (const existing of prev) {
+          byStartNo.set(existing.startNumber, existing);
+        }
+        for (const row of importedRows) {
+          const existing = byStartNo.get(row.startNumber);
+          byStartNo.set(row.startNumber, {
+            id: existing?.id ?? crypto.randomUUID(),
+            ...row,
+          });
+        }
+        return [...byStartNo.values()].sort((a, b) => a.startNumber - b.startNumber);
+      });
       setFlash(
-        `Imported ${imported.length} entries from "${file.name}". Click Save entries to publish.`,
+        `Imported ${importedRows.length} rows from "${file.name}". Click Save entries to publish.`,
       );
     } catch (e) {
       setFlash(
