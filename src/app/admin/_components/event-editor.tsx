@@ -389,7 +389,11 @@ export function EventEditor({ event: initial }: Props) {
       }
     } else {
       if (!algeStartDeviceId.trim()) {
-        setFlash("Set Device ID first.");
+        setFlash("Set Start Device ID first.");
+        return;
+      }
+      if (!algeFinishDeviceId.trim()) {
+        setFlash("Set Finish Device ID first.");
         return;
       }
     }
@@ -404,12 +408,35 @@ export function EventEditor({ event: initial }: Props) {
         (sockJsMod as unknown as { default?: new (url: string) => WebSocket })
           .default ??
         (sockJsMod as unknown as new (url: string) => WebSocket);
-      const defaultDeviceId =
-        metaRef.current.type === "rally"
-          ? algeFinishDeviceId.trim()
-          : algeStartDeviceId.trim();
-      const topic =
-        algeWsTopic.trim() || `/topic/device/${defaultDeviceId}/trigger`;
+      const customTopic = algeWsTopic.trim();
+      const subscriptions: Array<{
+        topic: string;
+        forcedTrigger: "start" | "finish" | null;
+      }> = [];
+      if (customTopic) {
+        subscriptions.push({
+          topic: customTopic,
+          forcedTrigger: metaRef.current.type === "rally" ? "finish" : null,
+        });
+      } else if (metaRef.current.type === "rally") {
+        subscriptions.push({
+          topic: `/topic/device/${algeFinishDeviceId.trim()}/trigger`,
+          forcedTrigger: "finish",
+        });
+      } else {
+        subscriptions.push({
+          topic: `/topic/device/${algeStartDeviceId.trim()}/trigger`,
+          forcedTrigger: "start",
+        });
+        subscriptions.push({
+          topic: `/topic/device/${algeFinishDeviceId.trim()}/trigger`,
+          forcedTrigger: "finish",
+        });
+      }
+      const uniqueSubscriptions = subscriptions.filter(
+        (s, i, arr) => arr.findIndex((x) => x.topic === s.topic) === i,
+      );
+      const topicLabel = uniqueSubscriptions.map((x) => x.topic).join(", ");
       const client = new Client({
         webSocketFactory: () => new SockJS(algeWsEndpoint.trim()),
         connectHeaders: algeWsToken.trim()
@@ -419,73 +446,73 @@ export function EventEditor({ event: initial }: Props) {
       });
       client.onConnect = () => {
         setStreamConnected(true);
-        setStreamInfo(`Connected (${topic})`);
-        client.subscribe(topic, (message) => {
-          try {
-            setStreamLastPayload(message.body.slice(0, 1000));
-            const payload = JSON.parse(message.body) as {
-              dto?: {
-                timestamp?: number | string;
-                timeOffset?: number | string;
-                startNumber?:
-                  | { startNumber?: number | string }
-                  | number
-                  | string;
+        setStreamInfo(`Connected (${topicLabel})`);
+        for (const sub of uniqueSubscriptions) {
+          client.subscribe(sub.topic, (message) => {
+            try {
+              setStreamLastPayload(message.body.slice(0, 1000));
+              const payload = JSON.parse(message.body) as {
+                dto?: {
+                  timestamp?: number | string;
+                  timeOffset?: number | string;
+                  startNumber?:
+                    | { startNumber?: number | string }
+                    | number
+                    | string;
+                };
               };
-            };
-            const dto = payload?.dto;
-            const startNumberRaw =
-              typeof dto?.startNumber === "object"
-                ? dto.startNumber?.startNumber
-                : dto?.startNumber;
-            const startNumber =
-              typeof startNumberRaw === "number"
-                ? Math.floor(startNumberRaw)
-                : Number.parseInt(String(startNumberRaw ?? ""), 10);
-            const timestampNum =
-              typeof dto?.timestamp === "number"
-                ? dto.timestamp
-                : Number.parseInt(String(dto?.timestamp ?? ""), 10);
-            const timeOffsetNum =
-              typeof dto?.timeOffset === "number"
-                ? dto.timeOffset
-                : Number.parseInt(String(dto?.timeOffset ?? ""), 10);
-            const timingChannelRaw =
-              payload?.dto && typeof payload.dto === "object"
-                ? String((payload.dto as Record<string, unknown>).timingChannel ?? "")
-                : "";
-            const timingChannelNum = Number.parseInt(
-              timingChannelRaw.replace(/^[^0-9]*/, ""),
-              10,
-            );
-            if (
-              Number.isNaN(timestampNum) ||
-              Number.isNaN(startNumber)
-            ) {
-              setStreamInfo(`Connected (${topic}) · trigger received but could not parse start/timestamp`);
-              return;
-            }
-            const triggerTime = formatTriggerClock(
-              timestampNum,
-              Number.isNaN(timeOffsetNum) ? 0 : timeOffsetNum,
-            );
-            let matched = false;
-            const finishChannelNum = Number.parseInt(algeFinishChannelId, 10);
-            const activeTrigger: "start" | "finish" =
-              metaRef.current.type === "rally"
-                ? "finish"
-                : !Number.isNaN(timingChannelNum) &&
-                    !Number.isNaN(finishChannelNum) &&
-                    timingChannelNum === finishChannelNum
+              const dto = payload?.dto;
+              const startNumberRaw =
+                typeof dto?.startNumber === "object"
+                  ? dto.startNumber?.startNumber
+                  : dto?.startNumber;
+              const startNumber =
+                typeof startNumberRaw === "number"
+                  ? Math.floor(startNumberRaw)
+                  : Number.parseInt(String(startNumberRaw ?? ""), 10);
+              const timestampNum =
+                typeof dto?.timestamp === "number"
+                  ? dto.timestamp
+                  : Number.parseInt(String(dto?.timestamp ?? ""), 10);
+              const timeOffsetNum =
+                typeof dto?.timeOffset === "number"
+                  ? dto.timeOffset
+                  : Number.parseInt(String(dto?.timeOffset ?? ""), 10);
+              const timingChannelRaw =
+                payload?.dto && typeof payload.dto === "object"
+                  ? String((payload.dto as Record<string, unknown>).timingChannel ?? "")
+                  : "";
+              const timingChannelNum = Number.parseInt(
+                timingChannelRaw.replace(/^[^0-9]*/, ""),
+                10,
+              );
+              if (Number.isNaN(timestampNum) || Number.isNaN(startNumber)) {
+                setStreamInfo(
+                  `Connected (${topicLabel}) · ${sub.topic} trigger received but could not parse start/timestamp`,
+                );
+                return;
+              }
+              const triggerTime = formatTriggerClock(
+                timestampNum,
+                Number.isNaN(timeOffsetNum) ? 0 : timeOffsetNum,
+              );
+              let matched = false;
+              const finishChannelNum = Number.parseInt(algeFinishChannelId, 10);
+              const activeTrigger: "start" | "finish" =
+                sub.forcedTrigger ??
+                (metaRef.current.type === "rally"
                   ? "finish"
                   : !Number.isNaN(timingChannelNum) &&
-                      !Number.isNaN(Number.parseInt(algeStartChannelId, 10)) &&
-                      timingChannelNum === Number.parseInt(algeStartChannelId, 10)
-                    ? "start"
-                    : "start";
-            let nextEntriesSnapshot: Entry[] | null = null;
-            setEntries((prev) =>
-              {
+                      !Number.isNaN(finishChannelNum) &&
+                      timingChannelNum === finishChannelNum
+                    ? "finish"
+                    : !Number.isNaN(timingChannelNum) &&
+                        !Number.isNaN(Number.parseInt(algeStartChannelId, 10)) &&
+                        timingChannelNum === Number.parseInt(algeStartChannelId, 10)
+                      ? "start"
+                      : "start");
+              let nextEntriesSnapshot: Entry[] | null = null;
+              setEntries((prev) => {
                 const next = prev.map((x) => {
                   if (x.startNumber !== startNumber) return x;
                   matched = true;
@@ -493,24 +520,24 @@ export function EventEditor({ event: initial }: Props) {
                 });
                 nextEntriesSnapshot = next;
                 return next;
-              },
-            );
-            if (matched && nextEntriesSnapshot) {
-              queueLiveEntriesSave(nextEntriesSnapshot);
-              // Keep autosave path active too, so trigger-applied times are always persisted.
-              queueTimingAutosave();
+              });
+              if (matched && nextEntriesSnapshot) {
+                queueLiveEntriesSave(nextEntriesSnapshot);
+                // Keep autosave path active too, so trigger-applied times are always persisted.
+                queueTimingAutosave();
+              }
+              setStreamInfo(
+                matched
+                  ? `Connected (${topicLabel}) · #${startNumber} ${activeTrigger}=${triggerTime} (${sub.topic})`
+                  : `Connected (${topicLabel}) · trigger for #${startNumber} received, but no matching entry (${sub.topic})`,
+              );
+            } catch (e) {
+              setStreamInfo(
+                `Connected (${topicLabel}) · could not parse trigger from ${sub.topic}: ${e instanceof Error ? e.message : "unknown error"}`,
+              );
             }
-            setStreamInfo(
-              matched
-                ? `Connected (${topic}) · #${startNumber} ${activeTrigger}=${triggerTime}`
-                : `Connected (${topic}) · trigger for #${startNumber} received, but no matching entry`,
-            );
-          } catch (e) {
-            setStreamInfo(
-              `Connected (${topic}) · could not parse trigger: ${e instanceof Error ? e.message : "unknown error"}`,
-            );
-          }
-        });
+          });
+        }
       };
       client.onStompError = (frame) => {
         setStreamInfo(`STOMP error: ${frame.headers.message ?? "Unknown error"}`);
