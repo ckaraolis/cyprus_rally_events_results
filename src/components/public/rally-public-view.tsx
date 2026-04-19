@@ -1,8 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { FlagImage } from "@/components/flag-image";
 import { isIso3166Alpha2 } from "@/lib/flags";
 import type {
@@ -200,8 +199,14 @@ function printHtmlDocument(html: string): void {
   doc.close();
 }
 
-export function RallyPublicView({ site, event, topCrumb }: Props) {
-  const router = useRouter();
+export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) {
+  const [event, setEvent] = useState(initialEvent);
+  const lastConfigUpdatedAtRef = useRef<string | null>(null);
+  useEffect(() => {
+    setEvent(initialEvent);
+    lastConfigUpdatedAtRef.current = null;
+  }, [initialEvent]);
+
   const [tab, setTab] = useState<TabId>("overview");
   const [selectedStripId, setSelectedStripId] = useState<string | null>(null);
   const [resultsSubView, setResultsSubView] =
@@ -442,7 +447,11 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
       return entriesForStageResults.filter(
         (row) =>
           getSpeedRunDurationMs(row, "run1") != null ||
-          getSpeedRunDurationMs(row, "run2") != null,
+          getSpeedRunDurationMs(row, "run2") != null ||
+          getSpeedRunDurationMs(row, "trial") != null ||
+          getSpeedRunOutcomeLabel(row, "trial") != null ||
+          getSpeedRunOutcomeLabel(row, "run1") != null ||
+          getSpeedRunOutcomeLabel(row, "run2") != null,
       );
     }
     const runId = selectedStripItem.runId as "trial" | "run1" | "run2";
@@ -612,59 +621,38 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
 
   function printSpeedFinalResultsPdf() {
     if (event.type !== "speed") return;
-    const ranked = [...entriesForFinalResults]
-      .map((row) => {
-        const nonStarter = row.start === false;
-        const trial = getSpeedRunDurationMs(row, "trial");
-        const run1 = getSpeedRunDurationMs(row, "run1");
-        const run2 = getSpeedRunDurationMs(row, "run2");
-        const hasResult =
-          trial != null ||
-          run1 != null ||
-          run2 != null ||
-          getSpeedRunOutcomeLabel(row, "trial") != null ||
-          getSpeedRunOutcomeLabel(row, "run1") != null ||
-          getSpeedRunOutcomeLabel(row, "run2") != null;
-        const best =
-          run1 == null ? run2 : run2 == null ? run1 : Math.min(run1, run2);
-        const sortValue = nonStarter ? Number.MAX_SAFE_INTEGER : best ?? trial;
-        return { row, trial, run1, run2, best, sortValue, hasResult, nonStarter };
-      })
-      .filter((x) => x.hasResult || x.nonStarter)
-      .sort((a, b) =>
-        a.nonStarter && !b.nonStarter
-          ? 1
-          : !a.nonStarter && b.nonStarter
-            ? -1
-            : a.sortValue != null && b.sortValue == null
-          ? -1
-          : a.sortValue == null && b.sortValue != null
-            ? 1
-            : (a.sortValue ?? Number.MAX_SAFE_INTEGER) -
-                (b.sortValue ?? Number.MAX_SAFE_INTEGER) || a.row.startNumber - b.row.startNumber,
-      );
-    const leaderBest = ranked.find((x) => x.best != null)?.best ?? null;
+    const ranked = buildSpeedFinalRanking(entriesForFinalResults);
+    const leaderBest = ranked.find((x) => x.tier === 0)?.bestFromRuns ?? null;
     const columns = ["Pos", "#", "Driver", "Car", "Class", "Trial", "1st Run", "2nd Run", "Best", "Diff"];
-    const tableRows = ranked.map(({ row, trial, run1, run2, best, nonStarter }, i) => [
-      String(i + 1),
-      String(row.startNumber),
-      row.driver || "—",
-      row.car || "—",
-      row.class || "—",
-      nonStarter
-        ? "—"
-        : getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial),
-      nonStarter
-        ? "—"
-        : getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1),
-      nonStarter
-        ? "—"
-        : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2),
-      nonStarter ? "NON STARTER" : formatDurationMs(best),
-      nonStarter || leaderBest == null || best == null || best <= leaderBest
-        ? "—"
-        : `+${formatDiffDurationMs(best - leaderBest)}`,
-    ]);
+    const tableRows = ranked.map(
+      ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
+        String(i + 1),
+        String(row.startNumber),
+        row.driver || "—",
+        row.car || "—",
+        row.class || "—",
+        nonStarter
+          ? "—"
+          : getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial),
+        nonStarter
+          ? "—"
+          : getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1),
+        nonStarter
+          ? "—"
+          : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2),
+        nonStarter
+          ? "NON STARTER"
+          : bestDisplay != null
+            ? formatDurationMs(bestDisplay)
+            : "—",
+        nonStarter ||
+        leaderBest == null ||
+        bestFromRuns == null ||
+        bestFromRuns <= leaderBest
+          ? "—"
+          : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`,
+      ],
+    );
 
     const headHtml = columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
     const bodyHtml =
@@ -699,11 +687,43 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
   }, []);
 
   useEffect(() => {
-    const timer = window.setInterval(() => {
-      router.refresh();
-    }, 2000);
-    return () => window.clearInterval(timer);
-  }, [router]);
+    /**
+     * Live updates via JSON polling — not `router.refresh()`, which re-runs the whole RSC tree
+     * and often leaves the dev overlay stuck on “Rendering…”.
+     */
+    let cancelled = false;
+    const intervalMs = 8000;
+    const poll = async () => {
+      if (cancelled) return;
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      try {
+        const res = await fetch("/api/rally/config", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          events: RallyEvent[];
+          updatedAt: string;
+        };
+        if (data.updatedAt === lastConfigUpdatedAtRef.current) return;
+        lastConfigUpdatedAtRef.current = data.updatedAt;
+        const match = data.events?.find((e) => e.id === initialEvent.id);
+        if (!match || cancelled) return;
+        setEvent(match);
+      } catch {
+        /* offline / transient */
+      }
+    };
+    const id = window.setInterval(poll, intervalMs);
+    void poll();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [initialEvent.id]);
 
   useEffect(() => {
     if (!tabs.some((t) => t.id === tab)) {
@@ -1293,7 +1313,7 @@ export function RallyPublicView({ site, event, topCrumb }: Props) {
           <div className="space-y-4">
             <p className="text-sm text-[var(--ewrc-muted-2)]">
               {event.type === "speed"
-                ? "Speed final classification after timing is connected. Positions and times below are placeholders (drivers listed by start order)."
+                ? "Final order uses the faster of 1st and 2nd run. If both runs have no time (e.g. DNF/DNS), Trial time is used for position. Non-starters appear last."
                 : "Overall classification after timing is connected. Positions and times below are placeholders (crews listed by start order)."}
             </p>
             <div className="ewrc-panel overflow-hidden p-0">
@@ -1830,21 +1850,23 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
     () =>
       [...rows]
         .map((row) => {
-          const r1 = getSpeedRunDurationMs(row, "run1");
-          const r2 = getSpeedRunDurationMs(row, "run2");
-          const best =
-            r1 == null
-              ? r2
-              : r2 == null
-                ? r1
-                : Math.min(r1, r2);
-          return { row, best };
+          const bestFromRuns = getSpeedBestFromRunsMs(row);
+          const trial = getSpeedRunDurationMs(row, "trial");
+          const best = bestFromRuns ?? trial;
+          const tier = bestFromRuns != null ? 0 : trial != null ? 1 : 2;
+          return { row, best, bestFromRuns, tier };
         })
-        .filter((x): x is { row: Entry; best: number } => x.best != null)
-        .sort((a, b) => (a.best !== b.best ? a.best - b.best : a.row.startNumber - b.row.startNumber)),
+        .filter((x): x is { row: Entry; best: number; bestFromRuns: number | null; tier: number } => x.best != null)
+        .sort((a, b) =>
+          a.tier !== b.tier
+            ? a.tier - b.tier
+            : a.best !== b.best
+              ? a.best - b.best
+              : a.row.startNumber - b.row.startNumber,
+        ),
     [rows],
   );
-  const leaderBest = sorted[0]?.best ?? null;
+  const leaderBest = sorted.find((x) => x.bestFromRuns != null)?.bestFromRuns ?? sorted[0]?.best ?? null;
 
   return (
     <table className="ewrc-table ewrc-table-speed-best min-w-[520px] w-full text-sm sm:min-w-[620px]">
@@ -1858,7 +1880,7 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, best }, i) => (
+        {sorted.map(({ row, best, bestFromRuns }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top !text-center font-mono text-[var(--ewrc-pos)]">
               {i + 1}
@@ -1871,9 +1893,11 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
               {formatDurationMs(best)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
-              {leaderBest == null || best == null || best <= leaderBest
+              {leaderBest == null ||
+              bestFromRuns == null ||
+              bestFromRuns <= leaderBest
                 ? "—"
-                : `+${formatDiffDurationMs(best - leaderBest)}`}
+                : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`}
             </td>
           </tr>
         ))}
@@ -1883,48 +1907,8 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
 }
 
 function SpeedFinalTable({ rows }: { rows: Entry[] }) {
-  const sorted = useMemo(
-    () =>
-      [...rows]
-        .map((row) => {
-          const nonStarter = row.start === false;
-          const trial = getSpeedRunDurationMs(row, "trial");
-          const run1 = getSpeedRunDurationMs(row, "run1");
-          const run2 = getSpeedRunDurationMs(row, "run2");
-          const hasResult =
-            trial != null ||
-            run1 != null ||
-            run2 != null ||
-            getSpeedRunOutcomeLabel(row, "trial") != null ||
-            getSpeedRunOutcomeLabel(row, "run1") != null ||
-            getSpeedRunOutcomeLabel(row, "run2") != null;
-          const best =
-            run1 == null
-              ? run2
-              : run2 == null
-                ? run1
-                : Math.min(run1, run2);
-          const sortValue = nonStarter ? Number.MAX_SAFE_INTEGER : best ?? trial;
-          return { row, trial, run1, run2, best, sortValue, hasResult, nonStarter };
-        })
-        .filter((x) => x.hasResult || x.nonStarter)
-        .sort((a, b) =>
-          a.nonStarter && !b.nonStarter
-            ? 1
-            : !a.nonStarter && b.nonStarter
-              ? -1
-              : a.sortValue != null && b.sortValue == null
-            ? -1
-            : a.sortValue == null && b.sortValue != null
-              ? 1
-              : a.sortValue !== b.sortValue
-                ? (a.sortValue ?? Number.MAX_SAFE_INTEGER) -
-                  (b.sortValue ?? Number.MAX_SAFE_INTEGER)
-                : a.row.startNumber - b.row.startNumber,
-        ),
-    [rows],
-  );
-  const leaderBest = sorted.find((x) => x.best != null)?.best ?? null;
+  const sorted = useMemo(() => buildSpeedFinalRanking(rows), [rows]);
+  const leaderBest = sorted.find((x) => x.tier === 0)?.bestFromRuns ?? null;
 
   return (
     <table className="ewrc-table ewrc-table-speed-final min-w-[760px] w-full text-sm">
@@ -1943,7 +1927,7 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, trial, run1, run2, best, nonStarter }, i) => (
+        {sorted.map(({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top text-center font-mono text-[var(--ewrc-pos)]">
               {i + 1}
@@ -1974,12 +1958,19 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
                 : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {nonStarter ? "NON STARTER" : formatDurationMs(best)}
+              {nonStarter
+                ? "NON STARTER"
+                : bestDisplay != null
+                  ? formatDurationMs(bestDisplay)
+                  : "—"}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
-              {nonStarter || leaderBest == null || best == null || best <= leaderBest
+              {nonStarter ||
+              leaderBest == null ||
+              bestFromRuns == null ||
+              bestFromRuns <= leaderBest
                 ? "—"
-                : `+${formatDiffDurationMs(best - leaderBest)}`}
+                : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`}
             </td>
           </tr>
         ))}
@@ -2194,6 +2185,83 @@ function getSpeedRunOutcomeLabel(
   if (start === "DNS" || finish === "DNS") return "DNS";
   if (start === "DNF" || finish === "DNF") return "DNF";
   return null;
+}
+
+/** Faster of 1st / 2nd run when timed; one run if the other has no duration; null if neither has a time. */
+function getSpeedBestFromRunsMs(row: Entry): number | null {
+  const r1 = getSpeedRunDurationMs(row, "run1");
+  const r2 = getSpeedRunDurationMs(row, "run2");
+  if (r1 == null && r2 == null) return null;
+  if (r1 == null) return r2;
+  if (r2 == null) return r1;
+  return Math.min(r1, r2);
+}
+
+type SpeedFinalRankRow = {
+  row: Entry;
+  trial: number | null;
+  run1: number | null;
+  run2: number | null;
+  bestFromRuns: number | null;
+  /** Shown in “Best” when runs don’t yield a time but trial does */
+  bestDisplay: number | null;
+  tier: 0 | 1 | 2 | 3;
+  hasResult: boolean;
+  nonStarter: boolean;
+};
+
+/**
+ * Final order: (0) classified by faster of 1st/2nd run, (1) both runs without a time but trial time
+ * (e.g. DNF/DNS on both counted runs), (2) started but no trial/run times, (3) non-starters last.
+ */
+function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
+  return rows
+    .map((row) => {
+      const nonStarter = row.start === false;
+      const trial = getSpeedRunDurationMs(row, "trial");
+      const run1 = getSpeedRunDurationMs(row, "run1");
+      const run2 = getSpeedRunDurationMs(row, "run2");
+      const hasResult =
+        trial != null ||
+        run1 != null ||
+        run2 != null ||
+        getSpeedRunOutcomeLabel(row, "trial") != null ||
+        getSpeedRunOutcomeLabel(row, "run1") != null ||
+        getSpeedRunOutcomeLabel(row, "run2") != null;
+      const bestFromRuns = getSpeedBestFromRunsMs(row);
+      let tier: 0 | 1 | 2 | 3;
+      if (nonStarter) tier = 3;
+      else if (bestFromRuns != null) tier = 0;
+      else if (trial != null) tier = 1;
+      else tier = 2;
+      const bestDisplay =
+        nonStarter ? null : bestFromRuns != null ? bestFromRuns : trial != null ? trial : null;
+
+      return {
+        row,
+        trial,
+        run1,
+        run2,
+        bestFromRuns,
+        bestDisplay,
+        tier,
+        hasResult,
+        nonStarter,
+      };
+    })
+    .filter((x) => x.hasResult || x.nonStarter)
+    .sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.tier === 0 && b.tier === 0) {
+        const d = (a.bestFromRuns ?? 0) - (b.bestFromRuns ?? 0);
+        return d !== 0 ? d : a.row.startNumber - b.row.startNumber;
+      }
+      if (a.tier === 1 && b.tier === 1) {
+        const d = (a.trial ?? 0) - (b.trial ?? 0);
+        return d !== 0 ? d : a.row.startNumber - b.row.startNumber;
+      }
+      return a.row.startNumber - b.row.startNumber;
+    });
 }
 
 function formatDurationMs(ms: number | null): string {

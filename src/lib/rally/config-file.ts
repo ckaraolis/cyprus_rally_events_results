@@ -1,5 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
+import { unstable_noStore as noStore } from "next/cache";
 import { defaultRallyConfig } from "./defaults";
 import { normalizeCountryCode } from "@/lib/flags";
 import { loadConfigFromDb, saveConfigToDb } from "./db-store";
@@ -20,6 +21,13 @@ const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
 const DB_WRITES = process.env.RALLY_DB_WRITES === "1";
 const FILE_WRITES = process.env.RALLY_FILE_WRITES !== "0";
+
+/** Cap how long we wait on Postgres per request so pages don’t hang when the DB is slow or wedged. */
+const DB_READ_TIMEOUT_MS = (() => {
+  const n = Number(process.env.RALLY_DB_READ_TIMEOUT_MS);
+  if (Number.isFinite(n) && n >= 500) return Math.min(n, 120_000);
+  return 8_000;
+})();
 
 const OFFICIAL_NOTICE_DEFAULT_CATEGORIES: OfficialNoticeCategory[] = [
   "Supplementary Regulations",
@@ -288,21 +296,74 @@ function normalizeConfig(raw: unknown): RallySiteConfig {
   };
 }
 
+/** True if `a` is strictly newer than `b` (ISO timestamps from saves). */
+function isConfigNewerThan(a: string, b: string): boolean {
+  const ta = Date.parse(a);
+  const tb = Date.parse(b);
+  if (!Number.isNaN(ta) && !Number.isNaN(tb)) return ta > tb;
+  return a > b;
+}
+
+/**
+ * When DB writes fail but JSON still saves, DB can be stale while `RALLY_DB_READS=1`.
+ * Prefer whichever source has the newer `updatedAt` so the public site matches admin saves.
+ */
 export async function loadRallyConfig(): Promise<RallySiteConfig> {
-  if (DB_READS) {
-    try {
-      const fromDb = await loadConfigFromDb();
-      if (fromDb) return normalizeConfig(fromDb);
-    } catch {
-      // Fallback to file store.
-    }
-  }
+  noStore();
+  let fromFile: RallySiteConfig | null = null;
   try {
     const raw = await fs.readFile(CONFIG_PATH, "utf-8");
-    return normalizeConfig(JSON.parse(raw) as unknown);
+    fromFile = normalizeConfig(JSON.parse(raw) as unknown);
   } catch {
+    // no file yet
+  }
+
+  if (!DB_READS) {
+    if (fromFile) return fromFile;
     return { ...defaultRallyConfig };
   }
+
+  try {
+    const raced = await Promise.race([
+      loadConfigFromDb().then((v) => ({ kind: "db" as const, v })),
+      new Promise<{ kind: "timeout" }>((resolve) =>
+        setTimeout(() => resolve({ kind: "timeout" }), DB_READ_TIMEOUT_MS),
+      ),
+    ]);
+    if (raced.kind === "timeout") {
+      console.warn(
+        `[rally] Database read exceeded ${DB_READ_TIMEOUT_MS}ms; using data/rally-site.json if present. Set RALLY_DB_READS=0 or fix DATABASE_URL.`,
+      );
+    } else if (raced.v) {
+      const dbNorm = normalizeConfig(raced.v);
+      if (!fromFile) return dbNorm;
+      if (isConfigNewerThan(fromFile.updatedAt, dbNorm.updatedAt)) {
+        console.warn(
+          "[rally] Serving data/rally-site.json (newer than Postgres). Fix DATABASE_URL / resume Supabase so DB saves succeed, or set RALLY_DB_READS=0 to read JSON only.",
+        );
+        return fromFile;
+      }
+      return dbNorm;
+    }
+  } catch {
+    // DB unreachable or query error — use file if present
+  }
+
+  if (fromFile) {
+    console.warn(
+      "[rally] Using data/rally-site.json (database empty or unreachable). Restore DATABASE_URL for Postgres-backed reads.",
+    );
+    return fromFile;
+  }
+  return { ...defaultRallyConfig };
+}
+
+function prismaErrorCode(e: unknown): string | undefined {
+  if (typeof e === "object" && e !== null && "code" in e) {
+    const c = (e as { code: unknown }).code;
+    return typeof c === "string" ? c : undefined;
+  }
+  return undefined;
 }
 
 export async function saveRallyConfig(config: RallySiteConfig): Promise<void> {
@@ -311,7 +372,16 @@ export async function saveRallyConfig(config: RallySiteConfig): Promise<void> {
     updatedAt: new Date().toISOString(),
   };
   if (DB_WRITES) {
-    await saveConfigToDb(next);
+    try {
+      await saveConfigToDb(next);
+    } catch (e) {
+      if (!FILE_WRITES) throw e;
+      const code = prismaErrorCode(e);
+      console.warn(
+        `[rally] Database save failed${code ? ` (${code})` : ""}; wrote data/rally-site.json only. Fix DATABASE_URL or resume the Supabase project; set RALLY_DB_WRITES=0 to disable DB until it is reachable.`,
+        e,
+      );
+    }
   }
   if (FILE_WRITES) {
     await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });

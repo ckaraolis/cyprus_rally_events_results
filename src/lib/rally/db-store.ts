@@ -96,6 +96,7 @@ function toEvent(row: {
         .map((x) => x.trim())
         .filter(Boolean)
     : [];
+
   const officialDocs = Array.isArray(noticeDataRaw.documents)
     ? noticeDataRaw.documents
         .map((item) => {
@@ -164,6 +165,10 @@ export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
     orderBy: { dateStart: "asc" },
   });
   if (!site && events.length === 0) return null;
+  const times: number[] = [];
+  if (site?.updatedAt) times.push(site.updatedAt.getTime());
+  for (const ev of events) times.push(ev.updatedAt.getTime());
+  const newestMs = times.length > 0 ? Math.max(...times) : Date.now();
   return {
     site: site
       ? toSite(site)
@@ -175,9 +180,15 @@ export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
           publicFooterNote: "",
         },
     events: events.map(toEvent),
-    updatedAt: new Date().toISOString(),
+    updatedAt: new Date(newestMs).toISOString(),
   };
 }
+
+/** Large events (many entries) can exceed Prisma’s default 5s interactive transaction limit. */
+const SAVE_CONFIG_TX_OPTIONS = {
+  maxWait: 10_000,
+  timeout: 120_000,
+} as const;
 
 export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
   await prisma.$transaction(async (tx) => {
@@ -277,5 +288,5 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
         });
       }
     }
-  });
+  }, SAVE_CONFIG_TX_OPTIONS);
 }

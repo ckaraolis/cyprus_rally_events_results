@@ -80,6 +80,12 @@ function normalizePenaltyInput(raw: string): string {
   return raw.replace(/[^0-9:]/g, "").slice(0, 6);
 }
 
+function speedRunIdLabel(run: SpeedTimingRun): string {
+  if (run === "trial") return "Trial";
+  if (run === "run1") return "1st Run";
+  return "2nd Run";
+}
+
 function parseRallyStageTimingBlob(raw: string): RallyStageTimingBlob {
   const trimmed = raw.trim();
   if (!trimmed || !trimmed.startsWith("{")) return {};
@@ -190,6 +196,7 @@ export function EventEditor({ event: initial }: Props) {
   const [assignStartIntervalMin, setAssignStartIntervalMin] = useState("2");
   const metaRef = useRef(meta);
   const entriesRef = useRef(entries);
+  const stagesRef = useRef(stages);
   const timingAutosaveInFlightRef = useRef(false);
   const timingAutosaveQueuedRef = useRef(false);
   const lastTimingSavedSigRef = useRef(timingSignature(meta, entries));
@@ -211,6 +218,10 @@ export function EventEditor({ event: initial }: Props) {
   useEffect(() => {
     entriesRef.current = entries;
   }, [entries]);
+
+  useEffect(() => {
+    stagesRef.current = stages;
+  }, [stages]);
 
   const sortedStages = useMemo(
     () => [...stages].sort((a, b) => a.order - b.order),
@@ -290,15 +301,35 @@ export function EventEditor({ event: initial }: Props) {
           const en = entriesRef.current;
           const sig = timingSignature(m, en);
           if (sig === lastTimingSavedSigRef.current) continue;
-          await updateEventMeta(eventId, m);
-          await replaceEntries(eventId, en);
+          const metaRes = await updateEventMeta(eventId, m);
+          if (!metaRes.ok) {
+            console.error("Timing autosave: updateEventMeta failed:", metaRes.error);
+            break;
+          }
+          const entRes = await replaceEntries(eventId, en);
+          if (!entRes.ok) {
+            console.error("Timing autosave: replaceEntries failed:", entRes.error);
+            break;
+          }
           lastTimingSavedSigRef.current = sig;
           router.refresh();
         } while (timingAutosaveQueuedRef.current);
+      } catch (e) {
+        console.error("Timing autosave failed:", e);
       } finally {
         timingAutosaveInFlightRef.current = false;
       }
     })();
+  }
+
+  /** Keep `entriesRef` in sync with state (avoids skipped saves when the 2s poll runs before useEffect). */
+  function applyTimingEntryUpdate(reducer: (prev: Entry[]) => Entry[]) {
+    setEntries((prev) => {
+      const next = reducer(prev);
+      entriesRef.current = next;
+      return next;
+    });
+    queueTimingAutosave();
   }
 
   function formatTriggerClock(timestamp100ns: number, timeOffsetMin: number): string {
@@ -489,6 +520,35 @@ export function EventEditor({ event: initial }: Props) {
               if (Number.isNaN(timestampNum) || Number.isNaN(startNumber)) {
                 setStreamInfo(
                   `Connected (${topicLabel}) · ${sub.topic} trigger received but could not parse start/timestamp`,
+                );
+                return;
+              }
+              const mNow = metaRef.current;
+              let algeTriggersAllowed = false;
+              if (mNow.type === "speed") {
+                algeTriggersAllowed =
+                  mNow.speedRunImportStatus[timingRunRef.current] === "live";
+              } else if (mNow.type === "rally") {
+                const sid = rallyTimingStageIdRef.current.trim();
+                const st = sid
+                  ? stagesRef.current.find((s) => s.id === sid)
+                  : undefined;
+                algeTriggersAllowed = st?.progressStatus === "live";
+              }
+              if (!algeTriggersAllowed) {
+                const runOrStageHint =
+                  mNow.type === "speed"
+                    ? `${speedRunIdLabel(timingRunRef.current)} import status is not Live (ALGE only when Live; use manual entry when Completed or Scheduled)`
+                    : (() => {
+                        const sid = rallyTimingStageIdRef.current.trim();
+                        const st = sid
+                          ? stagesRef.current.find((s) => s.id === sid)
+                          : undefined;
+                        const label = st ? `SS ${st.order} (${st.progressStatus})` : "selected stage";
+                        return `${label} is not Live — set the stage to Live on the Stages tab for ALGE (Completed = manual only)`;
+                      })();
+                setStreamInfo(
+                  `Connected (${topicLabel}) · trigger ignored: ${runOrStageHint} · car #${startNumber} (${sub.topic})`,
                 );
                 return;
               }
@@ -2043,6 +2103,26 @@ export function EventEditor({ event: initial }: Props) {
                 : "the selected stage"}
             This tab stores all timing values with entries.
           </p>
+          {meta.type === "speed" ? (
+            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
+              {timingRunLabel} import gate:{" "}
+              <strong className="capitalize">{timingRunStatus}</strong>
+              {timingRunStatus === "live"
+                ? " — ALGE stream triggers apply to this run."
+                : " — ALGE triggers off; enter times manually (set Live below for ALGE)."}
+            </p>
+          ) : null}
+          {meta.type === "rally" && selectedRallyTimingStage ? (
+            <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
+              Stage status:{" "}
+              <strong className="capitalize">
+                {selectedRallyTimingStage.progressStatus}
+              </strong>
+              {selectedRallyTimingStage.progressStatus === "live"
+                ? " — ALGE triggers apply; change on the Stages tab if needed."
+                : " — ALGE triggers off; enter times manually (set Live on the Stages tab for ALGE)."}
+            </p>
+          ) : null}
           {meta.type === "rally" && selectedRallyTimingStage ? (
             <div className="mt-3">
               <button
@@ -2078,12 +2158,16 @@ export function EventEditor({ event: initial }: Props) {
                   <option value="completed">Completed</option>
                 </select>
                 <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  ALGE import will be allowed only when status is Live.
+                  Live: ALGE stream can apply times. Scheduled or Completed: use manual
+                  fields only; triggers are ignored.
                 </span>
               </div>
             ) : (
               <p className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
-                ALGE live trigger read is enabled for the selected rally stage tab.
+                ALGE triggers apply only when the selected stage&apos;s status is{" "}
+                <strong>Live</strong> (set on the Stages tab). If the stage is{" "}
+                <strong>Completed</strong> or <strong>pending</strong>, enter times
+                manually; stream triggers are ignored.
               </p>
             )}
             {meta.type === "speed" ? (
@@ -2240,7 +2324,7 @@ export function EventEditor({ event: initial }: Props) {
                           className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={startValue}
                           onChange={(e) =>
-                            setEntries((prev) =>
+                            applyTimingEntryUpdate((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
                                   ? updateEntryTimingValues(
@@ -2265,7 +2349,7 @@ export function EventEditor({ event: initial }: Props) {
                           className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={finishValue}
                           onChange={(e) =>
-                            setEntries((prev) =>
+                            applyTimingEntryUpdate((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
                                   ? updateEntryTimingValues(
@@ -2282,7 +2366,8 @@ export function EventEditor({ event: initial }: Props) {
                       </label>
                     </div>
                     <p className="mt-2 font-mono text-sm text-zinc-700 dark:text-zinc-200">
-                      Total: {computeTotalTime(startValue, finishValue)}
+                      Total:{" "}
+                      {computeTotalTime(startValue, finishValue)}
                     </p>
                     <div className="mt-2 flex gap-2">
                       <button
@@ -2321,7 +2406,7 @@ export function EventEditor({ event: initial }: Props) {
                             className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                             value={penaltyValue}
                             onChange={(e) =>
-                              setEntries((prev) =>
+                              applyTimingEntryUpdate((prev) =>
                                 prev.map((x) =>
                                   x.id === row.id
                                     ? updateEntryTimingPenaltyValues(
@@ -2393,7 +2478,7 @@ export function EventEditor({ event: initial }: Props) {
                           className="w-24 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={startValue}
                           onChange={(e) =>
-                            setEntries((prev) =>
+                            applyTimingEntryUpdate((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
                                   ? updateEntryTimingValues(
@@ -2417,7 +2502,7 @@ export function EventEditor({ event: initial }: Props) {
                           className="w-40 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={finishValue}
                           onChange={(e) =>
-                            setEntries((prev) =>
+                            applyTimingEntryUpdate((prev) =>
                               prev.map((x) =>
                                 x.id === row.id
                                   ? updateEntryTimingValues(
@@ -2433,10 +2518,7 @@ export function EventEditor({ event: initial }: Props) {
                         />
                       </td>
                       <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
-                        {computeTotalTime(
-                          startValue,
-                          finishValue,
-                        )}
+                        {computeTotalTime(startValue, finishValue)}
                       </td>
                       <td className="py-2 pr-2">
                         <div className="flex flex-wrap gap-1">
@@ -2475,7 +2557,7 @@ export function EventEditor({ event: initial }: Props) {
                             className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                             value={penaltyValue}
                             onChange={(e) =>
-                              setEntries((prev) =>
+                              applyTimingEntryUpdate((prev) =>
                                 prev.map((x) =>
                                   x.id === row.id
                                     ? updateEntryTimingPenaltyValues(
