@@ -568,7 +568,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         ? tableRows
             .map(
               (r) =>
-                `<tr>${r.map((v) => `<td>${escapeHtml(v)}</td>`).join("")}</tr>`,
+                `<tr>${r
+                  .map((v) =>
+                    `<td${v === "-" || v === "—" ? ' style="text-align:center;"' : ""}>${escapeHtml(v)}</td>`,
+                  )
+                  .join("")}</tr>`,
             )
             .join("")
         : `<tr><td colspan="${columns.length}" style="text-align:center;color:#666;">No crews in this class.</td></tr>`;
@@ -632,24 +636,24 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         row.car || "—",
         row.class || "—",
         nonStarter
-          ? "—"
+          ? "-"
           : getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial),
         nonStarter
-          ? "—"
+          ? "-"
           : getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1),
         nonStarter
-          ? "—"
+          ? "-"
           : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2),
         nonStarter
           ? "NON STARTER"
           : bestDisplay != null
             ? formatDurationMs(bestDisplay)
-            : "—",
+            : "-",
         nonStarter ||
         leaderBest == null ||
         bestFromRuns == null ||
         bestFromRuns <= leaderBest
-          ? "—"
+          ? "-"
           : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`,
       ],
     );
@@ -658,7 +662,14 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     const bodyHtml =
       tableRows.length > 0
         ? tableRows
-            .map((r) => `<tr>${r.map((v) => `<td>${escapeHtml(v)}</td>`).join("")}</tr>`)
+            .map(
+              (r) =>
+                `<tr>${r
+                  .map((v) =>
+                    `<td${v === "-" ? ' style="text-align:center;"' : ""}>${escapeHtml(v)}</td>`,
+                  )
+                  .join("")}</tr>`,
+            )
             .join("")
         : `<tr><td colspan="${columns.length}" style="text-align:center;color:#666;">No entries.</td></tr>`;
     const logoUrl = normalizedLogoUrl;
@@ -1313,7 +1324,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           <div className="space-y-4">
             <p className="text-sm text-[var(--ewrc-muted-2)]">
               {event.type === "speed"
-                ? "Final order uses the faster of 1st and 2nd run. If both runs have no time (e.g. DNF/DNS), Trial time is used for position. Non-starters appear last."
+                ? "Final order uses only the faster of 1st and 2nd run. Trial is not used in final Best/Total. If both runs have no time (e.g. DNF/DNS), Best/Total shows -."
                 : "Overall classification after timing is connected. Positions and times below are placeholders (crews listed by start order)."}
             </p>
             <div className="ewrc-panel overflow-hidden p-0">
@@ -1944,17 +1955,17 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {nonStarter
-                ? "—"
+                ? "-"
                 : getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {nonStarter
-                ? "—"
+                ? "-"
                 : getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {nonStarter
-                ? "—"
+                ? "-"
                 : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
@@ -1962,14 +1973,14 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
                 ? "NON STARTER"
                 : bestDisplay != null
                   ? formatDurationMs(bestDisplay)
-                  : "—"}
+                  : "-"}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
               {nonStarter ||
               leaderBest == null ||
               bestFromRuns == null ||
               bestFromRuns <= leaderBest
-                ? "—"
+                ? "-"
                 : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`}
             </td>
           </tr>
@@ -2203,7 +2214,7 @@ type SpeedFinalRankRow = {
   run1: number | null;
   run2: number | null;
   bestFromRuns: number | null;
-  /** Shown in “Best” when runs don’t yield a time but trial does */
+  /** Final Best/Total shown in the table (runs only; trial excluded). */
   bestDisplay: number | null;
   tier: 0 | 1 | 2 | 3;
   hasResult: boolean;
@@ -2211,8 +2222,9 @@ type SpeedFinalRankRow = {
 };
 
 /**
- * Final order: (0) classified by faster of 1st/2nd run, (1) both runs without a time but trial time
- * (e.g. DNF/DNS on both counted runs), (2) started but no trial/run times, (3) non-starters last.
+ * Final order: (0) classified by faster of 1st/2nd run, (1) started but no run time
+ * (including DNF/DNS or blank on both runs), (3) non-starters last.
+ * Trial is displayed for reference only and never used for Best/Total ranking.
  */
 function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
   return rows
@@ -2232,10 +2244,9 @@ function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
       let tier: 0 | 1 | 2 | 3;
       if (nonStarter) tier = 3;
       else if (bestFromRuns != null) tier = 0;
-      else if (trial != null) tier = 1;
-      else tier = 2;
+      else tier = 1;
       const bestDisplay =
-        nonStarter ? null : bestFromRuns != null ? bestFromRuns : trial != null ? trial : null;
+        nonStarter ? null : bestFromRuns != null ? bestFromRuns : null;
 
       return {
         row,
@@ -2254,10 +2265,6 @@ function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
       if (a.tier !== b.tier) return a.tier - b.tier;
       if (a.tier === 0 && b.tier === 0) {
         const d = (a.bestFromRuns ?? 0) - (b.bestFromRuns ?? 0);
-        return d !== 0 ? d : a.row.startNumber - b.row.startNumber;
-      }
-      if (a.tier === 1 && b.tier === 1) {
-        const d = (a.trial ?? 0) - (b.trial ?? 0);
         return d !== 0 ? d : a.row.startNumber - b.row.startNumber;
       }
       return a.row.startNumber - b.row.startNumber;
