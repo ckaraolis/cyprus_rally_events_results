@@ -20,6 +20,7 @@ const RALLY_TABS = [
   { id: "retirements", label: "Retirements" },
   { id: "penalty", label: "Penalty" },
   { id: "final-results", label: "Final Results" },
+  { id: "official-notice-board", label: "Official Notice Board" },
 ] as const;
 
 const SPEED_TABS = [
@@ -1370,7 +1371,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           </div>
         ) : null}
 
-        {tab === "official-notice-board" && event.type === "speed" ? (
+        {tab === "official-notice-board" ? (
           <div className="ewrc-panel p-5 sm:p-6">
             <h2 className="font-ewrc-heading text-sm font-bold uppercase tracking-widest text-[var(--ewrc-muted)]">
               Official Notice Board

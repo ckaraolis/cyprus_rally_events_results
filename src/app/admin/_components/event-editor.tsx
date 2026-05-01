@@ -902,10 +902,6 @@ export function EventEditor({ event: initial }: Props) {
 
   async function uploadOfficialNoticeDocument(file: File) {
     setDocUploadError(null);
-    if (meta.type !== "speed") {
-      setDocUploadError("Official Notice Board is only available for Speed events.");
-      return;
-    }
     const title = newDocTitle.trim() || file.name;
     const category = newDocCategory.trim() || "Other";
     setDocUploading(true);
@@ -1274,19 +1270,17 @@ export function EventEditor({ event: initial }: Props) {
               Penalties
             </button>
           ) : null}
-          {meta.type === "speed" ? (
-            <button
-              type="button"
-              onClick={() => setActiveTab("notice-board")}
-              className={`rounded-lg px-3 py-1.5 text-sm ${
-                activeTab === "notice-board"
-                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
-                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
-              }`}
-            >
-              Official Notice Board
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => setActiveTab("notice-board")}
+            className={`rounded-lg px-3 py-1.5 text-sm ${
+              activeTab === "notice-board"
+                ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+            }`}
+          >
+            Official Notice Board
+          </button>
         </div>
       </section>
 
@@ -1450,7 +1444,7 @@ export function EventEditor({ event: initial }: Props) {
         </section>
       ) : null}
 
-      {activeTab === "notice-board" && meta.type === "speed" ? (
+      {activeTab === "notice-board" ? (
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
