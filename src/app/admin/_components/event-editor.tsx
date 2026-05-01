@@ -40,6 +40,7 @@ const NOTICE_BOARD_DEFAULT_CATEGORIES = [
   "Steward Decisions",
   "Other",
 ] as const;
+const MAX_INLINE_NOTICE_URL_LENGTH = 100_000;
 
 function timingSignature(meta: {
   speedRunImportStatus: {
@@ -120,6 +121,7 @@ export function EventEditor({ event: initial }: Props) {
   const [newDocCategory, setNewDocCategory] = useState<string>(
     NOTICE_BOARD_DEFAULT_CATEGORIES[0],
   );
+  const [newDocUrl, setNewDocUrl] = useState("");
   const [newCustomCategory, setNewCustomCategory] = useState("");
   const [meta, setMeta] = useState({
     name: initial.name,
@@ -238,11 +240,44 @@ export function EventEditor({ event: initial }: Props) {
     setRallyTimingStageId(sortedStages[0]?.id ?? "");
   }, [meta.type, rallyTimingStageId, sortedStages]);
 
+  function sanitizeMetaForSave<
+    T extends { officialNoticeDocuments: RallyEvent["officialNoticeDocuments"] },
+  >(input: T): {
+    payload: T;
+    removedInlineDocs: number;
+  } {
+    let removedInlineDocs = 0;
+    const officialNoticeDocuments = input.officialNoticeDocuments.filter((doc) => {
+      const url = (doc.url ?? "").trim();
+      const isOversizedDataUrl =
+        url.startsWith("data:") && url.length > MAX_INLINE_NOTICE_URL_LENGTH;
+      if (isOversizedDataUrl) removedInlineDocs += 1;
+      return !isOversizedDataUrl;
+    });
+    if (removedInlineDocs === 0) return { payload: input, removedInlineDocs: 0 };
+    return {
+      payload: { ...input, officialNoticeDocuments },
+      removedInlineDocs,
+    };
+  }
+
   function saveMeta() {
     setFlash(null);
     startTransition(async () => {
-      await updateEventMeta(eventId, meta);
-      setFlash("Event details saved.");
+      const { payload, removedInlineDocs } = sanitizeMetaForSave(meta);
+      const res = await updateEventMeta(eventId, payload);
+      if (!res.ok) {
+        setFlash(`Save failed: ${res.error}`);
+        return;
+      }
+      if (removedInlineDocs > 0) {
+        setMeta(payload);
+        setFlash(
+          `Event saved. Removed ${removedInlineDocs} oversized inline notice document(s) to avoid request-size errors.`,
+        );
+      } else {
+        setFlash("Event details saved.");
+      }
       router.refresh();
     });
   }
@@ -279,10 +314,22 @@ export function EventEditor({ event: initial }: Props) {
   function saveTiming() {
     setFlash(null);
     startTransition(async () => {
-      await updateEventMeta(eventId, meta);
+      const { payload, removedInlineDocs } = sanitizeMetaForSave(meta);
+      const metaRes = await updateEventMeta(eventId, payload);
+      if (!metaRes.ok) {
+        setFlash(`Timing save failed: ${metaRes.error}`);
+        return;
+      }
       await replaceEntries(eventId, entries);
-      lastTimingSavedSigRef.current = timingSignature(meta, entries);
-      setFlash("Timing control saved.");
+      if (removedInlineDocs > 0) {
+        setMeta(payload);
+      }
+      lastTimingSavedSigRef.current = timingSignature(payload, entries);
+      setFlash(
+        removedInlineDocs > 0
+          ? "Timing control saved. Oversized inline notice documents were removed."
+          : "Timing control saved.",
+      );
       router.refresh();
     });
   }
@@ -301,7 +348,8 @@ export function EventEditor({ event: initial }: Props) {
           const en = entriesRef.current;
           const sig = timingSignature(m, en);
           if (sig === lastTimingSavedSigRef.current) continue;
-          const metaRes = await updateEventMeta(eventId, m);
+          const { payload } = sanitizeMetaForSave(m);
+          const metaRes = await updateEventMeta(eventId, payload);
           if (!metaRes.ok) {
             console.error("Timing autosave: updateEventMeta failed:", metaRes.error);
             break;
@@ -311,7 +359,7 @@ export function EventEditor({ event: initial }: Props) {
             console.error("Timing autosave: replaceEntries failed:", entRes.error);
             break;
           }
-          lastTimingSavedSigRef.current = sig;
+          lastTimingSavedSigRef.current = timingSignature(payload, en);
           router.refresh();
         } while (timingAutosaveQueuedRef.current);
       } catch (e) {
@@ -900,6 +948,53 @@ export function EventEditor({ event: initial }: Props) {
     }));
   }
 
+  function addOfficialNoticeLink() {
+    setDocUploadError(null);
+    const rawUrl = newDocUrl.trim();
+    if (!rawUrl) {
+      setDocUploadError("Enter a document URL.");
+      return;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      setDocUploadError("Invalid URL. Use full link, e.g. https://example.com/doc.pdf");
+      return;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      setDocUploadError("Only http/https links are allowed.");
+      return;
+    }
+    const title = newDocTitle.trim() || parsed.pathname.split("/").pop() || parsed.hostname;
+    const category = newDocCategory.trim() || "Other";
+    const fromPath = decodeURIComponent(parsed.pathname.split("/").pop() || "").trim();
+    const fileName = fromPath || parsed.hostname;
+    setMeta((m) => ({
+      ...m,
+      officialNoticeDocuments: [
+        {
+          id: crypto.randomUUID(),
+          title,
+          category,
+          url: parsed.toString(),
+          fileName,
+          uploadedAt: new Date().toISOString(),
+        },
+        ...m.officialNoticeDocuments,
+      ],
+      officialNoticeCustomCategories:
+        NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
+          category as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
+        ) || m.officialNoticeCustomCategories.includes(category)
+          ? m.officialNoticeCustomCategories
+          : [...m.officialNoticeCustomCategories, category],
+    }));
+    setNewDocTitle("");
+    setNewDocUrl("");
+    setFlash("Link added. Click Save notice board to publish it.");
+  }
+
   async function uploadOfficialNoticeDocument(file: File) {
     setDocUploadError(null);
     const title = newDocTitle.trim() || file.name;
@@ -1480,7 +1575,7 @@ export function EventEditor({ event: initial }: Props) {
             </button>
           </div>
 
-          <div className="mt-5 grid gap-3 md:grid-cols-3">
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
             <input
               className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
               placeholder="Document title (optional)"
@@ -1498,6 +1593,13 @@ export function EventEditor({ event: initial }: Props) {
                 </option>
               ))}
             </select>
+            <input
+              type="url"
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              placeholder="https://... (optional link)"
+              value={newDocUrl}
+              onChange={(e) => setNewDocUrl(e.target.value)}
+            />
             <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800">
               Upload document
               <input
@@ -1511,6 +1613,15 @@ export function EventEditor({ event: initial }: Props) {
                 }}
               />
             </label>
+          </div>
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={addOfficialNoticeLink}
+              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+            >
+              Add link
+            </button>
           </div>
           {docUploading ? (
             <p className="mt-2 text-xs text-zinc-500">Uploading document…</p>

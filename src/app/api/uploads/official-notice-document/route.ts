@@ -23,29 +23,6 @@ function sanitizeFileName(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-{2,}/g, "-");
 }
 
-function mimeForExt(ext: string): string {
-  switch (ext) {
-    case ".pdf":
-      return "application/pdf";
-    case ".doc":
-      return "application/msword";
-    case ".docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case ".txt":
-      return "text/plain";
-    case ".rtf":
-      return "application/rtf";
-    case ".odt":
-      return "application/vnd.oasis.opendocument.text";
-    case ".xls":
-      return "application/vnd.ms-excel";
-    case ".xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    default:
-      return "application/octet-stream";
-  }
-}
-
 export async function POST(req: Request) {
   try {
     const formData = await req.formData();
@@ -82,14 +59,15 @@ export async function POST(req: Request) {
         fileName: raw.name,
       });
     } catch {
-      // Fallback for runtimes where filesystem writes are not persistent.
-      const mime = raw.type || mimeForExt(ext);
-      const dataUrl = `data:${mime};base64,${buf.toString("base64")}`;
-      return Response.json({
-        url: dataUrl,
-        fileName: raw.name,
-        fallback: "data-url",
-      });
+      // Do not fallback to inline data URLs: they can exceed Server Action body limits (413)
+      // when notice-board metadata is saved.
+      return Response.json(
+        {
+          error:
+            "Upload storage is unavailable on this server. Please contact admin to enable persistent uploads.",
+        },
+        { status: 503 },
+      );
     }
   } catch {
     return Response.json({ error: "Upload failed." }, { status: 500 });
