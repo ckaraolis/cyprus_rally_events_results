@@ -8,11 +8,15 @@ export function ChampionshipListEwrc({ events }: { events: RallyEvent[] }) {
   const upcomingEvents = events
     .filter((e) => e.status === "upcoming")
     .sort((a, b) => a.dateStart.localeCompare(b.dateStart));
+  const completedEvents = events
+    .filter((e) => e.status === "completed")
+    .sort((a, b) => b.dateStart.localeCompare(a.dateStart));
 
   return (
     <main className="mx-auto max-w-6xl space-y-6 px-4 py-8 sm:px-6">
       <EventTable title="Live events" events={liveEvents} />
       <EventTable title="Upcoming events" events={upcomingEvents} />
+      <EventTable title="Completed events" events={completedEvents} />
     </main>
   );
 }
