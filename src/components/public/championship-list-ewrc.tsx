@@ -29,15 +29,23 @@ function EventTable({ title, events }: { title: string; events: RallyEvent[] }) 
       </h2>
       <div className="ewrc-panel overflow-hidden p-0">
         <div className="overflow-x-auto">
-          <table className="ewrc-table ewrc-table-events-list min-w-[740px] w-full text-sm">
+          <table className="ewrc-table ewrc-table-events-list min-w-[740px] w-full table-fixed text-sm">
+            <colgroup>
+              <col className="w-[36%]" />
+              <col className="w-[14%]" />
+              <col className="w-[14%]" />
+              <col className="w-[20%]" />
+              <col className="w-[10%]" />
+              <col className="w-[6%]" />
+            </colgroup>
             <thead>
               <tr>
                 <th>Events</th>
-                <th className="w-28 text-center">Event type</th>
-                <th className="w-36 text-center">Date</th>
+                <th className="text-center">Event type</th>
+                <th className="text-center">Date</th>
                 <th className="text-center">Location</th>
-                <th className="w-24 text-center">Status</th>
-                <th className="w-20 text-center">Open</th>
+                <th className="text-center">Status</th>
+                <th className="text-center">Open</th>
               </tr>
             </thead>
             <tbody>
