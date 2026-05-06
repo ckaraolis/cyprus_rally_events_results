@@ -124,6 +124,28 @@ function normalizeEventType(v: unknown): EventType {
   return v === "speed" ? "speed" : "rally";
 }
 
+function normalizeRallyStageAlgeConfig(
+  raw: unknown,
+): RallyEvent["rallyStageAlgeConfig"] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: RallyEvent["rallyStageAlgeConfig"] = {};
+  for (const [stageId, cfgRaw] of Object.entries(raw as Record<string, unknown>)) {
+    if (!cfgRaw || typeof cfgRaw !== "object" || Array.isArray(cfgRaw)) continue;
+    const cfg = cfgRaw as Record<string, unknown>;
+    out[stageId] = {
+      startDeviceId:
+        typeof cfg.startDeviceId === "string" ? cfg.startDeviceId.trim() : "",
+      startChannelId:
+        typeof cfg.startChannelId === "string" ? cfg.startChannelId.trim() : "0",
+      finishDeviceId:
+        typeof cfg.finishDeviceId === "string" ? cfg.finishDeviceId.trim() : "",
+      finishChannelId:
+        typeof cfg.finishChannelId === "string" ? cfg.finishChannelId.trim() : "1",
+    };
+  }
+  return out;
+}
+
 function normalizeSpeedRunImportStatus(v: unknown): SpeedRunImportStatus {
   if (v === "live" || v === "completed" || v === "scheduled") return v;
   return "scheduled";
@@ -218,6 +240,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
         run2: "scheduled",
       },
       algeTriggerCountByKey: {},
+      rallyStageAlgeConfig: {},
       officialNoticeCustomCategories: [],
       officialNoticeDocuments: [],
       stages: [],
@@ -265,6 +288,9 @@ function normalizeEvent(raw: unknown): RallyEvent {
             ),
           )
         : {},
+    rallyStageAlgeConfig: normalizeRallyStageAlgeConfig(
+      o.rallyStageAlgeConfig,
+    ),
     officialNoticeCustomCategories: normalizeOfficialNoticeCustomCategories(
       o.officialNoticeCustomCategories,
     ),

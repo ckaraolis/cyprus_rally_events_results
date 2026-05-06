@@ -78,6 +78,16 @@ export interface RallyEvent {
   };
   /** Last observed ALGE trigger counts per polling key. */
   algeTriggerCountByKey: Record<string, number>;
+  /** Rally stage -> ALGE live trigger mapping (supports concurrent stages on different devices). */
+  rallyStageAlgeConfig: Record<
+    string,
+    {
+      startDeviceId: string;
+      startChannelId: string;
+      finishDeviceId: string;
+      finishChannelId: string;
+    }
+  >;
   /** Custom category names for Official Notice Board. */
   officialNoticeCustomCategories: string[];
   /** Uploaded documents for Speed Official Notice Board. */

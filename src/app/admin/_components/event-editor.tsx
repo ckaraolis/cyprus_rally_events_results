@@ -41,6 +41,17 @@ const NOTICE_BOARD_DEFAULT_CATEGORIES = [
   "Other",
 ] as const;
 const MAX_INLINE_NOTICE_URL_LENGTH = 100_000;
+const DEFAULT_RALLY_STAGE_ALGE_CONFIG: {
+  startDeviceId: string;
+  startChannelId: string;
+  finishDeviceId: string;
+  finishChannelId: string;
+} = {
+  startDeviceId: "",
+  startChannelId: "0",
+  finishDeviceId: "",
+  finishChannelId: "1",
+};
 
 function timingSignature(meta: {
   speedRunImportStatus: {
@@ -137,6 +148,7 @@ export function EventEditor({ event: initial }: Props) {
       run2: "scheduled",
     },
     algeTriggerCountByKey: initial.algeTriggerCountByKey ?? {},
+    rallyStageAlgeConfig: initial.rallyStageAlgeConfig ?? {},
     officialNoticeCustomCategories: initial.officialNoticeCustomCategories ?? [],
     officialNoticeDocuments: initial.officialNoticeDocuments ?? [],
   });
@@ -239,6 +251,30 @@ export function EventEditor({ event: initial }: Props) {
     if (sortedStages.some((s) => s.id === rallyTimingStageId)) return;
     setRallyTimingStageId(sortedStages[0]?.id ?? "");
   }, [meta.type, rallyTimingStageId, sortedStages]);
+
+  function getRallyStageAlgeConfig(stageId: string) {
+    return (
+      meta.rallyStageAlgeConfig[stageId] ?? {
+        ...DEFAULT_RALLY_STAGE_ALGE_CONFIG,
+      }
+    );
+  }
+
+  function updateRallyStageAlgeConfig(
+    stageId: string,
+    patch: Partial<(typeof DEFAULT_RALLY_STAGE_ALGE_CONFIG)>,
+  ) {
+    setMeta((m) => ({
+      ...m,
+      rallyStageAlgeConfig: {
+        ...m.rallyStageAlgeConfig,
+        [stageId]: {
+          ...(m.rallyStageAlgeConfig[stageId] ?? DEFAULT_RALLY_STAGE_ALGE_CONFIG),
+          ...patch,
+        },
+      },
+    }));
+  }
 
   function sanitizeMetaForSave<
     T extends { officialNoticeDocuments: RallyEvent["officialNoticeDocuments"] },
@@ -423,9 +459,10 @@ export function EventEditor({ event: initial }: Props) {
     row: Entry,
     trigger: "start" | "finish",
     triggerTime: string,
+    rallyStageId?: string,
   ): Entry {
     if (metaRef.current.type === "rally") {
-      const stageId = rallyTimingStageIdRef.current.trim();
+      const stageId = (rallyStageId ?? rallyTimingStageIdRef.current).trim();
       if (!stageId) return row;
       const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
       const current = blob[stageId] ?? {};
@@ -461,9 +498,18 @@ export function EventEditor({ event: initial }: Props) {
   }
 
   async function connectStompStream() {
-    if (metaRef.current.type === "rally") {
-      if (!algeFinishDeviceId.trim()) {
-        setFlash("Set Finish Device ID first.");
+    const currentMeta = metaRef.current;
+    if (currentMeta.type === "rally") {
+      const liveStages = stagesRef.current.filter((s) => s.progressStatus === "live");
+      const hasAnyRallyDevice = liveStages.some((st) => {
+        const cfg = currentMeta.rallyStageAlgeConfig[st.id];
+        if (!cfg) return false;
+        return Boolean(cfg.startDeviceId.trim() || cfg.finishDeviceId.trim());
+      });
+      if (!hasAnyRallyDevice) {
+        setFlash(
+          "Set Start/Finish Device ID on at least one Live stage first (select stage above, then configure ALGE devices).",
+        );
         return;
       }
     } else {
@@ -491,17 +537,34 @@ export function EventEditor({ event: initial }: Props) {
       const subscriptions: Array<{
         topic: string;
         forcedTrigger: "start" | "finish" | null;
+        stageId?: string;
       }> = [];
       if (customTopic) {
         subscriptions.push({
           topic: customTopic,
-          forcedTrigger: metaRef.current.type === "rally" ? "finish" : null,
+          forcedTrigger: currentMeta.type === "rally" ? "finish" : null,
         });
-      } else if (metaRef.current.type === "rally") {
-        subscriptions.push({
-          topic: `/topic/device/${algeFinishDeviceId.trim()}/trigger`,
-          forcedTrigger: "finish",
-        });
+      } else if (currentMeta.type === "rally") {
+        for (const stage of stagesRef.current) {
+          const cfg = currentMeta.rallyStageAlgeConfig[stage.id];
+          if (!cfg) continue;
+          const startDeviceId = cfg.startDeviceId.trim();
+          const finishDeviceId = cfg.finishDeviceId.trim();
+          if (startDeviceId) {
+            subscriptions.push({
+              topic: `/topic/device/${startDeviceId}/trigger`,
+              forcedTrigger: "start",
+              stageId: stage.id,
+            });
+          }
+          if (finishDeviceId) {
+            subscriptions.push({
+              topic: `/topic/device/${finishDeviceId}/trigger`,
+              forcedTrigger: "finish",
+              stageId: stage.id,
+            });
+          }
+        }
       } else {
         subscriptions.push({
           topic: `/topic/device/${algeStartDeviceId.trim()}/trigger`,
@@ -513,8 +576,18 @@ export function EventEditor({ event: initial }: Props) {
         });
       }
       const uniqueSubscriptions = subscriptions.filter(
-        (s, i, arr) => arr.findIndex((x) => x.topic === s.topic) === i,
+        (s, i, arr) =>
+          arr.findIndex(
+            (x) =>
+              x.topic === s.topic &&
+              x.forcedTrigger === s.forcedTrigger &&
+              x.stageId === s.stageId,
+          ) === i,
       );
+      if (uniqueSubscriptions.length === 0) {
+        setFlash("No ALGE subscriptions configured. Check device IDs.");
+        return;
+      }
       const topicLabel = uniqueSubscriptions.map((x) => x.topic).join(", ");
       const client = new Client({
         webSocketFactory: () => new SockJS(algeWsEndpoint.trim()),
@@ -577,7 +650,7 @@ export function EventEditor({ event: initial }: Props) {
                 algeTriggersAllowed =
                   mNow.speedRunImportStatus[timingRunRef.current] === "live";
               } else if (mNow.type === "rally") {
-                const sid = rallyTimingStageIdRef.current.trim();
+                const sid = (sub.stageId ?? rallyTimingStageIdRef.current).trim();
                 const st = sid
                   ? stagesRef.current.find((s) => s.id === sid)
                   : undefined;
@@ -588,7 +661,7 @@ export function EventEditor({ event: initial }: Props) {
                   mNow.type === "speed"
                     ? `${speedRunIdLabel(timingRunRef.current)} import status is not Live (ALGE only when Live; use manual entry when Completed or Scheduled)`
                     : (() => {
-                        const sid = rallyTimingStageIdRef.current.trim();
+                        const sid = (sub.stageId ?? rallyTimingStageIdRef.current).trim();
                         const st = sid
                           ? stagesRef.current.find((s) => s.id === sid)
                           : undefined;
@@ -619,12 +692,21 @@ export function EventEditor({ event: initial }: Props) {
                         timingChannelNum === Number.parseInt(algeStartChannelId, 10)
                       ? "start"
                       : "start");
+              const activeRallyStageId =
+                metaRef.current.type === "rally"
+                  ? (sub.stageId ?? rallyTimingStageIdRef.current)
+                  : undefined;
               let nextEntriesSnapshot: Entry[] | null = null;
               setEntries((prev) => {
                 const next = prev.map((x) => {
                   if (x.startNumber !== startNumber) return x;
                   matched = true;
-                  return applyTriggerTimingValue(x, activeTrigger, triggerTime);
+                  return applyTriggerTimingValue(
+                    x,
+                    activeTrigger,
+                    triggerTime,
+                    activeRallyStageId,
+                  );
                 });
                 nextEntriesSnapshot = next;
                 return next;
@@ -1053,6 +1135,10 @@ export function EventEditor({ event: initial }: Props) {
     meta.type === "rally"
       ? sortedStages.find((s) => s.id === rallyTimingStageId) ?? sortedStages[0] ?? null
       : null;
+  const selectedRallyStageAlgeConfig =
+    meta.type === "rally" && selectedRallyTimingStage
+      ? getRallyStageAlgeConfig(selectedRallyTimingStage.id)
+      : DEFAULT_RALLY_STAGE_ALGE_CONFIG;
   const timingStartField: keyof Entry =
     timingRun === "trial"
       ? "trialStartTime"
@@ -2272,7 +2358,8 @@ export function EventEditor({ event: initial }: Props) {
                 ALGE triggers apply only when the selected stage&apos;s status is{" "}
                 <strong>Live</strong> (set on the Stages tab). If the stage is{" "}
                 <strong>Completed</strong> or <strong>pending</strong>, enter times
-                manually; stream triggers are ignored.
+                manually; stream triggers are ignored. Device IDs are saved per stage
+                so multiple Live stages can run at the same time.
               </p>
             )}
             {meta.type === "speed" ? (
@@ -2300,8 +2387,77 @@ export function EventEditor({ event: initial }: Props) {
                   />
                 </div>
               </div>
+            ) : selectedRallyTimingStage ? (
+              <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  ALGE devices for SS {selectedRallyTimingStage.order}
+                </p>
+                <div className="mt-2 flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Start Device ID
+                    </label>
+                    <input
+                      className="mt-1 w-36 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={selectedRallyStageAlgeConfig.startDeviceId}
+                      onChange={(e) =>
+                        updateRallyStageAlgeConfig(selectedRallyTimingStage.id, {
+                          startDeviceId: e.target.value,
+                        })
+                      }
+                      placeholder="250440006"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Start Channel
+                    </label>
+                    <input
+                      className="mt-1 w-20 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={selectedRallyStageAlgeConfig.startChannelId}
+                      onChange={(e) =>
+                        updateRallyStageAlgeConfig(selectedRallyTimingStage.id, {
+                          startChannelId: e.target.value,
+                        })
+                      }
+                      placeholder="0"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Finish Device ID
+                    </label>
+                    <input
+                      className="mt-1 w-36 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={selectedRallyStageAlgeConfig.finishDeviceId}
+                      onChange={(e) =>
+                        updateRallyStageAlgeConfig(selectedRallyTimingStage.id, {
+                          finishDeviceId: e.target.value,
+                        })
+                      }
+                      placeholder="250440049"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      Finish Channel
+                    </label>
+                    <input
+                      className="mt-1 w-20 rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={selectedRallyStageAlgeConfig.finishChannelId}
+                      onChange={(e) =>
+                        updateRallyStageAlgeConfig(selectedRallyTimingStage.id, {
+                          finishChannelId: e.target.value,
+                        })
+                      }
+                      placeholder="1"
+                    />
+                  </div>
+                </div>
+              </div>
             ) : null}
-            <div className="mt-3 flex flex-wrap items-end gap-2">
+            {meta.type === "speed" ? (
+              <div className="mt-3 flex flex-wrap items-end gap-2">
                 <div>
                   <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                     Finish Device ID
@@ -2324,7 +2480,8 @@ export function EventEditor({ event: initial }: Props) {
                     placeholder="1"
                   />
                 </div>
-            </div>
+              </div>
+            ) : null}
             <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
                 <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                   Live trigger stream (STOMP/SockJS)

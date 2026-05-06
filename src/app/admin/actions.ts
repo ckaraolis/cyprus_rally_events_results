@@ -93,6 +93,7 @@ export async function createEvent(input: {
       run2: "scheduled",
     },
     algeTriggerCountByKey: {},
+    rallyStageAlgeConfig: {},
     officialNoticeCustomCategories: [],
     officialNoticeDocuments: [],
     stages: defaultStages,
@@ -121,6 +122,7 @@ export async function updateEventMeta(
       run2: SpeedRunImportStatus;
     };
     algeTriggerCountByKey: Record<string, number>;
+    rallyStageAlgeConfig: RallyEvent["rallyStageAlgeConfig"];
     officialNoticeCustomCategories: string[];
     officialNoticeDocuments: RallyEvent["officialNoticeDocuments"];
   },
@@ -138,6 +140,7 @@ export async function updateEventMeta(
   e.status = input.status;
   e.speedRunImportStatus = input.speedRunImportStatus;
   e.algeTriggerCountByKey = input.algeTriggerCountByKey;
+  e.rallyStageAlgeConfig = input.rallyStageAlgeConfig ?? {};
   e.officialNoticeCustomCategories = input.officialNoticeCustomCategories;
   e.officialNoticeDocuments = input.officialNoticeDocuments;
   await saveRallyConfig(config);

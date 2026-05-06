@@ -90,6 +90,12 @@ function toEvent(row: {
     !Array.isArray(algeMap.__officialNoticeData)
       ? (algeMap.__officialNoticeData as Record<string, unknown>)
       : {};
+  const rallyStageAlgeRaw =
+    algeMap.__rallyStageAlgeConfig &&
+    typeof algeMap.__rallyStageAlgeConfig === "object" &&
+    !Array.isArray(algeMap.__rallyStageAlgeConfig)
+      ? (algeMap.__rallyStageAlgeConfig as Record<string, unknown>)
+      : {};
   const customCategories = Array.isArray(noticeDataRaw.customCategories)
     ? noticeDataRaw.customCategories
         .filter((x): x is string => typeof x === "string")
@@ -120,6 +126,26 @@ function toEvent(row: {
         })
         .filter((x): x is RallyEvent["officialNoticeDocuments"][number] => Boolean(x))
     : [];
+  const rallyStageAlgeConfig: RallyEvent["rallyStageAlgeConfig"] = Object.fromEntries(
+    Object.entries(rallyStageAlgeRaw)
+      .filter(([, v]) => v && typeof v === "object" && !Array.isArray(v))
+      .map(([stageId, v]) => {
+        const cfg = v as Record<string, unknown>;
+        return [
+          stageId,
+          {
+            startDeviceId:
+              typeof cfg.startDeviceId === "string" ? cfg.startDeviceId.trim() : "",
+            startChannelId:
+              typeof cfg.startChannelId === "string" ? cfg.startChannelId.trim() : "0",
+            finishDeviceId:
+              typeof cfg.finishDeviceId === "string" ? cfg.finishDeviceId.trim() : "",
+            finishChannelId:
+              typeof cfg.finishChannelId === "string" ? cfg.finishChannelId.trim() : "1",
+          },
+        ];
+      }),
+  );
   return {
     id: row.id,
     name: row.name,
@@ -145,9 +171,10 @@ function toEvent(row: {
     },
     algeTriggerCountByKey: Object.fromEntries(
       Object.entries(algeMap)
-        .filter(([k]) => k !== "__officialNoticeData")
+        .filter(([k]) => k !== "__officialNoticeData" && k !== "__rallyStageAlgeConfig")
         .map(([k, v]) => [k, typeof v === "number" ? v : 0]),
     ),
+    rallyStageAlgeConfig,
     officialNoticeCustomCategories: customCategories,
     officialNoticeDocuments: officialDocs,
     stages: row.stages.map(toStage),
@@ -220,6 +247,7 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
           speedRunImportStatusRun2: e.speedRunImportStatus.run2,
           algeTriggerCountByKey: {
             ...e.algeTriggerCountByKey,
+            __rallyStageAlgeConfig: e.rallyStageAlgeConfig,
             __officialNoticeData: {
               customCategories: e.officialNoticeCustomCategories,
               documents: e.officialNoticeDocuments,
@@ -239,6 +267,7 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
           speedRunImportStatusRun2: e.speedRunImportStatus.run2,
           algeTriggerCountByKey: {
             ...e.algeTriggerCountByKey,
+            __rallyStageAlgeConfig: e.rallyStageAlgeConfig,
             __officialNoticeData: {
               customCategories: e.officialNoticeCustomCategories,
               documents: e.officialNoticeDocuments,
