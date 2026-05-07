@@ -667,28 +667,6 @@ export function EventEditor({ event: initial }: Props) {
                 );
                 return;
               }
-              const mPre = metaRef.current;
-              if (
-                mPre.type === "rally" &&
-                sub.stageId &&
-                sub.forcedTrigger === "finish"
-              ) {
-                const cfg = mPre.rallyStageAlgeConfig[sub.stageId];
-                const expectedFinishCh = Number.parseInt(
-                  cfg?.finishChannelId?.trim() ?? "1",
-                  10,
-                );
-                if (
-                  !Number.isNaN(timingChannelNum) &&
-                  !Number.isNaN(expectedFinishCh) &&
-                  timingChannelNum !== expectedFinishCh
-                ) {
-                  setStreamInfo(
-                    `Connected (${topicLabel}) · trigger ignored: channel ${timingChannelRaw || "?"} ≠ SS finish channel ${cfg?.finishChannelId ?? "1"} · #${startNumber} (${sub.topic})`,
-                  );
-                  return;
-                }
-              }
               const mNow = metaRef.current;
               let algeTriggersAllowed = false;
               if (mNow.type === "speed") {
@@ -744,7 +722,7 @@ export function EventEditor({ event: initial }: Props) {
               let nextEntriesSnapshot: Entry[] | null = null;
               setEntries((prev) => {
                 const next = prev.map((x) => {
-                  if (x.startNumber !== startNumber) return x;
+                  if (Math.floor(Number(x.startNumber)) !== startNumber) return x;
                   matched = true;
                   return applyTriggerTimingValue(
                     x,

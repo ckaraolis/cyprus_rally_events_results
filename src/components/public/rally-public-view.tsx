@@ -200,12 +200,40 @@ function printHtmlDocument(html: string): void {
   doc.close();
 }
 
+/** Detect changes when polling `/api/rally/config` (stage dots, entry times, etc.). */
+function fingerprintEventForLivePoll(e: RallyEvent): string {
+  return JSON.stringify({
+    stages: e.stages.map((s) => ({
+      id: s.id,
+      order: s.order,
+      progressStatus: s.progressStatus,
+      name: s.name,
+      leg: s.leg,
+      firstCarStartTime: s.firstCarStartTime,
+      distanceKm: s.distanceKm,
+    })),
+    speed: e.type === "speed" ? e.speedRunImportStatus : null,
+    entries: e.entries.map((x) => ({
+      id: x.id,
+      sn: x.startNumber,
+      trialStartTime: x.trialStartTime,
+      trialFinishTime: x.trialFinishTime,
+      run1StartTime: x.run1StartTime,
+      run1FinishTime: x.run1FinishTime,
+      run2StartTime: x.run2StartTime,
+      run2FinishTime: x.run2FinishTime,
+    })),
+  });
+}
+
 export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) {
   const [event, setEvent] = useState(initialEvent);
   const lastConfigUpdatedAtRef = useRef<string | null>(null);
+  const lastEventPollSigRef = useRef<string | null>(null);
   useEffect(() => {
     setEvent(initialEvent);
     lastConfigUpdatedAtRef.current = null;
+    lastEventPollSigRef.current = null;
   }, [initialEvent]);
 
   const [tab, setTab] = useState<TabId>("overview");
@@ -720,10 +748,17 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           events: RallyEvent[];
           updatedAt: string;
         };
-        if (data.updatedAt === lastConfigUpdatedAtRef.current) return;
-        lastConfigUpdatedAtRef.current = data.updatedAt;
         const match = data.events?.find((e) => e.id === initialEvent.id);
         if (!match || cancelled) return;
+        const sig = fingerprintEventForLivePoll(match);
+        if (
+          sig === lastEventPollSigRef.current &&
+          data.updatedAt === lastConfigUpdatedAtRef.current
+        ) {
+          return;
+        }
+        lastConfigUpdatedAtRef.current = data.updatedAt;
+        lastEventPollSigRef.current = sig;
         setEvent(match);
       } catch {
         /* offline / transient */

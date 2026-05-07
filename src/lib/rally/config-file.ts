@@ -97,7 +97,20 @@ function normalizeOfficialNoticeDocuments(
 
 function normalizeProgressStatus(v: unknown): StageProgressStatus {
   if (v === "live" || v === "completed" || v === "pending") return v;
+  if (typeof v === "string") {
+    const t = v.trim().toLowerCase();
+    if (t === "live" || t === "completed" || t === "pending") return t;
+  }
   return "pending";
+}
+
+function normalizeStartNumber(sn: unknown): number {
+  if (typeof sn === "number" && Number.isFinite(sn)) return Math.floor(sn);
+  if (typeof sn === "string") {
+    const n = Number.parseInt(sn.trim(), 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
 }
 
 function normalizeFirstCarStartTime(v: unknown): string | null {
@@ -188,7 +201,7 @@ function normalizeStage(raw: unknown): Stage {
 function normalizeEntry(raw: unknown): Entry {
   const o =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const sn = o.startNumber;
+  const sn = normalizeStartNumber(o.startNumber);
   const trialStartTime =
     typeof o.trialStartTime === "string" ? o.trialStartTime : "";
   const trialFinishTime =
@@ -201,7 +214,7 @@ function normalizeEntry(raw: unknown): Entry {
     typeof o.run2FinishTime === "string" ? o.run2FinishTime : "";
   return {
     id: typeof o.id === "string" ? o.id : crypto.randomUUID(),
-    startNumber: typeof sn === "number" ? sn : 0,
+    startNumber: sn,
     entrance: typeof o.entrance === "string" ? o.entrance : "",
     start: o.start !== false,
     trialStartTime,

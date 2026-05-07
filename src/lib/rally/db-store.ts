@@ -34,10 +34,13 @@ function toStage(row: {
     leg: row.leg,
     distanceKm: row.distanceKm,
     firstCarStartTime: row.firstCarStartTime,
-    progressStatus:
-      row.progressStatus === "live" || row.progressStatus === "completed"
-        ? row.progressStatus
-        : "pending",
+    progressStatus: (() => {
+      const p = String(row.progressStatus ?? "")
+        .trim()
+        .toLowerCase();
+      if (p === "live" || p === "completed") return p;
+      return "pending";
+    })(),
   };
 }
 

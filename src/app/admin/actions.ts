@@ -146,6 +146,7 @@ export async function updateEventMeta(
   await saveRallyConfig(config);
   revalidatePath("/admin/events");
   revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath(`/rally/${eventId}`);
   revalidatePath("/");
   return { ok: true as const };
 }
@@ -463,6 +464,7 @@ export async function replaceStages(eventId: string, stages: Stage[]) {
   config.events[i].stages = stages;
   await saveRallyConfig(config);
   revalidatePath(`/admin/events/${eventId}`);
+  revalidatePath(`/rally/${eventId}`);
   revalidatePath("/");
   return { ok: true as const };
 }
