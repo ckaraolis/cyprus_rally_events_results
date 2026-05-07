@@ -1686,9 +1686,19 @@ function LegResultsTable({
     totalMs: number | null;
   };
 
+  const allLegStagesCompleted = useMemo(
+    () =>
+      stagesInLeg.length > 0 &&
+      stagesInLeg.every((st) => st.progressStatus === "completed"),
+    [stagesInLeg],
+  );
   const sorted = useMemo((): LegRow[] => {
     const rows: LegRow[] = entries.map((row) => {
       const cells = stagesInLeg.map((st) => {
+        // Only reveal stage times once that stage is officially completed.
+        if (st.progressStatus !== "completed") {
+          return { outcome: null, durationMs: null };
+        }
         const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
         return classifyRallyStageLegCell(startValue, finishValue);
       });
@@ -1696,10 +1706,16 @@ function LegResultsTable({
       const allTimedNoOutcome =
         cells.length > 0 &&
         cells.every((c) => c.outcome == null && c.durationMs != null);
-      const totalMs = allTimedNoOutcome
-        ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
-        : null;
-      const sortTier: 0 | 1 | 2 = rowOutcome != null ? 2 : totalMs != null ? 0 : 1;
+      const totalMs =
+        allLegStagesCompleted && allTimedNoOutcome
+          ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+          : null;
+      const sortTier: 0 | 1 | 2 =
+        allLegStagesCompleted && rowOutcome != null
+          ? 2
+          : totalMs != null
+            ? 0
+            : 1;
       return { row, cells, sortTier, rowOutcome, totalMs };
     });
 
@@ -1721,7 +1737,7 @@ function LegResultsTable({
       }
       return a.row.startNumber - b.row.startNumber;
     });
-  }, [entries, stagesInLeg]);
+  }, [allLegStagesCompleted, entries, stagesInLeg]);
 
   const leaderTotal = sorted.find((x) => x.sortTier === 0)?.totalMs ?? null;
 
@@ -1787,7 +1803,9 @@ function LegResultsTable({
               </td>
               <td className="align-middle">
                 <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {rowOutcome != null ? rowOutcome : formatDurationMs(totalMs)}
+                  {allLegStagesCompleted && rowOutcome != null
+                    ? rowOutcome
+                    : formatDurationMs(totalMs)}
                 </span>
               </td>
               <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
@@ -1836,20 +1854,18 @@ function CumulativeAfterStageTable({
             : null;
           return { row, totalMs };
         })
+        // Hide crews who don't have a clocked time yet for every SS up to the
+        // selected one (e.g. no SS2 time on After SS2).
+        .filter(
+          (x): x is { row: Entry; totalMs: number } => x.totalMs != null,
+        )
         .sort((a, b) => {
-          if (a.totalMs != null && b.totalMs == null) return -1;
-          if (a.totalMs == null && b.totalMs != null) return 1;
-          if (a.totalMs !== b.totalMs) {
-            return (
-              (a.totalMs ?? Number.MAX_SAFE_INTEGER) -
-              (b.totalMs ?? Number.MAX_SAFE_INTEGER)
-            );
-          }
+          if (a.totalMs !== b.totalMs) return a.totalMs - b.totalMs;
           return a.row.startNumber - b.row.startNumber;
         }),
     [entries, stages],
   );
-  const leaderTotal = sorted.find((x) => x.totalMs != null)?.totalMs ?? null;
+  const leaderTotal = sorted[0]?.totalMs ?? null;
 
   if (stages.length === 0) {
     return (
@@ -1862,7 +1878,7 @@ function CumulativeAfterStageTable({
   if (sorted.length === 0) {
     return (
       <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
-        No timed entries yet.
+        No crew has finished every stage up to here yet.
       </p>
     );
   }
@@ -1892,7 +1908,7 @@ function CumulativeAfterStageTable({
               {formatDurationMs(totalMs)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
-              {leaderTotal == null || totalMs == null || totalMs <= leaderTotal
+              {leaderTotal == null || totalMs <= leaderTotal
                 ? "—"
                 : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
             </td>
