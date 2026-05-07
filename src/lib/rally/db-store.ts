@@ -134,10 +134,6 @@ function toEvent(row: {
         return [
           stageId,
           {
-            startDeviceId:
-              typeof cfg.startDeviceId === "string" ? cfg.startDeviceId.trim() : "",
-            startChannelId:
-              typeof cfg.startChannelId === "string" ? cfg.startChannelId.trim() : "0",
             finishDeviceId:
               typeof cfg.finishDeviceId === "string" ? cfg.finishDeviceId.trim() : "",
             finishChannelId:

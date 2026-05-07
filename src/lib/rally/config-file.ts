@@ -133,10 +133,6 @@ function normalizeRallyStageAlgeConfig(
     if (!cfgRaw || typeof cfgRaw !== "object" || Array.isArray(cfgRaw)) continue;
     const cfg = cfgRaw as Record<string, unknown>;
     out[stageId] = {
-      startDeviceId:
-        typeof cfg.startDeviceId === "string" ? cfg.startDeviceId.trim() : "",
-      startChannelId:
-        typeof cfg.startChannelId === "string" ? cfg.startChannelId.trim() : "0",
       finishDeviceId:
         typeof cfg.finishDeviceId === "string" ? cfg.finishDeviceId.trim() : "",
       finishChannelId:
