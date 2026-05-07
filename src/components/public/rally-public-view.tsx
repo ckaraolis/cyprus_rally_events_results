@@ -1674,37 +1674,56 @@ function LegResultsTable({
   entries: Entry[];
   stagesInLeg: Stage[];
 }) {
-  const sorted = useMemo(
-    () =>
-      [...entries]
-        .map((row) => {
-          const stageTimes = stagesInLeg.map((st) => {
-            const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
-            const startMs = parseClockToDayMs(startValue);
-            const finishMs = parseClockToDayMs(finishValue);
-            if (startMs == null || finishMs == null) return null;
-            const duration = finishMs - startMs;
-            return duration >= 0 ? duration : null;
-          });
-          const allTimed = stageTimes.every((t) => t != null);
-          const totalMs = allTimed
-            ? stageTimes.reduce((sum, t) => sum + (t ?? 0), 0)
-            : null;
-          return { row, stageTimes, totalMs };
-        })
-        .sort((a, b) =>
-          a.totalMs != null && b.totalMs == null
-            ? -1
-            : a.totalMs == null && b.totalMs != null
-              ? 1
-              : a.totalMs !== b.totalMs
-                ? (a.totalMs ?? Number.MAX_SAFE_INTEGER) -
-                  (b.totalMs ?? Number.MAX_SAFE_INTEGER)
-                : a.row.startNumber - b.row.startNumber,
-        ),
-    [entries, stagesInLeg],
-  );
-  const leaderTotal = sorted.find((x) => x.totalMs != null)?.totalMs ?? null;
+  type LegRow = {
+    row: Entry;
+    cells: Array<{
+      outcome: "DNS" | "DNF" | "RET" | null;
+      durationMs: number | null;
+    }>;
+    /** 0 = full leg timed, 1 = incomplete (-), 2 = DNS/DNF/RET on any stage */
+    sortTier: 0 | 1 | 2;
+    rowOutcome: "DNS" | "DNF" | "RET" | null;
+    totalMs: number | null;
+  };
+
+  const sorted = useMemo((): LegRow[] => {
+    const rows: LegRow[] = entries.map((row) => {
+      const cells = stagesInLeg.map((st) => {
+        const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
+        return classifyRallyStageLegCell(startValue, finishValue);
+      });
+      const rowOutcome = worstLegRowOutcome(cells);
+      const allTimedNoOutcome =
+        cells.length > 0 &&
+        cells.every((c) => c.outcome == null && c.durationMs != null);
+      const totalMs = allTimedNoOutcome
+        ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+        : null;
+      const sortTier: 0 | 1 | 2 = rowOutcome != null ? 2 : totalMs != null ? 0 : 1;
+      return { row, cells, sortTier, rowOutcome, totalMs };
+    });
+
+    return rows.sort((a, b) => {
+      if (a.sortTier !== b.sortTier) return a.sortTier - b.sortTier;
+      if (a.sortTier === 0) {
+        const ta = a.totalMs ?? 0;
+        const tb = b.totalMs ?? 0;
+        if (ta !== tb) return ta - tb;
+        return a.row.startNumber - b.row.startNumber;
+      }
+      if (a.sortTier === 2) {
+        const oa = a.rowOutcome!;
+        const ob = b.rowOutcome!;
+        const ka = legOutcomeSortKey(oa);
+        const kb = legOutcomeSortKey(ob);
+        if (ka !== kb) return ka - kb;
+        return a.row.startNumber - b.row.startNumber;
+      }
+      return a.row.startNumber - b.row.startNumber;
+    });
+  }, [entries, stagesInLeg]);
+
+  const leaderTotal = sorted.find((x) => x.sortTier === 0)?.totalMs ?? null;
 
   if (stagesInLeg.length === 0) {
     return (
@@ -1740,40 +1759,48 @@ function LegResultsTable({
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, stageTimes, totalMs }, i) => (
-          <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
-            <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
-              {i + 1}
-            </td>
-            <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
-              {row.startNumber}
-            </td>
-            <CrewStackCell row={row} />
-            {stagesInLeg.map((st, idx) => (
-              <td
-                key={st.id}
-                className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs"
-              >
-                {formatDurationMs(stageTimes[idx] ?? null)}
+        {sorted.map((legRow, i) => {
+          const { row, cells, sortTier, rowOutcome, totalMs } = legRow;
+          return (
+            <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+              <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
+                {i + 1}
               </td>
-            ))}
-            <td className="align-middle">
-              <span className="flex w-full justify-center text-center font-mono text-[var(--ewrc-time-placeholder)]">
-                —
-              </span>
-            </td>
-            <td className="align-middle">
-              <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                {formatDurationMs(totalMs)}
-              </span>
-            </td>
-            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
-              {leaderTotal == null || totalMs == null || totalMs <= leaderTotal
-                ? "—"
-                : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
-            </td>
-          </tr>
-        ))}
+              <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
+                {row.startNumber}
+              </td>
+              <CrewStackCell row={row} />
+              {cells.map((c, idx) => (
+                <td
+                  key={stagesInLeg[idx]!.id}
+                  className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs"
+                >
+                  {c.outcome != null
+                    ? c.outcome
+                    : formatDurationMs(c.durationMs)}
+                </td>
+              ))}
+              <td className="align-middle">
+                <span className="flex w-full justify-center text-center font-mono text-[var(--ewrc-time-placeholder)]">
+                  —
+                </span>
+              </td>
+              <td className="align-middle">
+                <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                  {rowOutcome != null ? rowOutcome : formatDurationMs(totalMs)}
+                </span>
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+                {sortTier !== 0 ||
+                leaderTotal == null ||
+                totalMs == null ||
+                totalMs <= leaderTotal
+                  ? "—"
+                  : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
+              </td>
+            </tr>
+          );
+        })}
       </tbody>
     </table>
   );
@@ -2358,6 +2385,47 @@ function getRallyStageTimingValues(
     startValue: values.startTime?.trim() ?? "",
     finishValue: values.finishTime?.trim() ?? "",
   };
+}
+
+/** Per-stage cell for leg classification: outcome markers vs clocked stage time. */
+function classifyRallyStageLegCell(startRaw: string, finishRaw: string): {
+  outcome: "DNS" | "DNF" | "RET" | null;
+  durationMs: number | null;
+} {
+  const su = startRaw.trim().toUpperCase();
+  const fu = finishRaw.trim().toUpperCase();
+  if (su === "DNS" || fu === "DNS") return { outcome: "DNS", durationMs: null };
+  if (su === "DNF" || fu === "DNF") return { outcome: "DNF", durationMs: null };
+  if (su === "RET" || fu === "RET") return { outcome: "RET", durationMs: null };
+  const startMs = parseClockToDayMs(startRaw);
+  const finishMs = parseClockToDayMs(finishRaw);
+  if (startMs == null || finishMs == null) return { outcome: null, durationMs: null };
+  const d = finishMs - startMs;
+  if (d < 0) return { outcome: null, durationMs: null };
+  return { outcome: null, durationMs: d };
+}
+
+function worstLegRowOutcome(
+  stages: Array<{ outcome: "DNS" | "DNF" | "RET" | null }>,
+): "DNS" | "DNF" | "RET" | null {
+  let hasDns = false;
+  let hasDnf = false;
+  let hasRet = false;
+  for (const s of stages) {
+    if (s.outcome === "DNS") hasDns = true;
+    else if (s.outcome === "DNF") hasDnf = true;
+    else if (s.outcome === "RET") hasRet = true;
+  }
+  if (hasDns) return "DNS";
+  if (hasDnf) return "DNF";
+  if (hasRet) return "RET";
+  return null;
+}
+
+function legOutcomeSortKey(o: "DNS" | "DNF" | "RET"): number {
+  if (o === "DNS") return 0;
+  if (o === "DNF") return 1;
+  return 2;
 }
 
 function getSpeedRunDurationMs(
