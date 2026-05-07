@@ -2496,6 +2496,83 @@ export function EventEditor({ event: initial }: Props) {
                 </p>
               </div>
             ) : null}
+            {meta.type === "rally" ? (
+              <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
+                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  Configured devices
+                </p>
+                {sortedStages.filter(
+                  (s) => meta.rallyStageAlgeConfig[s.id]?.finishDeviceId?.trim(),
+                ).length === 0 ? (
+                  <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+                    No SS has a finish device set. Pick an SS above, set its
+                    Finish Device ID and click Save device.
+                  </p>
+                ) : (
+                  <ul className="mt-2 divide-y divide-zinc-200 text-sm dark:divide-zinc-700">
+                    {sortedStages
+                      .filter(
+                        (s) =>
+                          meta.rallyStageAlgeConfig[s.id]?.finishDeviceId?.trim(),
+                      )
+                      .map((s) => {
+                        const cfg = meta.rallyStageAlgeConfig[s.id]!;
+                        const liveBadge =
+                          s.progressStatus === "live" ? (
+                            <span className="rounded bg-green-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-green-800 dark:bg-green-900 dark:text-green-300">
+                              Live
+                            </span>
+                          ) : (
+                            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                              {s.progressStatus}
+                            </span>
+                          );
+                        return (
+                          <li
+                            key={s.id}
+                            className="flex flex-wrap items-center justify-between gap-2 py-1.5"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">SS {s.order}</span>
+                              {liveBadge}
+                              <span className="font-mono text-zinc-700 dark:text-zinc-200">
+                                {cfg.finishDeviceId}
+                              </span>
+                              <span className="text-xs text-zinc-500">
+                                ch {cfg.finishChannelId || "1"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => setRallyTimingStageId(s.id)}
+                                className="rounded border border-zinc-300 px-2 py-0.5 text-xs text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  updateRallyStageAlgeConfig(s.id, {
+                                    finishDeviceId: "",
+                                  })
+                                }
+                                className="rounded border border-red-300 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-800 dark:text-red-400 dark:hover:bg-red-900/30"
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </li>
+                        );
+                      })}
+                  </ul>
+                )}
+                <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Connect stream subscribes to every SS listed here on the same
+                  endpoint. Triggers are accepted only when the SS is Live.
+                </p>
+              </div>
+            ) : null}
             {meta.type === "speed" ? (
               <div className="mt-3 flex flex-wrap items-end gap-2">
                 <div>
