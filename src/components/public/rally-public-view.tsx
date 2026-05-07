@@ -240,6 +240,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   const [selectedStripId, setSelectedStripId] = useState<string | null>(null);
   const [resultsSubView, setResultsSubView] =
     useState<ResultsSubView>("stage");
+  /** For rally stage view: switch between "this SS only" and "After SSx" cumulative. */
+  const [rallyStageView, setRallyStageView] = useState<"stage" | "afterStage">(
+    "stage",
+  );
   const [nowMs, setNowMs] = useState(() => Date.now());
   const tabs = event.type === "speed" ? SPEED_TABS : RALLY_TABS;
 
@@ -400,6 +404,25 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     resultsStripItems.find((x) => x.id === selectedStripId) ??
     resultsStripItems[0] ??
     null;
+  /** All SS from the first up to and including the currently selected stage (rally only). */
+  const cumulativeStagesUpToSelected = useMemo<Stage[]>(() => {
+    if (
+      event.type !== "rally" ||
+      !selectedStripItem ||
+      selectedStripItem.type !== "stage"
+    ) {
+      return [];
+    }
+    const idx = stagesSorted.findIndex(
+      (s) => s.id === selectedStripItem.stage.id,
+    );
+    if (idx < 0) return [];
+    return stagesSorted.slice(0, idx + 1);
+  }, [event.type, selectedStripItem, stagesSorted]);
+  const showAfterStageTab = cumulativeStagesUpToSelected.length >= 2;
+  const effectiveRallyStageView: "stage" | "afterStage" = showAfterStageTab
+    ? rallyStageView
+    : "stage";
   const normalizedLogoUrl = useMemo(
     () => normalizeLogoUrl(event.logoUrl),
     [event.logoUrl],
@@ -720,6 +743,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   useEffect(() => {
     if (tab === "stage-results") setResultsSubView("stage");
   }, [tab]);
+
+  useEffect(() => {
+    setRallyStageView("stage");
+  }, [selectedStripId]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -1048,7 +1075,44 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                           {selectedStripItem.stage.distanceKm} km
                         </p>
                       ) : null}
-                      {event.type === "rally" ? (
+                      {event.type === "rally" && showAfterStageTab ? (
+                        <div
+                          className="mt-3 inline-flex rounded-md border border-[var(--ewrc-border)] p-0.5"
+                          role="tablist"
+                          aria-label="Stage view"
+                        >
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={effectiveRallyStageView === "stage"}
+                            onClick={() => setRallyStageView("stage")}
+                            className={
+                              "rounded px-3 py-1 text-xs font-semibold uppercase tracking-wide transition-colors " +
+                              (effectiveRallyStageView === "stage"
+                                ? "bg-[var(--ewrc-chip-on-bg)] text-[var(--ewrc-heading)] ring-1 ring-[var(--ewrc-chip-on-ring)]"
+                                : "text-[var(--ewrc-muted)] hover:text-[var(--ewrc-strong)]")
+                            }
+                          >
+                            SS{selectedStripItem.stage.order} Stage Results
+                          </button>
+                          <button
+                            type="button"
+                            role="tab"
+                            aria-selected={effectiveRallyStageView === "afterStage"}
+                            onClick={() => setRallyStageView("afterStage")}
+                            className={
+                              "rounded px-3 py-1 text-xs font-semibold uppercase tracking-wide transition-colors " +
+                              (effectiveRallyStageView === "afterStage"
+                                ? "bg-[var(--ewrc-chip-on-bg)] text-[var(--ewrc-heading)] ring-1 ring-[var(--ewrc-chip-on-ring)]"
+                                : "text-[var(--ewrc-muted)] hover:text-[var(--ewrc-strong)]")
+                            }
+                          >
+                            After SS{selectedStripItem.stage.order} Results
+                          </button>
+                        </div>
+                      ) : null}
+                      {event.type === "rally" &&
+                      effectiveRallyStageView === "stage" ? (
                         <div className="mt-2 rounded-md border border-[var(--ewrc-border)] bg-[var(--ewrc-input-bg)] px-3 py-2">
                           <p className="text-xs font-semibold uppercase tracking-wide text-[var(--ewrc-muted)]">
                             On Stage:
@@ -1067,6 +1131,15 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                             </p>
                           )}
                         </div>
+                      ) : null}
+                      {event.type === "rally" &&
+                      effectiveRallyStageView === "afterStage" ? (
+                        <p className="mt-2 text-xs text-[var(--ewrc-muted-3)]">
+                          Cumulative time after SS
+                          {selectedStripItem.stage.order} (SS1–SS
+                          {selectedStripItem.stage.order}). Best total time
+                          first.
+                        </p>
                       ) : null}
                     </>
                   ) : selectedStripItem.type === "legEnd" ? (
@@ -1128,10 +1201,22 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                       />
                     )
                   ) : selectedStripItem.type === "stage" ? (
-                    <StageTimesTable
-                      entries={entriesForStageResults}
-                      stageId={event.type === "rally" ? selectedStripItem.stage.id : undefined}
-                    />
+                    event.type === "rally" &&
+                    effectiveRallyStageView === "afterStage" ? (
+                      <LegResultsTable
+                        entries={entriesForStageResults}
+                        stagesInLeg={cumulativeStagesUpToSelected}
+                      />
+                    ) : (
+                      <StageTimesTable
+                        entries={entriesForStageResults}
+                        stageId={
+                          event.type === "rally"
+                            ? selectedStripItem.stage.id
+                            : undefined
+                        }
+                      />
+                    )
                   ) : (
                     <LegResultsTable
                       entries={entriesForStageResults}
