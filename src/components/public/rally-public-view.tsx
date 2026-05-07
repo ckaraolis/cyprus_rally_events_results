@@ -1132,15 +1132,6 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                           )}
                         </div>
                       ) : null}
-                      {event.type === "rally" &&
-                      effectiveRallyStageView === "afterStage" ? (
-                        <p className="mt-2 text-xs text-[var(--ewrc-muted-3)]">
-                          Cumulative time after SS
-                          {selectedStripItem.stage.order} (SS1–SS
-                          {selectedStripItem.stage.order}). Best total time
-                          first.
-                        </p>
-                      ) : null}
                     </>
                   ) : selectedStripItem.type === "legEnd" ? (
                     <>
@@ -1150,9 +1141,6 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                         </span>
                         <span>Results</span>
                       </h2>
-                      <p className="mt-1 text-xs text-[var(--ewrc-muted-3)]">
-                        Cumulative times for this leg (from ALGE when connected).
-                      </p>
                     </>
                   ) : (
                     <>
