@@ -1203,9 +1203,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                   ) : selectedStripItem.type === "stage" ? (
                     event.type === "rally" &&
                     effectiveRallyStageView === "afterStage" ? (
-                      <LegResultsTable
+                      <CumulativeAfterStageTable
                         entries={entriesForStageResults}
-                        stagesInLeg={cumulativeStagesUpToSelected}
+                        stages={cumulativeStagesUpToSelected}
                       />
                     ) : (
                       <StageTimesTable
@@ -1768,6 +1768,103 @@ function LegResultsTable({
               </span>
             </td>
             <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+              {leaderTotal == null || totalMs == null || totalMs <= leaderTotal
+                ? "—"
+                : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+/** "After SSx" view: total time across SS1..SSx, sorted by Total, with Diff column only. */
+function CumulativeAfterStageTable({
+  entries,
+  stages,
+}: {
+  entries: Entry[];
+  stages: Stage[];
+}) {
+  const sorted = useMemo(
+    () =>
+      [...entries]
+        .map((row) => {
+          const stageTimes = stages.map((st) => {
+            const { startValue, finishValue } = getRallyStageTimingValues(
+              row,
+              st.id,
+            );
+            const startMs = parseClockToDayMs(startValue);
+            const finishMs = parseClockToDayMs(finishValue);
+            if (startMs == null || finishMs == null) return null;
+            const duration = finishMs - startMs;
+            return duration >= 0 ? duration : null;
+          });
+          const allTimed =
+            stages.length > 0 && stageTimes.every((t) => t != null);
+          const totalMs = allTimed
+            ? stageTimes.reduce((sum, t) => sum + (t ?? 0), 0)
+            : null;
+          return { row, totalMs };
+        })
+        .sort((a, b) => {
+          if (a.totalMs != null && b.totalMs == null) return -1;
+          if (a.totalMs == null && b.totalMs != null) return 1;
+          if (a.totalMs !== b.totalMs) {
+            return (
+              (a.totalMs ?? Number.MAX_SAFE_INTEGER) -
+              (b.totalMs ?? Number.MAX_SAFE_INTEGER)
+            );
+          }
+          return a.row.startNumber - b.row.startNumber;
+        }),
+    [entries, stages],
+  );
+  const leaderTotal = sorted.find((x) => x.totalMs != null)?.totalMs ?? null;
+
+  if (stages.length === 0) {
+    return (
+      <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
+        No prior stages to total.
+      </p>
+    );
+  }
+
+  if (sorted.length === 0) {
+    return (
+      <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
+        No timed entries yet.
+      </p>
+    );
+  }
+
+  return (
+    <table className="ewrc-table ewrc-table-speed-run min-w-[420px] w-full text-sm">
+      <thead>
+        <tr>
+          <th className="w-12 text-right">Pos</th>
+          <th className="w-12 text-right">#</th>
+          <th className="min-w-[10rem]">Crew</th>
+          <th className="w-28 !text-center">Total</th>
+          <th className="w-24 !text-center">Diff</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sorted.map(({ row, totalMs }, i) => (
+          <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+            <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
+              {i + 1}
+            </td>
+            <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
+              {row.startNumber}
+            </td>
+            <CrewStackCell row={row} />
+            <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+              {formatDurationMs(totalMs)}
+            </td>
+            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
               {leaderTotal == null || totalMs == null || totalMs <= leaderTotal
                 ? "—"
                 : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
