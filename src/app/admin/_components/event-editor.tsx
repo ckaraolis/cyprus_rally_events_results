@@ -230,6 +230,13 @@ export function EventEditor({ event: initial }: Props) {
   const timingAutosaveInFlightRef = useRef(false);
   const timingAutosaveQueuedRef = useRef(false);
   const lastTimingSavedSigRef = useRef(timingSignature(meta, entries));
+  const [savedRallyStageAlgeSig, setSavedRallyStageAlgeSig] = useState<string>(() =>
+    JSON.stringify(
+      normalizeInitialRallyStageAlgeConfig(initial.rallyStageAlgeConfig),
+    ),
+  );
+  const rallyStageAlgeConfigDirty =
+    JSON.stringify(meta.rallyStageAlgeConfig) !== savedRallyStageAlgeSig;
 
   const eventId = initial.id;
 
@@ -330,6 +337,7 @@ export function EventEditor({ event: initial }: Props) {
       } else {
         setFlash("Event details saved.");
       }
+      setSavedRallyStageAlgeSig(JSON.stringify(payload.rallyStageAlgeConfig));
       router.refresh();
     });
   }
@@ -377,6 +385,7 @@ export function EventEditor({ event: initial }: Props) {
         setMeta(payload);
       }
       lastTimingSavedSigRef.current = timingSignature(payload, entries);
+      setSavedRallyStageAlgeSig(JSON.stringify(payload.rallyStageAlgeConfig));
       setFlash(
         removedInlineDocs > 0
           ? "Timing control saved. Oversized inline notice documents were removed."
@@ -412,6 +421,7 @@ export function EventEditor({ event: initial }: Props) {
             break;
           }
           lastTimingSavedSigRef.current = timingSignature(payload, en);
+          setSavedRallyStageAlgeSig(JSON.stringify(payload.rallyStageAlgeConfig));
           router.refresh();
         } while (timingAutosaveQueuedRef.current);
       } catch (e) {
@@ -516,25 +526,28 @@ export function EventEditor({ event: initial }: Props) {
   async function connectStompStream() {
     const currentMeta = metaRef.current;
     if (currentMeta.type === "rally") {
-      const liveStages = stagesRef.current.filter((s) => s.progressStatus === "live");
-      const hasAnyRallyDevice = liveStages.some((st) => {
+      const hasAnyRallyDevice = stagesRef.current.some((st) => {
         const cfg = currentMeta.rallyStageAlgeConfig[st.id];
-        if (!cfg) return false;
-        return Boolean(cfg.finishDeviceId.trim());
+        return Boolean(cfg?.finishDeviceId?.trim());
       });
       if (!hasAnyRallyDevice) {
-        setFlash(
-          "Set Finish Device ID on at least one Live stage first (select stage above, then configure ALGE devices).",
-        );
+        const msg =
+          "Set a Finish Device ID on at least one stage (and click Save device) before connecting.";
+        setFlash(msg);
+        setStreamInfo(msg);
         return;
       }
     } else {
       if (!algeStartDeviceId.trim()) {
-        setFlash("Set Start Device ID first.");
+        const msg = "Set Start Device ID first.";
+        setFlash(msg);
+        setStreamInfo(msg);
         return;
       }
       if (!algeFinishDeviceId.trim()) {
-        setFlash("Set Finish Device ID first.");
+        const msg = "Set Finish Device ID first.";
+        setFlash(msg);
+        setStreamInfo(msg);
         return;
       }
     }
@@ -593,7 +606,9 @@ export function EventEditor({ event: initial }: Props) {
           ) === i,
       );
       if (uniqueSubscriptions.length === 0) {
-        setFlash("No ALGE subscriptions configured. Check device IDs.");
+        const msg = "No ALGE subscriptions configured. Check device IDs.";
+        setFlash(msg);
+        setStreamInfo(msg);
         return;
       }
       const topicLabel = uniqueSubscriptions.map((x) => x.topic).join(", ");
@@ -2419,9 +2434,30 @@ export function EventEditor({ event: initial }: Props) {
               </div>
             ) : selectedRallyTimingStage ? (
               <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
-                <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                  ALGE finish line for SS {selectedRallyTimingStage.order}
-                </p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                    ALGE finish line for SS {selectedRallyTimingStage.order}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`text-[11px] font-medium ${
+                        rallyStageAlgeConfigDirty
+                          ? "text-amber-600 dark:text-amber-400"
+                          : "text-zinc-400 dark:text-zinc-500"
+                      }`}
+                    >
+                      {rallyStageAlgeConfigDirty ? "Unsaved changes" : "Saved"}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={saveMeta}
+                      disabled={pending || !rallyStageAlgeConfigDirty}
+                      className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                    >
+                      Save device
+                    </button>
+                  </div>
+                </div>
                 <div className="mt-2 flex flex-wrap items-end gap-2">
                   <div>
                     <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
@@ -2454,6 +2490,10 @@ export function EventEditor({ event: initial }: Props) {
                     />
                   </div>
                 </div>
+                <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
+                  Save the device before connecting the stream so triggers are kept
+                  if you reload the page.
+                </p>
               </div>
             ) : null}
             {meta.type === "speed" ? (
