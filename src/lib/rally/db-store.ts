@@ -199,8 +199,8 @@ export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
     site: site
       ? toSite(site)
       : {
-          resultsPageTitle: "Cyprus Rally Championships",
-          resultsPageSubtitle: "Cyprus Rally Events — live timing & results",
+          resultsPageTitle: "Speed & Rally - Live Results",
+          resultsPageSubtitle: "Only Speed & Rally Events Results",
           resultsStatusLabel: "Setup",
           featuredEventId: null,
           publicFooterNote: "",

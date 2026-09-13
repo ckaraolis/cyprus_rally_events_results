@@ -48,7 +48,7 @@ export function CreateEventForm() {
           className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Cyprus Rally 2026"
+          placeholder="e.g. Speed Rally 2026"
         />
       </div>
       <div className="w-40">

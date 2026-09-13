@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { loginAdmin } from "../auth-actions";
 
 export const metadata: Metadata = {
-  title: "Admin Login — Cyprus Rally",
+  title: "Admin Login — Speed & Rally",
 };
 
 type Props = {
@@ -19,7 +19,7 @@ export default async function AdminLoginPage({ searchParams }: Props) {
       <div className="mx-auto flex min-h-screen w-full max-w-md items-center px-4 py-6 sm:px-6 sm:py-10">
         <div className="w-full rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900 sm:p-6">
           <p className="text-[10px] font-semibold uppercase tracking-widest text-red-700 dark:text-red-400">
-            Cyprus Rally Events Results
+            Speed & Rally Events Results
           </p>
           <h1 className="mt-2 text-xl font-semibold">Admin Login</h1>
           {hasError ? (

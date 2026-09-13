@@ -5,8 +5,8 @@ import { logoutAdmin } from "./auth-actions";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Admin — Cyprus Rally",
-  description: "Manage championship content and the public results page.",
+  title: "Admin — Speed & Rally",
+  description: "Manage events and the public results page.",
 };
 
 const nav = [
@@ -24,7 +24,7 @@ export default function AdminLayout({
         <aside className="fixed left-0 top-0 z-40 flex h-screen w-56 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
           <div className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-red-700 dark:text-red-400">
-              Cyprus Rally Events Results
+              Speed & Rally Events Results
             </p>
             <p className="text-sm font-semibold">Admin</p>
           </div>

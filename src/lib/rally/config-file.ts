@@ -316,10 +316,10 @@ function normalizeConfig(raw: unknown): RallySiteConfig {
     return { ...defaultRallyConfig, updatedAt: new Date().toISOString() };
   }
   const o = raw as Partial<RallySiteConfig>;
-  const site: SiteSettings = {
+  const site: SiteSettings = sanitizeSiteBranding({
     ...defaultRallyConfig.site,
     ...(typeof o.site === "object" && o.site !== null ? o.site : {}),
-  };
+  });
   const events = Array.isArray(o.events)
     ? o.events.map(normalizeEvent)
     : defaultRallyConfig.events;
@@ -328,6 +328,36 @@ function normalizeConfig(raw: unknown): RallySiteConfig {
     events,
     updatedAt:
       typeof o.updatedAt === "string" ? o.updatedAt : new Date().toISOString(),
+  };
+}
+
+/**
+ * Replace retired "Cyprus Rally Championship" branding on load so public pages
+ * and search snippets never serve the old wording (legal).
+ */
+function sanitizeSiteBranding(site: SiteSettings): SiteSettings {
+  const title = (site.resultsPageTitle ?? "").trim();
+  const subtitle = (site.resultsPageSubtitle ?? "").trim();
+  const titleLower = title.toLowerCase();
+  const subtitleLower = subtitle.toLowerCase();
+  const titleLooksRetired =
+    !title ||
+    titleLower.includes("cyprus rally championship") ||
+    titleLower.includes("cyprus speed & rally championship") ||
+    titleLower.includes("cyprus speed and rally championship");
+  const subtitleLooksRetired =
+    !subtitle ||
+    subtitleLower.includes("championship") ||
+    subtitleLower.includes("cyprus rally") ||
+    subtitleLower.includes("national championship");
+  return {
+    ...site,
+    resultsPageTitle: titleLooksRetired
+      ? "Speed & Rally - Live Results"
+      : title,
+    resultsPageSubtitle: subtitleLooksRetired
+      ? "Only Speed & Rally Events Results"
+      : subtitle,
   };
 }
 
@@ -404,6 +434,7 @@ function prismaErrorCode(e: unknown): string | undefined {
 export async function saveRallyConfig(config: RallySiteConfig): Promise<void> {
   const next: RallySiteConfig = {
     ...config,
+    site: sanitizeSiteBranding(config.site),
     updatedAt: new Date().toISOString(),
   };
   if (DB_WRITES) {
