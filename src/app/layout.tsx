@@ -26,6 +26,15 @@ export const metadata: Metadata = {
   openGraph: {
     title: "Speed & Rally - Live Results",
     description: "Only Speed & Rally Events Results",
+    url: "https://cyprusspeedrallyresults.com/",
+    type: "website",
+  },
+  alternates: {
+    canonical: "https://cyprusspeedrallyresults.com/",
+  },
+  robots: {
+    index: true,
+    follow: true,
   },
 };
 
@@ -45,6 +54,19 @@ export default function RootLayout({
           id="ewrc-theme-init"
           strategy="beforeInteractive"
           dangerouslySetInnerHTML={{ __html: themeInlineScript() }}
+        />
+        <Script
+          id="website-jsonld"
+          type="application/ld+json"
+          dangerouslySetInnerHTML={{
+            __html: JSON.stringify({
+              "@context": "https://schema.org",
+              "@type": "WebSite",
+              name: "Speed & Rally - Live Results",
+              description: "Only Speed & Rally Events Results",
+              url: "https://cyprusspeedrallyresults.com/",
+            }),
+          }}
         />
         {children}
       </body>
