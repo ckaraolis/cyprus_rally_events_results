@@ -142,8 +142,12 @@ function isMobilePrintClient(): boolean {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
 }
 
-function printHtmlDocument(html: string): void {
+function printHtmlDocument(
+  html: string,
+  options?: { landscape?: boolean },
+): void {
   if (typeof window === "undefined" || typeof document === "undefined") return;
+  const landscape = options?.landscape === true;
 
   if (isMobilePrintClient()) {
     const w = window.open("", "_blank", "noopener,noreferrer");
@@ -158,7 +162,7 @@ function printHtmlDocument(html: string): void {
         } catch {
           // ignore print-block errors on some browsers
         }
-      }, 350);
+      }, 450);
       return;
     }
   }
@@ -167,9 +171,12 @@ function printHtmlDocument(html: string): void {
   iframe.style.position = "fixed";
   iframe.style.right = "0";
   iframe.style.bottom = "0";
-  iframe.style.width = "0";
-  iframe.style.height = "0";
+  // Give the iframe a real landscape page size so layout/print preview is not 0×0.
+  iframe.style.width = landscape ? "1123px" : "794px";
+  iframe.style.height = landscape ? "794px" : "1123px";
   iframe.style.border = "0";
+  iframe.style.opacity = "0";
+  iframe.style.pointerEvents = "none";
   iframe.setAttribute("aria-hidden", "true");
   document.body.appendChild(iframe);
 
@@ -180,14 +187,16 @@ function printHtmlDocument(html: string): void {
   };
 
   iframe.onload = () => {
-    try {
-      const win = iframe.contentWindow;
-      if (!win) return;
-      win.focus();
-      win.print();
-    } finally {
-      cleanup();
-    }
+    window.setTimeout(() => {
+      try {
+        const win = iframe.contentWindow;
+        if (!win) return;
+        win.focus();
+        win.print();
+      } finally {
+        cleanup();
+      }
+    }, landscape ? 200 : 0);
   };
 
   const doc = iframe.contentDocument;
@@ -701,7 +710,12 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
 </body>
 </html>`;
 
-    printHtmlDocument(html);
+    printHtmlDocument(html, {
+      landscape:
+        event.type === "speed" &&
+        selectedStripItem.type === "speedRun" &&
+        selectedStripItem.runId === "best",
+    });
   }
 
   function printSpeedFinalResultsPdf() {
@@ -739,7 +753,6 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       ],
     );
 
-    const headHtml = columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
     const bodyHtml =
       tableRows.length > 0
         ? tableRows
@@ -759,65 +772,79 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             .join("")
         : `<tr><td colspan="${columns.length}" class="c" style="color:#666;">No entries.</td></tr>`;
 
-    // Pack all rows onto one A4 landscape sheet by shrinking type/padding with entry count.
+    // Compact enough for one landscape page, but readable (no CSS transform scale —
+    // that was shrinking the table to a tiny block at the top of portrait previews).
     const n = Math.max(ranked.length, 1);
-    const usableMm = 178; // ~A4 landscape height minus margins + compact header
-    const rowMm = usableMm / (n + 1);
-    const fontPt = Math.max(5.5, Math.min(9.5, rowMm * 0.52));
-    const padY = Math.max(0.4, Math.min(2.2, rowMm * 0.1)).toFixed(2);
-    const padX = Math.max(1.2, Math.min(3.5, fontPt * 0.28)).toFixed(2);
-    const logoH = n > 40 ? 28 : n > 28 ? 36 : n > 18 ? 44 : 52;
-    const titlePt = n > 35 ? 13 : 16;
-    const subPt = n > 35 ? 9 : 11;
+    const fontPt =
+      n <= 12 ? 10 : n <= 18 ? 9 : n <= 24 ? 8 : n <= 32 ? 7 : n <= 40 ? 6.5 : 6;
+    const padY =
+      n <= 18 ? 1.6 : n <= 28 ? 1.1 : n <= 36 ? 0.7 : 0.45;
+    const padX = n <= 24 ? 2.2 : 1.4;
+    const logoH = n <= 20 ? 48 : n <= 30 ? 36 : 28;
+    const titlePt = n <= 24 ? 15 : 12;
+    const subPt = n <= 24 ? 10 : 8;
 
     const logoUrl = normalizedLogoUrl;
     const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(event.name)} - Final Results</title><style>
-    @page { size: A4 landscape; margin: 6mm; }
-    html, body { margin: 0; padding: 0; color: #111; }
-    body { font-family: Arial, Helvetica, sans-serif; }
-    .page { width: 100%; box-sizing: border-box; page-break-inside: avoid; break-inside: avoid; }
-    .header { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0 0 4px; text-align: center; }
+    @page { size: A4 landscape; margin: 8mm; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      color: #111;
+      background: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .page {
+      width: 281mm; /* A4 landscape content width at 8mm margins */
+      max-width: 100%;
+      margin: 0 auto;
+      box-sizing: border-box;
+    }
+    .header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2px;
+      margin: 0 0 5mm;
+      text-align: center;
+    }
     .logo { max-height: ${logoH}px; width: auto; }
-    h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.1; }
-    h2 { margin: 1px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.15; }
-    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${fontPt}pt; margin: 0 auto; page-break-inside: avoid; break-inside: avoid; }
-    th, td { border: 1px solid #cfcfcf; padding: ${padY}mm ${padX}mm; vertical-align: middle; word-wrap: break-word; overflow-wrap: anywhere; line-height: 1.15; }
-    th { background: #f4f4f4; text-align: center; font-weight: 700; }
+    h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.15; }
+    h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: ${fontPt}pt;
+    }
+    th, td {
+      border: 1px solid #bdbdbd;
+      padding: ${padY}mm ${padX}mm;
+      vertical-align: middle;
+      line-height: 1.2;
+    }
+    th { background: #f0f0f0; text-align: center; font-weight: 700; }
     td.c, th.c { text-align: center; }
-    col.c-pos { width: 4%; }
-    col.c-num { width: 4%; }
-    col.c-driver { width: 16%; }
-    col.c-car { width: 14%; }
+    col.c-pos, col.c-num { width: 4.5%; }
+    col.c-driver { width: 17%; }
+    col.c-car { width: 15%; }
     col.c-class { width: 8%; }
-    col.c-time { width: 9%; }
+    col.c-time { width: 8.5%; }
     @media print {
-      @page { size: A4 landscape; margin: 6mm; }
-      html, body { margin: 0; }
-      .page, table, tr, thead, tbody { page-break-inside: avoid; break-inside: avoid; }
+      @page { size: A4 landscape; margin: 8mm; }
+      html, body { margin: 0; background: #fff; }
+      .page { width: auto; }
     }
-    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results — ordered by Best Time</h2></div><table><colgroup><col class="c-pos" /><col class="c-num" /><col class="c-driver" /><col class="c-car" /><col class="c-class" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /></colgroup><thead><tr>${columns.map((c) => `<th class="c">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div>
-<script>
-(function () {
-  function fitOnePage() {
-    var page = document.querySelector(".page");
-    if (!page) return;
-    page.style.transform = "none";
-    page.style.width = "100%";
-    // A4 landscape content box at ~96dpi with 6mm margins.
-    var maxW = (297 - 12) * 96 / 25.4;
-    var maxH = (210 - 12) * 96 / 25.4;
-    var scale = Math.min(1, maxW / Math.max(page.scrollWidth, 1), maxH / Math.max(page.scrollHeight, 1));
-    if (scale < 0.999) {
-      page.style.transformOrigin = "top center";
-      page.style.transform = "scale(" + scale + ")";
+    @media screen {
+      body { padding: 12px; background: #e8e8e8; }
+      .page {
+        background: #fff;
+        padding: 8mm;
+        box-shadow: 0 1px 6px rgba(0,0,0,.2);
+      }
     }
-  }
-  fitOnePage();
-  window.addEventListener("beforeprint", fitOnePage);
-})();
-</script>
-</body></html>`;
-    printHtmlDocument(html);
+    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results — ordered by Best Time</h2></div><table><colgroup><col class="c-pos" /><col class="c-num" /><col class="c-driver" /><col class="c-car" /><col class="c-class" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /></colgroup><thead><tr>${columns.map((c) => `<th class="c">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+    printHtmlDocument(html, { landscape: true });
   }
 
   useEffect(() => {
