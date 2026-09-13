@@ -746,26 +746,77 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             .map(
               (r) =>
                 `<tr>${r
-                  .map((v) =>
-                    `<td${v === "-" ? ' style="text-align:center;"' : ""}>${escapeHtml(v)}</td>`,
-                  )
+                  .map((v, colIdx) => {
+                    const center =
+                      v === "-" ||
+                      colIdx === 0 ||
+                      colIdx === 1 ||
+                      colIdx >= 5;
+                    return `<td${center ? ' class="c"' : ""}>${escapeHtml(v)}</td>`;
+                  })
                   .join("")}</tr>`,
             )
             .join("")
-        : `<tr><td colspan="${columns.length}" style="text-align:center;color:#666;">No entries.</td></tr>`;
+        : `<tr><td colspan="${columns.length}" class="c" style="color:#666;">No entries.</td></tr>`;
+
+    // Pack all rows onto one A4 landscape sheet by shrinking type/padding with entry count.
+    const n = Math.max(ranked.length, 1);
+    const usableMm = 178; // ~A4 landscape height minus margins + compact header
+    const rowMm = usableMm / (n + 1);
+    const fontPt = Math.max(5.5, Math.min(9.5, rowMm * 0.52));
+    const padY = Math.max(0.4, Math.min(2.2, rowMm * 0.1)).toFixed(2);
+    const padX = Math.max(1.2, Math.min(3.5, fontPt * 0.28)).toFixed(2);
+    const logoH = n > 40 ? 28 : n > 28 ? 36 : n > 18 ? 44 : 52;
+    const titlePt = n > 35 ? 13 : 16;
+    const subPt = n > 35 ? 9 : 11;
+
     const logoUrl = normalizedLogoUrl;
     const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(event.name)} - Final Results</title><style>
-    body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #111; }
-    .page { max-width: 1120px; margin: 0 auto; }
-    .header { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 14px; text-align: center; }
-    .logo { max-height: 72px; width: auto; }
-    h1 { margin: 0; font-size: 22px; line-height: 1.15; }
-    h2 { margin: 6px 0 0; font-size: 16px; font-weight: 600; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 auto; }
-    th, td { border: 1px solid #cfcfcf; padding: 6px 8px; vertical-align: middle; }
-    th { background: #f4f4f4; text-align: left; }
-    @media print { @page { size: A4 landscape; margin: 10mm; } }
-    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results — ordered by Best Time</h2></div><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+    @page { size: A4 landscape; margin: 6mm; }
+    html, body { margin: 0; padding: 0; color: #111; }
+    body { font-family: Arial, Helvetica, sans-serif; }
+    .page { width: 100%; box-sizing: border-box; page-break-inside: avoid; break-inside: avoid; }
+    .header { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0 0 4px; text-align: center; }
+    .logo { max-height: ${logoH}px; width: auto; }
+    h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.1; }
+    h2 { margin: 1px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.15; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${fontPt}pt; margin: 0 auto; page-break-inside: avoid; break-inside: avoid; }
+    th, td { border: 1px solid #cfcfcf; padding: ${padY}mm ${padX}mm; vertical-align: middle; word-wrap: break-word; overflow-wrap: anywhere; line-height: 1.15; }
+    th { background: #f4f4f4; text-align: center; font-weight: 700; }
+    td.c, th.c { text-align: center; }
+    col.c-pos { width: 4%; }
+    col.c-num { width: 4%; }
+    col.c-driver { width: 16%; }
+    col.c-car { width: 14%; }
+    col.c-class { width: 8%; }
+    col.c-time { width: 9%; }
+    @media print {
+      @page { size: A4 landscape; margin: 6mm; }
+      html, body { margin: 0; }
+      .page, table, tr, thead, tbody { page-break-inside: avoid; break-inside: avoid; }
+    }
+    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results — ordered by Best Time</h2></div><table><colgroup><col class="c-pos" /><col class="c-num" /><col class="c-driver" /><col class="c-car" /><col class="c-class" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /></colgroup><thead><tr>${columns.map((c) => `<th class="c">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div>
+<script>
+(function () {
+  function fitOnePage() {
+    var page = document.querySelector(".page");
+    if (!page) return;
+    page.style.transform = "none";
+    page.style.width = "100%";
+    // A4 landscape content box at ~96dpi with 6mm margins.
+    var maxW = (297 - 12) * 96 / 25.4;
+    var maxH = (210 - 12) * 96 / 25.4;
+    var scale = Math.min(1, maxW / Math.max(page.scrollWidth, 1), maxH / Math.max(page.scrollHeight, 1));
+    if (scale < 0.999) {
+      page.style.transformOrigin = "top center";
+      page.style.transform = "scale(" + scale + ")";
+    }
+  }
+  fitOnePage();
+  window.addEventListener("beforeprint", fitOnePage);
+})();
+</script>
+</body></html>`;
     printHtmlDocument(html);
   }
 
