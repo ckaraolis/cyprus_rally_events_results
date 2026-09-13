@@ -21,8 +21,12 @@ const oswald = Oswald({
 });
 
 export const metadata: Metadata = {
-  title: "Cyprus Rally Championship — Live Results",
-  description: "National Cyprus Rally Championship timing and results.",
+  title: "Speed & Rally - Live Results",
+  description: "Only Speed & Rally Events Results",
+  openGraph: {
+    title: "Speed & Rally - Live Results",
+    description: "Only Speed & Rally Events Results",
+  },
 };
 
 export default function RootLayout({
