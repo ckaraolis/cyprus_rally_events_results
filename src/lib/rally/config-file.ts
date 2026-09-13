@@ -169,13 +169,14 @@ function normalizeManualStatus(v: unknown): EventStatus {
   return "draft";
 }
 
-/** Draft stays manual; all other statuses auto-follow start/end dates. */
+/** Draft and Completed stay as set in admin; otherwise status follows start/end dates. */
 function deriveStatusFromDates(
   manual: EventStatus,
   dateStart: string,
   dateEnd: string,
 ): EventStatus {
-  if (manual === "draft") return "draft";
+  // Organizer-chosen Completed must stick (do not force back to Live from dates).
+  if (manual === "draft" || manual === "completed") return manual;
   const today = new Date().toISOString().slice(0, 10);
   if (dateStart && today < dateStart) return "upcoming";
   if (dateEnd && today > dateEnd) return "completed";
