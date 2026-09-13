@@ -402,11 +402,28 @@ export async function loadRallyConfig(): Promise<RallySiteConfig> {
     } else if (raced.v) {
       const dbNorm = normalizeConfig(raced.v);
       if (!fromFile) return dbNorm;
-      if (isConfigNewerThan(fromFile.updatedAt, dbNorm.updatedAt)) {
+      // Prefer the file only when it is newer *and* not a thinner snapshot than
+      // Postgres (e.g. a branding-only JSON rewrite must not hide DB events).
+      const fileNewer = isConfigNewerThan(fromFile.updatedAt, dbNorm.updatedAt);
+      const fileHasFewerEvents = fromFile.events.length < dbNorm.events.length;
+      if (fileNewer && !fileHasFewerEvents) {
         console.warn(
           "[rally] Serving data/rally-site.json (newer than Postgres). Fix DATABASE_URL / resume Supabase so DB saves succeed, or set RALLY_DB_READS=0 to read JSON only.",
         );
         return fromFile;
+      }
+      if (fileNewer && fileHasFewerEvents) {
+        console.warn(
+          `[rally] Ignoring newer data/rally-site.json (${fromFile.events.length} events) in favor of Postgres (${dbNorm.events.length} events). Keeping sanitized site branding from file.`,
+        );
+        return {
+          ...dbNorm,
+          site: sanitizeSiteBranding({
+            ...dbNorm.site,
+            resultsPageTitle: fromFile.site.resultsPageTitle,
+            resultsPageSubtitle: fromFile.site.resultsPageSubtitle,
+          }),
+        };
       }
       return dbNorm;
     }
