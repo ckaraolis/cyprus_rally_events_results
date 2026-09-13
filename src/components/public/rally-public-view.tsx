@@ -531,26 +531,49 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     let tableRows: string[][] = [];
 
     if (event.type === "speed" && selectedStripItem.type === "speedRun" && selectedStripItem.runId === "best") {
+      const ranked = buildSpeedFinalRanking(rows);
+      const leaderBest = ranked.find((x) => x.tier === 0)?.bestFromRuns ?? null;
       columns = [
         "Pos",
         "#",
         "Driver",
+        "Car",
+        "Class",
         "Trial",
         "1st Run",
         "2nd Run",
-        "Best",
+        "Best Time",
         "Diff",
       ];
-      tableRows = rows.map((r, i) => [
-        String(i + 1),
-        String(r.startNumber),
-        r.driver || "—",
-        "—",
-        "—",
-        "—",
-        "—",
-        "—",
-      ]);
+      tableRows = ranked.map(
+        ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
+          String(i + 1),
+          String(row.startNumber),
+          row.driver || "—",
+          row.car || "—",
+          row.class || "—",
+          nonStarter
+            ? "—"
+            : getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial),
+          nonStarter
+            ? "—"
+            : getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1),
+          nonStarter
+            ? "—"
+            : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2),
+          nonStarter
+            ? "NON STARTER"
+            : bestDisplay != null
+              ? formatDurationMs(bestDisplay)
+              : "—",
+          nonStarter ||
+          leaderBest == null ||
+          bestFromRuns == null ||
+          bestFromRuns <= leaderBest
+            ? "—"
+            : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`,
+        ],
+      );
     } else if (selectedStripItem.type === "legEnd") {
       columns = [
         "Pos",
@@ -648,7 +671,13 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     th, td { border: 1px solid #cfcfcf; padding: 6px 8px; vertical-align: middle; }
     th { background: #f4f4f4; text-align: left; }
     @media print {
-      @page { size: A4 portrait; margin: 12mm; }
+      @page { size: A4 ${
+        event.type === "speed" &&
+        selectedStripItem.type === "speedRun" &&
+        selectedStripItem.runId === "best"
+          ? "landscape"
+          : "portrait"
+      }; margin: 10mm; }
     }
   </style>
 </head>
@@ -679,7 +708,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     if (event.type !== "speed") return;
     const ranked = buildSpeedFinalRanking(entriesForFinalResults);
     const leaderBest = ranked.find((x) => x.tier === 0)?.bestFromRuns ?? null;
-    const columns = ["Pos", "#", "Driver", "Car", "Class", "Trial", "1st Run", "2nd Run", "Best", "Diff"];
+    const columns = ["Pos", "#", "Driver", "Car", "Class", "Trial", "1st Run", "2nd Run", "Best Time", "Diff"];
     const tableRows = ranked.map(
       ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
         String(i + 1),
@@ -735,8 +764,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 auto; }
     th, td { border: 1px solid #cfcfcf; padding: 6px 8px; vertical-align: middle; }
     th { background: #f4f4f4; text-align: left; }
-    @media print { @page { size: A4 portrait; margin: 12mm; } }
-    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Rally logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results</h2></div><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+    @media print { @page { size: A4 landscape; margin: 10mm; } }
+    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results — ordered by Best Time</h2></div><table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
     printHtmlDocument(html);
   }
 
