@@ -34,6 +34,123 @@ type RallyStageTimingBlob = Record<
   { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
 >;
 const RALLY_PENALTY_KEY = "__event_penalty__";
+/** Multiple event-level penalties (admin Penalties tab); JSON array in `.penalty`. */
+const RALLY_PENALTY_LIST_KEY = "__event_penalties__";
+
+type EventPenaltyItem = {
+  id: string;
+  penalty: string;
+  note: string;
+  /** Stage order: penalty applies from "After SSx" (and Final) onward. */
+  afterStageOrder: number;
+};
+type EventPenaltyLine = {
+  id: string;
+  carNumber: string;
+  penalty: string;
+  note: string;
+  afterStageOrder: number;
+};
+
+function newPenaltyLineId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `pen-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function parseAfterStageOrder(raw: unknown, fallback = 1): number {
+  const n =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseInt(raw, 10)
+        : Number.NaN;
+  if (!Number.isFinite(n) || n < 1) return fallback;
+  return Math.floor(n);
+}
+
+function parseEventPenaltyItemsFromBlob(
+  blob: RallyStageTimingBlob,
+): EventPenaltyItem[] {
+  const listRaw = blob[RALLY_PENALTY_LIST_KEY]?.penalty?.trim() ?? "";
+  if (listRaw.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(listRaw) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+            const row = item as Record<string, unknown>;
+            const penalty = typeof row.penalty === "string" ? row.penalty.trim() : "";
+            if (!penalty) return null;
+            return {
+              id:
+                typeof row.id === "string" && row.id
+                  ? row.id
+                  : newPenaltyLineId(),
+              penalty,
+              note: typeof row.note === "string" ? row.note : "",
+              afterStageOrder: parseAfterStageOrder(row.afterStageOrder, 1),
+            };
+          })
+          .filter((x): x is EventPenaltyItem => x != null);
+      }
+    } catch {
+      /* fall through to legacy */
+    }
+  }
+  const legacy = blob[RALLY_PENALTY_KEY];
+  const legacyPenalty = legacy?.penalty?.trim() ?? "";
+  if (!legacyPenalty) return [];
+  return [
+    {
+      id: newPenaltyLineId(),
+      penalty: legacyPenalty,
+      note: legacy?.penaltyNote?.trim() ?? "",
+      afterStageOrder: 1,
+    },
+  ];
+}
+
+function loadEventPenaltyLinesFromEntries(entries: Entry[]): EventPenaltyLine[] {
+  const lines: EventPenaltyLine[] = [];
+  for (const row of entries) {
+    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+    for (const item of parseEventPenaltyItemsFromBlob(blob)) {
+      lines.push({
+        id: item.id,
+        carNumber: String(row.startNumber),
+        penalty: item.penalty,
+        note: item.note,
+        afterStageOrder: item.afterStageOrder,
+      });
+    }
+  }
+  return lines;
+}
+
+function writeEventPenaltyItemsToEntry(
+  row: Entry,
+  items: EventPenaltyItem[],
+): Entry {
+  const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+  delete blob[RALLY_PENALTY_KEY];
+  if (items.length === 0) {
+    delete blob[RALLY_PENALTY_LIST_KEY];
+  } else {
+    blob[RALLY_PENALTY_LIST_KEY] = {
+      startTime: "",
+      finishTime: "",
+      penalty: JSON.stringify(items),
+      penaltyNote: "",
+    };
+  }
+  return {
+    ...row,
+    trialStartTime: Object.keys(blob).length > 0 ? JSON.stringify(blob) : "",
+  };
+}
 const NOTICE_BOARD_DEFAULT_CATEGORIES = [
   "Supplementary Regulations",
   "Bulletins",
@@ -195,6 +312,9 @@ export function EventEditor({ event: initial }: Props) {
       driverCountryCode: e.driverCountryCode ?? "",
       coDriverCountryCode: e.coDriverCountryCode ?? "",
     })),
+  );
+  const [penaltyLines, setPenaltyLines] = useState<EventPenaltyLine[]>(() =>
+    loadEventPenaltyLinesFromEntries(initial.entries),
   );
   const [flash, setFlash] = useState<string | null>(null);
   const [algeStartDeviceId, setAlgeStartDeviceId] = useState("");
@@ -364,8 +484,50 @@ export function EventEditor({ event: initial }: Props) {
 
   function savePenalties() {
     setFlash(null);
+    const byCar = new Map<number, EventPenaltyItem[]>();
+    const unknownCars: string[] = [];
+    const entryByCar = new Map(entries.map((e) => [e.startNumber, e]));
+    const validOrders = new Set(stages.map((s) => s.order));
+    for (const line of penaltyLines) {
+      const carRaw = line.carNumber.trim();
+      const penalty = normalizePenaltyInput(line.penalty).trim();
+      if (!carRaw && !penalty && !line.note.trim()) continue;
+      if (!carRaw || !penalty) {
+        setFlash("Each penalty line needs a car number and penalty time (mm:ss).");
+        return;
+      }
+      if (!validOrders.has(line.afterStageOrder)) {
+        setFlash("Each penalty needs a valid After SS stage.");
+        return;
+      }
+      const carNo = Number.parseInt(carRaw, 10);
+      if (!Number.isFinite(carNo) || !entryByCar.has(carNo)) {
+        unknownCars.push(carRaw);
+        continue;
+      }
+      const list = byCar.get(carNo) ?? [];
+      list.push({
+        id: line.id || newPenaltyLineId(),
+        penalty,
+        note: line.note.trim(),
+        afterStageOrder: line.afterStageOrder,
+      });
+      byCar.set(carNo, list);
+    }
+    if (unknownCars.length > 0) {
+      setFlash(
+        `Unknown car number(s): ${[...new Set(unknownCars)].join(", ")}. Add the crew in Entries first.`,
+      );
+      return;
+    }
+    const nextEntries = entries.map((row) =>
+      writeEventPenaltyItemsToEntry(row, byCar.get(row.startNumber) ?? []),
+    );
+    setEntries(nextEntries);
+    entriesRef.current = nextEntries;
+    setPenaltyLines(loadEventPenaltyLinesFromEntries(nextEntries));
     startTransition(async () => {
-      await replaceEntries(eventId, entries);
+      await replaceEntries(eventId, nextEntries);
       setFlash("Penalties saved.");
       router.refresh();
     });
@@ -1275,39 +1437,6 @@ export function EventEditor({ event: initial }: Props) {
       run2FinishTime: "",
     };
   };
-  const getPenaltyValuesForEntry = (
-    row: Entry,
-  ): { penaltyValue: string; penaltyNoteValue: string } => {
-    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
-    const current = blob[RALLY_PENALTY_KEY] ?? {};
-    return {
-      penaltyValue: current.penalty?.trim() ?? "",
-      penaltyNoteValue: current.penaltyNote?.trim() ?? "",
-    };
-  };
-  const updateEntryPenaltyValues = (
-    row: Entry,
-    penaltyValue: string,
-    penaltyNoteValue: string,
-  ): Entry => {
-    const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
-    const current = blob[RALLY_PENALTY_KEY] ?? {};
-    blob[RALLY_PENALTY_KEY] = {
-      startTime: current.startTime ?? "",
-      finishTime: current.finishTime ?? "",
-      penalty: penaltyValue,
-      penaltyNote: penaltyNoteValue,
-    };
-    return {
-      ...row,
-      trialStartTime: JSON.stringify(blob),
-      trialFinishTime: "",
-      run1StartTime: "",
-      run1FinishTime: "",
-      run2StartTime: "",
-      run2FinishTime: "",
-    };
-  };
   const parseTimeToMs = (value: string): number | null => {
     const raw = value.trim();
     if (!raw) return null;
@@ -1438,6 +1567,24 @@ export function EventEditor({ event: initial }: Props) {
 
   return (
     <div className="space-y-10">
+      {pending ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-start justify-center bg-black/20 pt-16 backdrop-blur-[1px] dark:bg-black/40"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="flex items-center gap-3 rounded-xl border border-zinc-200 bg-white px-5 py-3 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+            <span
+              className="inline-block h-5 w-5 animate-spin rounded-full border-2 border-zinc-900 border-r-transparent dark:border-zinc-100 dark:border-r-transparent"
+              aria-hidden
+            />
+            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+              Saving… please wait
+            </span>
+          </div>
+        </div>
+      ) : null}
       {flash ? (
         <p className="text-sm text-green-700 dark:text-green-400">{flash}</p>
       ) : null}
@@ -1661,9 +1808,15 @@ export function EventEditor({ event: initial }: Props) {
             type="button"
             onClick={saveMeta}
             disabled={pending}
-            className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50 dark:bg-red-600"
+            className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50 dark:bg-red-600"
           >
-            Save details
+            {pending ? (
+              <span
+                className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent"
+                aria-hidden
+              />
+            ) : null}
+            {pending ? "Saving…" : "Save details"}
           </button>
           <button
             type="button"
@@ -1687,9 +1840,15 @@ export function EventEditor({ event: initial }: Props) {
               type="button"
               onClick={saveMeta}
               disabled={pending}
-              className="rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50 dark:bg-red-600"
+              className="inline-flex items-center gap-2 rounded-lg bg-red-700 px-4 py-2 text-sm font-medium text-white hover:bg-red-800 disabled:opacity-50 dark:bg-red-600"
             >
-              Save notice board
+              {pending ? (
+                <span
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent"
+                  aria-hidden
+                />
+              ) : null}
+              {pending ? "Saving…" : "Save notice board"}
             </button>
           </div>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
@@ -1845,9 +2004,15 @@ export function EventEditor({ event: initial }: Props) {
               type="button"
               onClick={saveStages}
               disabled={pending}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
             >
-              Save stages
+              {pending ? (
+                <span
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent dark:border-zinc-900 dark:border-r-transparent"
+                  aria-hidden
+                />
+              ) : null}
+              {pending ? "Saving…" : "Save stages"}
             </button>
           </div>
         </div>
@@ -2061,9 +2226,15 @@ export function EventEditor({ event: initial }: Props) {
               type="button"
               onClick={saveEntries}
               disabled={pending}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
             >
-              Save entries
+              {pending ? (
+                <span
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent dark:border-zinc-900 dark:border-r-transparent"
+                  aria-hidden
+                />
+              ) : null}
+              {pending ? "Saving…" : "Save entries"}
             </button>
           </div>
         </div>
@@ -2271,9 +2442,15 @@ export function EventEditor({ event: initial }: Props) {
               type="button"
               onClick={saveTiming}
               disabled={pending}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
             >
-              Save timing
+              {pending ? (
+                <span
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent dark:border-zinc-900 dark:border-r-transparent"
+                  aria-hidden
+                />
+              ) : null}
+              {pending ? "Saving…" : "Save Times"}
             </button>
           </div>
           <div className="mt-4 flex flex-wrap gap-2">
@@ -3036,113 +3213,215 @@ export function EventEditor({ event: initial }: Props) {
               </div>
             </div>
           ) : null}
+          <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            <button
+              type="button"
+              onClick={saveTiming}
+              disabled={pending}
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
+            >
+              {pending ? (
+                <span
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent dark:border-zinc-900 dark:border-r-transparent"
+                  aria-hidden
+                />
+              ) : null}
+              {pending ? "Saving…" : "Save Times"}
+            </button>
+          </div>
         </section>
       ) : null}
       {meta.type === "rally" && activeTab === "penalties" ? (
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-              Penalties
-            </h2>
+            <div>
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                Penalties
+              </h2>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Event penalties (not jump starts). Choose After SS where each
+                applies — included in that After SS / later totals and Final
+                Results. Not shown on individual SS stage results. Same car can
+                have multiple lines.
+              </p>
+            </div>
             <button
               type="button"
               onClick={savePenalties}
               disabled={pending}
-              className="rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white dark:bg-zinc-100 dark:text-zinc-900"
+              className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
             >
-              Save penalties
+              {pending ? (
+                <span
+                  className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent dark:border-zinc-900 dark:border-r-transparent"
+                  aria-hidden
+                />
+              ) : null}
+              {pending ? "Saving…" : "Save penalties"}
             </button>
           </div>
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[640px] text-left text-sm">
+            <table className="w-full min-w-[720px] text-left text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
                   <th className="pb-2 pr-2 w-24">Car Number</th>
                   <th className="pb-2 pr-2 w-24">Penalty</th>
-                  <th className="pb-2 pr-2">Penalty Note</th>
+                  <th className="pb-2 pr-2 w-36">Applies After</th>
+                  <th className="pb-2 pr-2">Reason</th>
+                  <th className="pb-2 w-20 text-right"> </th>
                 </tr>
               </thead>
               <tbody>
-                {entries
-                  .slice()
-                  .sort((a, b) => a.startNumber - b.startNumber)
-                  .map((row) => {
-                    const { penaltyValue, penaltyNoteValue } =
-                      getPenaltyValuesForEntry(row);
-                    return (
-                      <tr
-                        key={`pen-row-${row.id}`}
-                        className="border-b border-zinc-100 dark:border-zinc-800"
-                      >
-                        <td className="py-2 pr-2">
-                          <input
-                            type="number"
-                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            value={row.startNumber}
-                            onChange={(e) => {
-                              const n = Number.parseInt(e.target.value, 10);
-                              setEntries((prev) =>
-                                prev.map((x) =>
-                                  x.id === row.id
-                                    ? {
-                                        ...x,
-                                        startNumber: Number.isNaN(n) ? x.startNumber : n,
-                                      }
-                                    : x,
-                                ),
-                              );
-                            }}
-                          />
-                        </td>
-                        <td className="py-2 pr-2">
-                          <input
-                            type="text"
-                            inputMode="numeric"
-                            pattern="^\\d{1,3}:[0-5]\\d$"
-                            placeholder="mm:ss"
-                            title="Penalty format: mm:ss"
-                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            value={penaltyValue}
-                            onChange={(e) =>
-                              setEntries((prev) =>
-                                prev.map((x) =>
-                                  x.id === row.id
-                                    ? updateEntryPenaltyValues(
-                                        x,
-                                        normalizePenaltyInput(e.target.value),
-                                        getPenaltyValuesForEntry(x).penaltyNoteValue,
-                                      )
-                                    : x,
-                                ),
-                              )
-                            }
-                          />
-                        </td>
-                        <td className="py-2 pr-2">
-                          <input
-                            type="text"
-                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            value={penaltyNoteValue}
-                            onChange={(e) =>
-                              setEntries((prev) =>
-                                prev.map((x) =>
-                                  x.id === row.id
-                                    ? updateEntryPenaltyValues(
-                                        x,
-                                        getPenaltyValuesForEntry(x).penaltyValue,
+                {penaltyLines.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={5}
+                      className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
+                    >
+                      No penalties yet. Click &quot;Add penalty&quot; to create a line.
+                    </td>
+                  </tr>
+                ) : (
+                  penaltyLines.map((line) => (
+                    <tr
+                      key={line.id}
+                      className="border-b border-zinc-100 dark:border-zinc-800"
+                    >
+                      <td className="py-2 pr-2">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="#"
+                          className="w-full rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          value={line.carNumber}
+                          onChange={(e) =>
+                            setPenaltyLines((prev) =>
+                              prev.map((x) =>
+                                x.id === line.id
+                                  ? {
+                                      ...x,
+                                      carNumber: e.target.value.replace(/[^\d]/g, ""),
+                                    }
+                                  : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          pattern="^\\d{1,3}:[0-5]\\d$"
+                          placeholder="mm:ss"
+                          title="Penalty format: mm:ss"
+                          className="w-full rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          value={line.penalty}
+                          onChange={(e) =>
+                            setPenaltyLines((prev) =>
+                              prev.map((x) =>
+                                x.id === line.id
+                                  ? {
+                                      ...x,
+                                      penalty: normalizePenaltyInput(e.target.value),
+                                    }
+                                  : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="py-2 pr-2">
+                        <select
+                          className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          value={line.afterStageOrder}
+                          onChange={(e) =>
+                            setPenaltyLines((prev) =>
+                              prev.map((x) =>
+                                x.id === line.id
+                                  ? {
+                                      ...x,
+                                      afterStageOrder: Number.parseInt(
                                         e.target.value,
-                                      )
-                                    : x,
-                                ),
-                              )
-                            }
-                          />
-                        </td>
-                      </tr>
-                    );
-                  })}
+                                        10,
+                                      ),
+                                    }
+                                  : x,
+                              ),
+                            )
+                          }
+                        >
+                          {stages.length === 0 ? (
+                            <option value={1}>No stages yet</option>
+                          ) : (
+                            [...stages]
+                              .sort((a, b) => a.order - b.order)
+                              .map((st) => (
+                                <option key={st.id} value={st.order}>
+                                  After SS{st.order}
+                                  {st.name ? ` — ${st.name}` : ""}
+                                </option>
+                              ))
+                          )}
+                        </select>
+                      </td>
+                      <td className="py-2 pr-2">
+                        <input
+                          type="text"
+                          placeholder="Reason"
+                          className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          value={line.note}
+                          onChange={(e) =>
+                            setPenaltyLines((prev) =>
+                              prev.map((x) =>
+                                x.id === line.id
+                                  ? { ...x, note: e.target.value }
+                                  : x,
+                              ),
+                            )
+                          }
+                        />
+                      </td>
+                      <td className="py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPenaltyLines((prev) =>
+                              prev.filter((x) => x.id !== line.id),
+                            )
+                          }
+                          className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
+          </div>
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => {
+                const defaultOrder =
+                  [...stages].sort((a, b) => a.order - b.order)[0]?.order ?? 1;
+                setPenaltyLines((prev) => [
+                  ...prev,
+                  {
+                    id: newPenaltyLineId(),
+                    carNumber: "",
+                    penalty: "",
+                    note: "",
+                    afterStageOrder: defaultOrder,
+                  },
+                ]);
+              }}
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            >
+              Add penalty
+            </button>
           </div>
         </section>
       ) : null}
