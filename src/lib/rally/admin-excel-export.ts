@@ -163,37 +163,54 @@ export async function exportRallyStageExcel(
     .map((row) => {
       const v = stageValues(row, stage.id);
       const cell = classifyCell(v.start, v.finish);
-      const jump = parsePenaltyMs(v.penalty) ?? 0;
-      const timeMs = cell.durationMs != null ? cell.durationMs + jump : null;
-      return { row, cell, timeMs, penaltyRaw: v.penalty };
+      const penaltyMs = parsePenaltyMs(v.penalty) ?? 0;
+      const ssTimeMs = cell.durationMs;
+      const totalMs =
+        ssTimeMs != null ? ssTimeMs + penaltyMs : null;
+      return { row, cell, ssTimeMs, penaltyMs, totalMs };
     })
-    .filter((x) => x.timeMs != null || x.cell.outcome != null || x.penaltyRaw)
+    .filter(
+      (x) =>
+        x.totalMs != null || x.cell.outcome != null || x.penaltyMs > 0,
+    )
     .sort((a, b) => {
-      if (a.timeMs != null && b.timeMs != null && a.timeMs !== b.timeMs) {
-        return a.timeMs - b.timeMs;
+      if (a.totalMs != null && b.totalMs != null && a.totalMs !== b.totalMs) {
+        return a.totalMs - b.totalMs;
       }
-      if (a.timeMs != null && b.timeMs == null) return -1;
-      if (a.timeMs == null && b.timeMs != null) return 1;
+      if (a.totalMs != null && b.totalMs == null) return -1;
+      if (a.totalMs == null && b.totalMs != null) return 1;
       return a.row.startNumber - b.row.startNumber;
     });
-  const leader = ranked.find((x) => x.timeMs != null)?.timeMs ?? null;
-  const rows = ranked.map(({ row, cell, timeMs, penaltyRaw }, i) => [
+  const leader = ranked.find((x) => x.totalMs != null)?.totalMs ?? null;
+  const rows = ranked.map(({ row, cell, ssTimeMs, penaltyMs, totalMs }, i) => [
     String(i + 1),
     String(row.startNumber),
     row.driver || "—",
     row.coDriver || "—",
     row.car || "—",
     row.class || "—",
-    cell.outcome ?? formatDurationMs(timeMs),
-    penaltyRaw.trim() || "—",
-    timeMs == null || leader == null || timeMs <= leader
+    cell.outcome ?? formatDurationMs(ssTimeMs),
+    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+    cell.outcome ?? formatDurationMs(totalMs),
+    totalMs == null || leader == null || totalMs <= leader
       ? "—"
-      : `+${formatDiffMs(timeMs - leader)}`,
+      : `+${formatDiffMs(totalMs - leader)}`,
   ]);
   await downloadExcelTable({
     fileName: `${eventName}-SS${stage.order}`,
     sheetName: `SS${stage.order}`,
-    columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Time", "Penalty", "Diff"],
+    columns: [
+      "Pos",
+      "#",
+      "Driver",
+      "Co-driver",
+      "Car",
+      "Class",
+      "SS Time",
+      "Penalty",
+      "Total time",
+      "Diff",
+    ],
     rows,
   });
 }
@@ -211,24 +228,32 @@ export async function exportRallyAfterSsExcel(
         const v = stageValues(row, st.id);
         const cell = classifyCell(v.start, v.finish);
         const jump = parsePenaltyMs(v.penalty) ?? 0;
-        const timeMs = cell.durationMs != null ? cell.durationMs + jump : null;
-        return { jump, timeMs };
+        return { jump, ssMs: cell.durationMs };
       });
-      const allTimed = cells.length > 0 && cells.every((c) => c.timeMs != null);
-      const stageTimeMs = allTimed
-        ? cells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
+      const allTimed = cells.length > 0 && cells.every((c) => c.ssMs != null);
+      const ssTimesMs = allTimed
+        ? cells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
         : null;
       const jumpMs = cells.reduce((sum, c) => sum + c.jump, 0);
       const eventMs = throughOrder > 0 ? eventPenaltyMs(row, throughOrder) : 0;
+      const penaltyMs = jumpMs + eventMs;
       const totalMs =
-        stageTimeMs != null ? stageTimeMs + eventMs : null;
+        ssTimesMs != null ? ssTimesMs + penaltyMs : null;
       return {
         row,
+        ssTimesMs,
         totalMs,
-        penaltyMs: jumpMs + eventMs,
+        penaltyMs,
       };
     })
-    .filter((x): x is { row: Entry; totalMs: number; penaltyMs: number } => x.totalMs != null)
+    .filter(
+      (x): x is {
+        row: Entry;
+        ssTimesMs: number;
+        totalMs: number;
+        penaltyMs: number;
+      } => x.totalMs != null,
+    )
     .sort((a, b) =>
       a.totalMs !== b.totalMs
         ? a.totalMs - b.totalMs
@@ -236,21 +261,33 @@ export async function exportRallyAfterSsExcel(
     );
   const leader = ranked[0]?.totalMs ?? null;
   const last = stages[stages.length - 1];
-  const rows = ranked.map(({ row, totalMs, penaltyMs }, i) => [
+  const rows = ranked.map(({ row, ssTimesMs, totalMs, penaltyMs }, i) => [
     String(i + 1),
     String(row.startNumber),
     row.driver || "—",
     row.coDriver || "—",
     row.car || "—",
     row.class || "—",
-    formatDurationMs(totalMs),
+    formatDurationMs(ssTimesMs),
     penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+    formatDurationMs(totalMs),
     leader == null || totalMs <= leader ? "—" : `+${formatDiffMs(totalMs - leader)}`,
   ]);
   await downloadExcelTable({
     fileName: `${eventName}-After-SS${last?.order ?? ""}`,
     sheetName: `After SS${last?.order ?? ""}`,
-    columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Penalty", "Diff"],
+    columns: [
+      "Pos",
+      "#",
+      "Driver",
+      "Co-driver",
+      "Car",
+      "Class",
+      "SS Times",
+      "Penalty",
+      "Total time",
+      "Diff",
+    ],
     rows,
   });
 }
