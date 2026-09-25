@@ -1656,9 +1656,6 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
 
         {tab === "penalty" ? (
           <div className="ewrc-panel overflow-hidden p-0">
-            <p className="border-b border-[var(--ewrc-border)] px-4 py-3 text-sm text-[var(--ewrc-muted-2)]">
-              Time penalties and reprimands (stewards / admin).
-            </p>
             <div className="overflow-x-auto">
               <table className="ewrc-table min-w-[560px] w-full text-sm">
                 <thead>
