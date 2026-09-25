@@ -223,6 +223,10 @@ function buildLandscapeResultsPdfHtml(input: {
    * then SS Time / Penalty / Total / Diff centered.
    */
   rallyClassificationLayout?: boolean;
+  /** LEG sheet: Pos/#, Driver, Co-driver, Car, Class, SS1..SSn, SS Times, Penalty, Total, Diff. */
+  rallyLegLayout?: boolean;
+  /** Number of per-stage columns (SS1..) when rallyLegLayout is set. */
+  legStageCount?: number;
   /** Shrink Pos/# columns to leave room for names and times. */
   narrowPosNum?: boolean;
   /** Center this column index and all to the right (e.g. Class → Diff). */
@@ -231,29 +235,33 @@ function buildLandscapeResultsPdfHtml(input: {
   const n = Math.max(input.tableRows.length, 1);
   const colCount = Math.max(input.columns.length, 1);
   const rallyLayout = input.rallyClassificationLayout === true;
+  const legLayout = input.rallyLegLayout === true;
+  const legStageCount = Math.max(0, input.legStageCount ?? 0);
   const centerFrom =
     input.centerFromCol != null
       ? input.centerFromCol
-      : rallyLayout
+      : rallyLayout || legLayout
         ? 5
         : Math.max(0, colCount - 2);
   // More columns (e.g. LEG with many SS) need a tighter base size.
-  const colTighten = colCount >= 12 ? 1 : colCount >= 10 ? 0.5 : 0;
+  const colTighten =
+    colCount >= 14 ? 1.5 : colCount >= 12 ? 1 : colCount >= 10 ? 0.5 : 0;
   const fontPt = Math.max(
     5.5,
     (n <= 12 ? 10 : n <= 18 ? 9 : n <= 24 ? 8 : n <= 32 ? 7 : n <= 40 ? 6.5 : 6) -
       colTighten,
   );
   const padY = n <= 18 ? 1.6 : n <= 28 ? 1.1 : n <= 36 ? 0.7 : 0.45;
-  const padX = rallyLayout
-    ? n <= 24
-      ? 1.4
-      : 1.0
-    : colCount >= 10
-      ? 1.0
-      : n <= 24
-        ? 2.2
-        : 1.4;
+  const padX =
+    rallyLayout || legLayout
+      ? n <= 24
+        ? 1.2
+        : 0.9
+      : colCount >= 10
+        ? 1.0
+        : n <= 24
+          ? 2.2
+          : 1.4;
   const logoH = n <= 20 ? 48 : n <= 30 ? 36 : 28;
   const titlePt = n <= 24 ? 15 : 12;
   const subPt = n <= 24 ? 10 : 8;
@@ -277,14 +285,24 @@ function buildLandscapeResultsPdfHtml(input: {
       : `<tr><td colspan="${input.columns.length}" class="c" style="color:#666;">No timed entries.</td></tr>`;
 
   let colgroup = "";
-  if (rallyLayout && colCount >= 10) {
+  if (legLayout && legStageCount > 0) {
+    const ssCols = Array.from({ length: legStageCount }, () => '<col class="c-ss" />').join(
+      "",
+    );
+    colgroup = `<colgroup>
+      <col class="c-pos" /><col class="c-num" />
+      <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
+      ${ssCols}
+      <col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" />
+    </colgroup>`;
+  } else if (rallyLayout && colCount >= 10) {
     // Pos, #, Driver, Co-driver, Car, Class, SS Time(s), Penalty, Total time, Diff
     colgroup = `<colgroup>
       <col class="c-pos" /><col class="c-num" />
       <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
       <col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" />
     </colgroup>`;
-  } else if (input.narrowPosNum || rallyLayout) {
+  } else if (input.narrowPosNum || rallyLayout || legLayout) {
     colgroup = `<colgroup><col class="c-pos" /><col class="c-num" />${input.columns
       .slice(2)
       .map(() => "<col />")
@@ -305,11 +323,12 @@ function buildLandscapeResultsPdfHtml(input: {
   th { background: #f0f0f0; font-weight: 700; }
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
-  col.c-pos, col.c-num { width: 2.8%; }
-  col.c-driver, col.c-codriver { width: 14.5%; }
-  col.c-car { width: 12%; }
-  col.c-class { width: 6.5%; }
-  col.c-time { width: 8.5%; }
+  col.c-pos, col.c-num { width: ${legLayout ? "2.1%" : "2.6%"}; }
+  col.c-driver, col.c-codriver { width: ${legLayout ? "13.2%" : "12.5%"}; }
+  col.c-car { width: 11%; }
+  col.c-class { width: ${legLayout ? "4.8%" : "5.5%"}; }
+  col.c-ss { width: 4.4%; }
+  col.c-time { width: ${legLayout ? "6.4%" : "7.2%"}; }
   @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; } }
   @media screen { body { padding: 12px; background: #e8e8e8; } .page { background: #fff; padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); } }
   </style></head><body><div class="page"><div class="header">${input.logoUrl ? `<img src="${escapeHtml(input.logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(input.subtitle)}</h2><h3>${escapeHtml(input.modeLabel)}</h3></div><table>${colgroup}<thead><tr>${input.columns
@@ -501,6 +520,7 @@ function buildRallyLegPdfSheet(
   type LegPdfRow = {
     row: Entry;
     cells: string[];
+    ssTimesMs: number | null;
     penaltyMs: number;
     totalMs: number | null;
     sortTier: 0 | 1 | 2;
@@ -511,30 +531,36 @@ function buildRallyLegPdfSheet(
     let jumpPenaltyMs = 0;
     const cells = stagesInLeg.map((st) => {
       if (!allLegStagesCompleted || st.progressStatus !== "completed") {
-        return { text: "—", outcome: null as "DNS" | "DNF" | "RET" | null, durationMs: null as number | null };
+        return {
+          text: "—",
+          outcome: null as "DNS" | "DNF" | "RET" | null,
+          ssMs: null as number | null,
+        };
       }
       const values = getRallyStageTimingValues(row, st.id);
       const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
       jumpPenaltyMs += pen;
       const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
       if (cell.outcome != null) {
-        return { text: cell.outcome, outcome: cell.outcome, durationMs: null };
+        return { text: cell.outcome, outcome: cell.outcome, ssMs: null };
       }
-      const durationMs =
-        cell.durationMs != null ? cell.durationMs + pen : null;
+      // Per-SS column shows pure stage time; jump starts go in Penalty.
       return {
-        text: formatDurationMs(durationMs),
+        text: formatDurationMs(cell.durationMs),
         outcome: null,
-        durationMs,
+        ssMs: cell.durationMs,
       };
     });
     const rowOutcome = worstLegRowOutcome(
-      cells.map((c) => ({ outcome: c.outcome, durationMs: c.durationMs })),
+      cells.map((c) => ({
+        outcome: c.outcome,
+        durationMs: c.ssMs,
+      })),
     );
     const allTimedNoOutcome =
       allLegStagesCompleted &&
       cells.length > 0 &&
-      cells.every((c) => c.outcome == null && c.durationMs != null);
+      cells.every((c) => c.outcome == null && c.ssMs != null);
     const eventPenaltyMs = allLegStagesCompleted
       ? getRallyEventPenaltyItems(row)
           .filter((item) => legOrders.has(item.afterStageOrder))
@@ -543,12 +569,12 @@ function buildRallyLegPdfSheet(
             0,
           )
       : 0;
-    const stageTimeMs = allTimedNoOutcome
-      ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+    const ssTimesMs = allTimedNoOutcome
+      ? cells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
       : null;
-    const totalMs =
-      stageTimeMs != null ? stageTimeMs + eventPenaltyMs : null;
     const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
+    const totalMs =
+      ssTimesMs != null ? ssTimesMs + penaltyMs : null;
     const sortTier: 0 | 1 | 2 =
       allLegStagesCompleted && rowOutcome != null
         ? 2
@@ -558,6 +584,7 @@ function buildRallyLegPdfSheet(
     return {
       row,
       cells: cells.map((c) => c.text),
+      ssTimesMs,
       penaltyMs,
       totalMs,
       sortTier,
@@ -589,7 +616,9 @@ function buildRallyLegPdfSheet(
     "Driver",
     "Co-driver",
     "Car",
+    "Class",
     ...stagesInLeg.map((st) => `SS${st.order}`),
+    "SS Times",
     "Penalty",
     "Total",
     "Diff",
@@ -600,7 +629,11 @@ function buildRallyLegPdfSheet(
     legRow.row.driver || "—",
     legRow.row.coDriver || "—",
     legRow.row.car || "—",
+    legRow.row.class || "—",
     ...legRow.cells,
+    allLegStagesCompleted && legRow.rowOutcome != null
+      ? legRow.rowOutcome
+      : formatDurationMs(legRow.ssTimesMs),
     legRow.penaltyMs > 0 ? formatDurationMs(legRow.penaltyMs) : "—",
     allLegStagesCompleted && legRow.rowOutcome != null
       ? legRow.rowOutcome
@@ -1015,6 +1048,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         columns,
         tableRows,
         logoUrl,
+        rallyLegLayout: true,
+        legStageCount: stagesInLeg.length,
+        centerFromCol: 5,
       });
       printHtmlDocument(html, { landscape: true });
       return;
@@ -2209,6 +2245,7 @@ function LegResultsTable({
     /** 0 = full leg timed, 1 = incomplete (-), 2 = DNS/DNF/RET on any stage */
     sortTier: 0 | 1 | 2;
     rowOutcome: "DNS" | "DNF" | "RET" | null;
+    ssTimesMs: number | null;
     totalMs: number | null;
     penaltyMs: number;
   };
@@ -2235,11 +2272,10 @@ function LegResultsTable({
           values.startValue,
           values.finishValue,
         );
-        // Jump-start penalties are included in the stage time cell.
+        // Per-SS cell is pure stage time; jump starts are in Penalty.
         return {
           outcome: cell.outcome,
-          durationMs:
-            cell.durationMs != null ? cell.durationMs + pen : null,
+          durationMs: cell.durationMs,
         };
       });
       const rowOutcome = worstLegRowOutcome(cells);
@@ -2254,22 +2290,28 @@ function LegResultsTable({
               0,
             )
         : 0;
-      // Cells already include jump-start penalties; add event penalties tied
-      // to After SS landmarks that fall inside this leg.
-      const stageTimeMs =
+      const ssTimesMs =
         allLegStagesCompleted && allTimedNoOutcome
           ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
           : null;
-      const totalMs =
-        stageTimeMs != null ? stageTimeMs + eventPenaltyMs : null;
       const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
+      const totalMs =
+        ssTimesMs != null ? ssTimesMs + penaltyMs : null;
       const sortTier: 0 | 1 | 2 =
         allLegStagesCompleted && rowOutcome != null
           ? 2
           : totalMs != null
             ? 0
             : 1;
-      return { row, cells, sortTier, rowOutcome, totalMs, penaltyMs };
+      return {
+        row,
+        cells,
+        sortTier,
+        rowOutcome,
+        ssTimesMs,
+        totalMs,
+        penaltyMs,
+      };
     });
 
     return rows.sort((a, b) => {
@@ -2314,22 +2356,32 @@ function LegResultsTable({
     <table className="ewrc-table w-full min-w-max text-sm">
       <thead>
         <tr>
-          <th className="w-12 text-right">Pos</th>
-          <th className="w-12 text-right">#</th>
-          <th className="min-w-[10rem]">Driver</th>
+          <th className="w-8 text-right">Pos</th>
+          <th className="w-8 text-right">#</th>
+          <th className="min-w-[11rem]">Crew</th>
+          <th className="w-14 !text-center">Class</th>
           {stagesInLeg.map((st) => (
-            <th key={st.id} className="w-24 whitespace-nowrap !text-center">
+            <th key={st.id} className="w-16 whitespace-nowrap !text-center">
               SS{st.order}
             </th>
           ))}
-          <th className="w-24 !text-center">Penalty</th>
-          <th className="w-28 !text-center">Total</th>
-          <th className="w-24 !text-center">Diff</th>
+          <th className="w-20 !text-center">SS Times</th>
+          <th className="w-20 !text-center">Penalty</th>
+          <th className="w-24 !text-center">Total</th>
+          <th className="w-20 !text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
         {sorted.map((legRow, i) => {
-          const { row, cells, sortTier, rowOutcome, totalMs, penaltyMs } = legRow;
+          const {
+            row,
+            cells,
+            sortTier,
+            rowOutcome,
+            ssTimesMs,
+            totalMs,
+            penaltyMs,
+          } = legRow;
           return (
             <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
               <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
@@ -2339,6 +2391,9 @@ function LegResultsTable({
                 {row.startNumber}
               </td>
               <CrewStackCell row={row} />
+              <td className="align-middle !text-center text-[11px] text-[var(--ewrc-muted)] sm:text-xs">
+                {row.class || "—"}
+              </td>
               {cells.map((c, idx) => (
                 <td
                   key={stagesInLeg[idx]!.id}
@@ -2349,15 +2404,18 @@ function LegResultsTable({
                     : formatDurationMs(c.durationMs)}
                 </td>
               ))}
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {allLegStagesCompleted && rowOutcome != null
+                  ? rowOutcome
+                  : formatDurationMs(ssTimesMs)}
+              </td>
               <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
                 {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
               </td>
-              <td className="align-middle">
-                <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {allLegStagesCompleted && rowOutcome != null
-                    ? rowOutcome
-                    : formatDurationMs(totalMs)}
-                </span>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {allLegStagesCompleted && rowOutcome != null
+                  ? rowOutcome
+                  : formatDurationMs(totalMs)}
               </td>
               <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
                 {sortTier !== 0 ||

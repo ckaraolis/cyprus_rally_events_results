@@ -305,12 +305,12 @@ export async function exportRallyLegExcel(
   const ranked = started(entries).map((row) => {
     let jumpMs = 0;
     const stageTexts: string[] = [];
-    const durations: Array<number | null> = [];
+    const ssDurations: Array<number | null> = [];
     let outcome: string | null = null;
     for (const st of stagesInLeg) {
       if (!allCompleted) {
         stageTexts.push("—");
-        durations.push(null);
+        ssDurations.push(null);
         continue;
       }
       const v = stageValues(row, st.id);
@@ -319,7 +319,7 @@ export async function exportRallyLegExcel(
       jumpMs += pen;
       if (cell.outcome) {
         stageTexts.push(cell.outcome);
-        durations.push(null);
+        ssDurations.push(null);
         if (!outcome) outcome = cell.outcome;
         else if (cell.outcome === "DNS") outcome = "DNS";
         else if (cell.outcome === "RET" && outcome !== "DNS") outcome = "RET";
@@ -327,21 +327,30 @@ export async function exportRallyLegExcel(
           outcome = "DNF";
         }
       } else {
-        const d = cell.durationMs != null ? cell.durationMs + pen : null;
-        stageTexts.push(formatDurationMs(d));
-        durations.push(d);
+        stageTexts.push(formatDurationMs(cell.durationMs));
+        ssDurations.push(cell.durationMs);
       }
     }
     const allTimed =
-      allCompleted && durations.length > 0 && durations.every((d) => d != null);
+      allCompleted &&
+      ssDurations.length > 0 &&
+      ssDurations.every((d) => d != null);
     const eventMs = allCompleted ? eventPenaltyMs(row, undefined, legOrders) : 0;
-    const stageTimeMs = allTimed
-      ? durations.reduce((sum, d) => sum + (d ?? 0), 0)
+    const ssTimesMs = allTimed
+      ? ssDurations.reduce((sum, d) => sum + (d ?? 0), 0)
       : null;
-    const totalMs = stageTimeMs != null ? stageTimeMs + eventMs : null;
     const penaltyMs = jumpMs + eventMs;
+    const totalMs = ssTimesMs != null ? ssTimesMs + penaltyMs : null;
     const sortTier = outcome ? 2 : totalMs != null ? 0 : 1;
-    return { row, stageTexts, penaltyMs, totalMs, sortTier, outcome };
+    return {
+      row,
+      stageTexts,
+      ssTimesMs,
+      penaltyMs,
+      totalMs,
+      sortTier,
+      outcome,
+    };
   });
   ranked.sort((a, b) => {
     if (a.sortTier !== b.sortTier) return a.sortTier - b.sortTier;
@@ -357,7 +366,9 @@ export async function exportRallyLegExcel(
     r.row.driver || "—",
     r.row.coDriver || "—",
     r.row.car || "—",
+    r.row.class || "—",
     ...r.stageTexts,
+    r.outcome ?? formatDurationMs(r.ssTimesMs),
     r.penaltyMs > 0 ? formatDurationMs(r.penaltyMs) : "—",
     r.outcome ?? formatDurationMs(r.totalMs),
     r.sortTier !== 0 || leader == null || r.totalMs == null || r.totalMs <= leader
@@ -373,7 +384,9 @@ export async function exportRallyLegExcel(
       "Driver",
       "Co-driver",
       "Car",
+      "Class",
       ...stagesInLeg.map((st) => `SS${st.order}`),
+      "SS Times",
       "Penalty",
       "Total",
       "Diff",
