@@ -181,7 +181,8 @@ body {
 }
 
 .font-ewrc-heading {
-  font-family: var(--font-oswald), "Arial Narrow", Impact, system-ui, sans-serif;
+  font-family: "Oswald", var(--font-oswald), "Arial Narrow", Impact, system-ui,
+    sans-serif;
 }
 
 /* eWRC-inspired results UI — theme via CSS variables */
