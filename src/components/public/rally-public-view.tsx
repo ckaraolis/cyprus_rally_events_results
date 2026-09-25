@@ -323,10 +323,10 @@ function buildLandscapeResultsPdfHtml(input: {
   th { background: #f0f0f0; font-weight: 700; }
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
-  col.c-pos, col.c-num { width: ${legLayout ? "2.1%" : "2.6%"}; }
-  col.c-driver, col.c-codriver { width: ${legLayout ? "13.2%" : "12.5%"}; }
+  col.c-pos, col.c-num { width: ${legLayout ? "2.1%" : "2.2%"}; }
+  col.c-driver, col.c-codriver { width: ${legLayout ? "13.2%" : "13%"}; }
   col.c-car { width: 11%; }
-  col.c-class { width: ${legLayout ? "4.8%" : "5.5%"}; }
+  col.c-class { width: 4.8%; }
   col.c-ss { width: 4.4%; }
   col.c-time { width: ${legLayout ? "6.4%" : "7.2%"}; }
   @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; } }
@@ -1246,6 +1246,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       ],
       tableRows,
       logoUrl: normalizedLogoUrl,
+      rallyClassificationLayout: true,
+      centerFromCol: 5,
     });
     printHtmlDocument(html, { landscape: true });
   }
@@ -2809,14 +2811,14 @@ function OverallClassificationTable({
     <table className="ewrc-table min-w-[720px] w-full text-sm">
       <thead>
         <tr>
-          <th className="w-12 text-right">Pos</th>
-          <th className="w-12 text-right">#</th>
-          <th className="min-w-[10rem]">Crew</th>
-          <th className="w-20 text-center">Class</th>
-          <th className="w-28 text-center">Time</th>
-          <th className="w-24 text-center">Penalty</th>
-          <th className="w-28 text-center">Total time</th>
-          <th className="w-24 text-center">Diff</th>
+          <th className="w-8 text-right">Pos</th>
+          <th className="w-8 text-right">#</th>
+          <th className="min-w-[11rem]">Crew</th>
+          <th className="w-14 !text-center">Class</th>
+          <th className="w-28 !text-center">Time</th>
+          <th className="w-24 !text-center">Penalty</th>
+          <th className="w-28 !text-center">Total time</th>
+          <th className="w-24 !text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
@@ -2829,19 +2831,19 @@ function OverallClassificationTable({
               {row.startNumber}
             </td>
             <CrewStackCell row={row} />
-            <td className="align-middle text-center text-[var(--ewrc-muted)]">
+            <td className="align-middle !text-center text-[11px] text-[var(--ewrc-muted)] sm:text-xs">
               {row.class || "—"}
             </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
               {formatDurationMs(timeMs)}
             </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
               {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
             </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
               {formatDurationMs(totalMs)}
             </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
               {leaderTotal == null || totalMs <= leaderTotal
                 ? "—"
                 : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
