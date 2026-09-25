@@ -267,65 +267,88 @@ function buildLandscapeResultsPdfHtml(input: {
 function buildRallyStagePdfRows(entries: Entry[], stageId: string): string[][] {
   const ranked = [...entries]
     .map((row) => {
-      const { startValue, finishValue } = getRallyStageTimingValues(row, stageId);
-      const cell = classifyRallyStageLegCell(startValue, finishValue);
-      return { row, cell };
+      const values = getRallyStageTimingValues(row, stageId);
+      const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+      const penaltyMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+      // Jump-start (and other stage) penalties are added into stage time.
+      const timeMs =
+        cell.durationMs != null ? cell.durationMs + penaltyMs : null;
+      return {
+        row,
+        cell,
+        timeMs,
+        penaltyMs,
+        penaltyRaw: values.penaltyValue,
+      };
     })
     .filter(
-      (x) => x.cell.durationMs != null || x.cell.outcome != null,
+      (x) =>
+        x.timeMs != null ||
+        x.cell.outcome != null ||
+        x.penaltyMs > 0,
     )
     .sort((a, b) => {
-      const aTimed = a.cell.durationMs != null;
-      const bTimed = b.cell.durationMs != null;
+      const aTimed = a.timeMs != null;
+      const bTimed = b.timeMs != null;
       if (aTimed && !bTimed) return -1;
       if (!aTimed && bTimed) return 1;
-      if (aTimed && bTimed && a.cell.durationMs !== b.cell.durationMs) {
-        return (a.cell.durationMs ?? 0) - (b.cell.durationMs ?? 0);
+      if (aTimed && bTimed && a.timeMs !== b.timeMs) {
+        return (a.timeMs ?? 0) - (b.timeMs ?? 0);
       }
       return a.row.startNumber - b.row.startNumber;
     });
-  const leaderMs = ranked.find((x) => x.cell.durationMs != null)?.cell.durationMs ?? null;
-  return ranked.map(({ row, cell }, i) => [
+  const leaderMs = ranked.find((x) => x.timeMs != null)?.timeMs ?? null;
+  return ranked.map(({ row, cell, timeMs, penaltyRaw }, i) => [
     String(i + 1),
     String(row.startNumber),
     row.driver || "—",
     row.coDriver || "—",
     row.car || "—",
     row.class || "—",
-    cell.outcome != null
-      ? cell.outcome
-      : formatDurationMs(cell.durationMs),
-    cell.durationMs == null ||
-    leaderMs == null ||
-    cell.durationMs <= leaderMs
+    cell.outcome != null ? cell.outcome : formatDurationMs(timeMs),
+    penaltyRaw.trim() ? penaltyRaw.trim() : "—",
+    timeMs == null || leaderMs == null || timeMs <= leaderMs
       ? "—"
-      : `+${formatDiffDurationMs(cell.durationMs - leaderMs)}`,
+      : `+${formatDiffDurationMs(timeMs - leaderMs)}`,
   ]);
 }
 
 function buildRallyOverallPdfRows(entries: Entry[], stages: Stage[]): string[][] {
   const ranked = [...entries]
     .map((row) => {
-      const stageTimes = stages.map((st) => {
-        const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
-        return classifyRallyStageLegCell(startValue, finishValue);
+      const stageCells = stages.map((st) => {
+        const values = getRallyStageTimingValues(row, st.id);
+        const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+        const penaltyMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+        const timeMs =
+          cell.durationMs != null ? cell.durationMs + penaltyMs : null;
+        return { cell, penaltyMs, timeMs };
       });
       const allTimed =
         stages.length > 0 &&
-        stageTimes.every((c) => c.outcome == null && c.durationMs != null);
-      const totalMs = allTimed
-        ? stageTimes.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+        stageCells.every((c) => c.cell.outcome == null && c.timeMs != null);
+      // Stage times already include jump-start penalties.
+      const stageTimeMs = allTimed
+        ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
         : null;
-      return { row, totalMs };
+      const stagePenaltyMs = stageCells.reduce((sum, c) => sum + c.penaltyMs, 0);
+      const eventPenaltyMs =
+        parsePenaltyDurationMs(getRallyEventPenaltyValues(row).penaltyValue) ?? 0;
+      const penaltyMs = stagePenaltyMs + eventPenaltyMs;
+      const totalMs =
+        stageTimeMs != null ? stageTimeMs + eventPenaltyMs : null;
+      return { row, totalMs, penaltyMs, stageTimeMs };
     })
-    .filter((x): x is { row: Entry; totalMs: number } => x.totalMs != null)
+    .filter((x): x is { row: Entry; totalMs: number; penaltyMs: number; stageTimeMs: number } =>
+      x.totalMs != null,
+    )
     .sort((a, b) =>
       a.totalMs !== b.totalMs
         ? a.totalMs - b.totalMs
         : a.row.startNumber - b.row.startNumber,
     );
   const leaderTotal = ranked[0]?.totalMs ?? null;
-  return ranked.map(({ row, totalMs }, i) => [
+  return ranked.map(({ row, totalMs, penaltyMs }, i) => [
     String(i + 1),
     String(row.startNumber),
     row.driver || "—",
@@ -333,6 +356,7 @@ function buildRallyOverallPdfRows(entries: Entry[], stages: Stage[]): string[][]
     row.car || "—",
     row.class || "—",
     formatDurationMs(totalMs),
+    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
     leaderTotal == null || totalMs <= leaderTotal
       ? "—"
       : `+${formatDiffDurationMs(totalMs - leaderTotal)}`,
@@ -405,6 +429,14 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   const entriesStartedSorted = useMemo(
     () => entriesSorted.filter((e) => e.start !== false),
     [entriesSorted],
+  );
+
+  const rallyPenaltyRows = useMemo(
+    () =>
+      event.type === "rally"
+        ? collectRallyPublicPenalties(entriesStartedSorted, stagesSorted)
+        : [],
+    [entriesStartedSorted, event.type, stagesSorted],
   );
 
   const entryListClassOptions = useMemo(() => {
@@ -674,7 +706,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           eventName: event.name,
           subtitle: `After SS${stage.order} Results (SS1–SS${stage.order})`,
           modeLabel: "Overall classification",
-          columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Diff"],
+          columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Penalty", "Diff"],
           tableRows,
           logoUrl,
         });
@@ -686,7 +718,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         eventName: event.name,
         subtitle: `SS${stage.order} ${stage.name}`,
         modeLabel: "Stage results",
-        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Time", "Diff"],
+        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Time", "Penalty", "Diff"],
         tableRows,
         logoUrl,
       });
@@ -702,7 +734,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         eventName: event.name,
         subtitle: `LEG${selectedStripItem.leg} Results`,
         modeLabel: "Leg classification",
-        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Diff"],
+        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Penalty", "Diff"],
         tableRows,
         logoUrl,
       });
@@ -1667,11 +1699,33 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                   </tr>
                 </thead>
                 <tbody>
-                  <tr>
-                    <td colSpan={4} className="py-10 text-center text-[var(--ewrc-muted-3)]">
-                      No penalties
-                    </td>
-                  </tr>
+                  {rallyPenaltyRows.length === 0 ? (
+                    <tr>
+                      <td colSpan={4} className="py-10 text-center text-[var(--ewrc-muted-3)]">
+                        No penalties
+                      </td>
+                    </tr>
+                  ) : (
+                    rallyPenaltyRows.map((p, i) => (
+                      <tr key={p.key} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+                        <td className="text-right font-mono text-[var(--ewrc-ss)]">
+                          {p.startNumber}
+                        </td>
+                        <td className="align-top py-2.5">
+                          <div className="flex flex-col gap-0.5 leading-tight">
+                            <span className="text-sm font-medium text-[var(--ewrc-crew)]">
+                              {p.driver}
+                            </span>
+                            <span className="text-sm text-[var(--ewrc-muted)]">
+                              {p.coDriver}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="font-mono text-[var(--ewrc-strong)]">{p.penalty}</td>
+                        <td className="text-[var(--ewrc-muted)]">{p.reason}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1921,6 +1975,7 @@ function LegResultsTable({
     sortTier: 0 | 1 | 2;
     rowOutcome: "DNS" | "DNF" | "RET" | null;
     totalMs: number | null;
+    penaltyMs: number;
   };
 
   const allLegStagesCompleted = useMemo(
@@ -1931,18 +1986,28 @@ function LegResultsTable({
   );
   const sorted = useMemo((): LegRow[] => {
     const rows: LegRow[] = entries.map((row) => {
+      let penaltyMs = 0;
       const cells = stagesInLeg.map((st) => {
+        const values = getRallyStageTimingValues(row, st.id);
+        const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+        penaltyMs += pen;
         // Only reveal stage times once that stage is officially completed.
         if (st.progressStatus !== "completed") {
           return { outcome: null, durationMs: null };
         }
-        const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
-        return classifyRallyStageLegCell(startValue, finishValue);
+        const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+        // Jump-start penalties are included in the stage time cell.
+        return {
+          outcome: cell.outcome,
+          durationMs:
+            cell.durationMs != null ? cell.durationMs + pen : null,
+        };
       });
       const rowOutcome = worstLegRowOutcome(cells);
       const allTimedNoOutcome =
         cells.length > 0 &&
         cells.every((c) => c.outcome == null && c.durationMs != null);
+      // Cells already include jump-start penalties — do not add again.
       const totalMs =
         allLegStagesCompleted && allTimedNoOutcome
           ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
@@ -1953,7 +2018,7 @@ function LegResultsTable({
           : totalMs != null
             ? 0
             : 1;
-      return { row, cells, sortTier, rowOutcome, totalMs };
+      return { row, cells, sortTier, rowOutcome, totalMs, penaltyMs };
     });
 
     return rows.sort((a, b) => {
@@ -2013,7 +2078,7 @@ function LegResultsTable({
       </thead>
       <tbody>
         {sorted.map((legRow, i) => {
-          const { row, cells, sortTier, rowOutcome, totalMs } = legRow;
+          const { row, cells, sortTier, rowOutcome, totalMs, penaltyMs } = legRow;
           return (
             <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
               <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
@@ -2033,10 +2098,8 @@ function LegResultsTable({
                     : formatDurationMs(c.durationMs)}
                 </td>
               ))}
-              <td className="align-middle">
-                <span className="flex w-full justify-center text-center font-mono text-[var(--ewrc-time-placeholder)]">
-                  —
-                </span>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+                {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
               </td>
               <td className="align-middle">
                 <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
@@ -2061,7 +2124,7 @@ function LegResultsTable({
   );
 }
 
-/** "After SSx" view: total time across SS1..SSx, sorted by Total, with Diff column only. */
+/** "After SSx" view: total time across SS1..SSx (+ penalties), sorted by Total. */
 function CumulativeAfterStageTable({
   entries,
   stages,
@@ -2073,28 +2136,33 @@ function CumulativeAfterStageTable({
     () =>
       [...entries]
         .map((row) => {
-          const stageTimes = stages.map((st) => {
-            const { startValue, finishValue } = getRallyStageTimingValues(
-              row,
-              st.id,
-            );
-            const startMs = parseClockToDayMs(startValue);
-            const finishMs = parseClockToDayMs(finishValue);
-            if (startMs == null || finishMs == null) return null;
-            const duration = finishMs - startMs;
-            return duration >= 0 ? duration : null;
+          const stageCells = stages.map((st) => {
+            const values = getRallyStageTimingValues(row, st.id);
+            const startMs = parseClockToDayMs(values.startValue);
+            const finishMs = parseClockToDayMs(values.finishValue);
+            const penaltyMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+            if (startMs == null || finishMs == null) {
+              return { durationMs: null as number | null, penaltyMs };
+            }
+            const raw = finishMs - startMs;
+            // Jump-start penalties are included in each stage contribution.
+            return {
+              durationMs: raw >= 0 ? raw + penaltyMs : null,
+              penaltyMs,
+            };
           });
           const allTimed =
-            stages.length > 0 && stageTimes.every((t) => t != null);
+            stages.length > 0 && stageCells.every((t) => t.durationMs != null);
+          // Stage contributions already include jump-start penalties.
           const totalMs = allTimed
-            ? stageTimes.reduce((sum, t) => sum + (t ?? 0), 0)
+            ? stageCells.reduce((sum, t) => sum + (t.durationMs ?? 0), 0)
             : null;
-          return { row, totalMs };
+          const penaltyMs = stageCells.reduce((sum, t) => sum + t.penaltyMs, 0);
+          return { row, totalMs, penaltyMs };
         })
-        // Hide crews who don't have a clocked time yet for every SS up to the
-        // selected one (e.g. no SS2 time on After SS2).
         .filter(
-          (x): x is { row: Entry; totalMs: number } => x.totalMs != null,
+          (x): x is { row: Entry; totalMs: number; penaltyMs: number } =>
+            x.totalMs != null,
         )
         .sort((a, b) => {
           if (a.totalMs !== b.totalMs) return a.totalMs - b.totalMs;
@@ -2121,18 +2189,19 @@ function CumulativeAfterStageTable({
   }
 
   return (
-    <table className="ewrc-table ewrc-table-speed-run min-w-[420px] w-full text-sm">
+    <table className="ewrc-table ewrc-table-speed-run min-w-[480px] w-full text-sm">
       <thead>
         <tr>
           <th className="w-12 text-right">Pos</th>
           <th className="w-12 text-right">#</th>
           <th className="min-w-[10rem]">Crew</th>
           <th className="w-28 !text-center">Total</th>
+          <th className="w-24 !text-center">Penalty</th>
           <th className="w-24 !text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, totalMs }, i) => (
+        {sorted.map(({ row, totalMs, penaltyMs }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
               {i + 1}
@@ -2143,6 +2212,9 @@ function CumulativeAfterStageTable({
             <CrewStackCell row={row} />
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {formatDurationMs(totalMs)}
+            </td>
+            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+              {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
               {leaderTotal == null || totalMs <= leaderTotal
@@ -2167,15 +2239,44 @@ function StageTimesTable({
     () =>
       [...entries]
         .map((row) => {
-          if (!stageId) return { row, durationMs: null as number | null };
-          const { startValue, finishValue } = getRallyStageTimingValues(row, stageId);
-          const startMs = parseClockToDayMs(startValue);
-          const finishMs = parseClockToDayMs(finishValue);
-          if (startMs == null || finishMs == null) return { row, durationMs: null as number | null };
-          const durationMs = finishMs - startMs;
-          return { row, durationMs: durationMs >= 0 ? durationMs : null };
+          if (!stageId) {
+            return {
+              row,
+              durationMs: null as number | null,
+              penaltyMs: null as number | null,
+              penaltyRaw: "",
+            };
+          }
+          const values = getRallyStageTimingValues(row, stageId);
+          const startMs = parseClockToDayMs(values.startValue);
+          const finishMs = parseClockToDayMs(values.finishValue);
+          const penaltyMs = parsePenaltyDurationMs(values.penaltyValue);
+          const pen = penaltyMs ?? 0;
+          if (startMs == null || finishMs == null) {
+            return {
+              row,
+              durationMs: null as number | null,
+              penaltyMs,
+              penaltyRaw: values.penaltyValue,
+            };
+          }
+          const raw = finishMs - startMs;
+          // Jump-start penalties are added into the published stage time.
+          return {
+            row,
+            durationMs: raw >= 0 ? raw + pen : null,
+            penaltyMs,
+            penaltyRaw: values.penaltyValue,
+          };
         })
-        .filter((x): x is { row: Entry; durationMs: number } => x.durationMs != null)
+        .filter(
+          (x): x is {
+            row: Entry;
+            durationMs: number;
+            penaltyMs: number | null;
+            penaltyRaw: string;
+          } => x.durationMs != null,
+        )
         .sort((a, b) =>
           a.durationMs !== b.durationMs
             ? a.durationMs - b.durationMs
@@ -2194,18 +2295,19 @@ function StageTimesTable({
   }
 
   return (
-    <table className="ewrc-table ewrc-table-speed-run min-w-[420px] w-full text-sm">
+    <table className="ewrc-table ewrc-table-speed-run min-w-[480px] w-full text-sm">
       <thead>
         <tr>
           <th className="w-12 text-right">Pos</th>
           <th className="w-12 text-right">#</th>
           <th className="min-w-[10rem]">Crew</th>
           <th className="w-28 !text-center">Time</th>
+          <th className="w-24 !text-center">Penalty</th>
           <th className="w-24 !text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, durationMs }, i) => (
+        {sorted.map(({ row, durationMs, penaltyRaw }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
               {i + 1}
@@ -2216,6 +2318,9 @@ function StageTimesTable({
             <CrewStackCell row={row} />
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {formatDurationMs(durationMs)}
+            </td>
+            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+              {penaltyRaw.trim() ? penaltyRaw.trim() : "—"}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
               {leaderMs == null || durationMs <= leaderMs
@@ -2607,19 +2712,27 @@ function parseClockToDayMs(value: string): number | null {
   return ((h * 60 + min) * 60 + sec) * 1000 + ms;
 }
 
-function parseRallyStageTimingBlob(raw: string): Record<string, { startTime?: string; finishTime?: string }> {
+function parseRallyStageTimingBlob(raw: string): Record<
+  string,
+  { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
+> {
   const trimmed = raw.trim();
   if (!trimmed || !trimmed.startsWith("{")) return {};
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<string, { startTime?: string; finishTime?: string }> = {};
+    const out: Record<
+      string,
+      { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
+    > = {};
     for (const [stageId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const item = value as Record<string, unknown>;
       out[stageId] = {
         startTime: typeof item.startTime === "string" ? item.startTime : "",
         finishTime: typeof item.finishTime === "string" ? item.finishTime : "",
+        penalty: typeof item.penalty === "string" ? item.penalty : "",
+        penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
       };
     }
     return out;
@@ -2628,16 +2741,99 @@ function parseRallyStageTimingBlob(raw: string): Record<string, { startTime?: st
   }
 }
 
+const RALLY_EVENT_PENALTY_KEY = "__event_penalty__";
+
+/** Parse admin penalty strings like `00:10` / `0:10` (mm:ss) into milliseconds. */
+function parsePenaltyDurationMs(raw: string): number | null {
+  const t = raw.trim();
+  if (!t) return null;
+  const m = t.match(/^(\d{1,3}):([0-5]?\d)$/);
+  if (m) {
+    const minutes = Number.parseInt(m[1] ?? "0", 10);
+    const seconds = Number.parseInt(m[2] ?? "0", 10);
+    if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return null;
+    return (minutes * 60 + seconds) * 1000;
+  }
+  const secOnly = Number.parseInt(t, 10);
+  if (Number.isFinite(secOnly) && secOnly >= 0) return secOnly * 1000;
+  return null;
+}
+
 function getRallyStageTimingValues(
   row: Entry,
   stageId: string,
-): { startValue: string; finishValue: string } {
+): {
+  startValue: string;
+  finishValue: string;
+  penaltyValue: string;
+  penaltyNoteValue: string;
+} {
   const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
   const values = blob[stageId] ?? {};
   return {
     startValue: values.startTime?.trim() ?? "",
     finishValue: values.finishTime?.trim() ?? "",
+    penaltyValue: values.penalty?.trim() ?? "",
+    penaltyNoteValue: values.penaltyNote?.trim() ?? "",
   };
+}
+
+function getRallyEventPenaltyValues(row: Entry): {
+  penaltyValue: string;
+  penaltyNoteValue: string;
+} {
+  const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+  const values = blob[RALLY_EVENT_PENALTY_KEY] ?? {};
+  return {
+    penaltyValue: values.penalty?.trim() ?? "",
+    penaltyNoteValue: values.penaltyNote?.trim() ?? "",
+  };
+}
+
+type RallyPublicPenaltyRow = {
+  key: string;
+  startNumber: number;
+  driver: string;
+  coDriver: string;
+  penalty: string;
+  reason: string;
+};
+
+function collectRallyPublicPenalties(
+  entries: Entry[],
+  stages: Stage[],
+): RallyPublicPenaltyRow[] {
+  const out: RallyPublicPenaltyRow[] = [];
+  for (const row of entries) {
+    for (const st of stages) {
+      const values = getRallyStageTimingValues(row, st.id);
+      if (!values.penaltyValue) continue;
+      out.push({
+        key: `${row.id}-ss-${st.id}`,
+        startNumber: row.startNumber,
+        driver: row.driver || "—",
+        coDriver: row.coDriver || "—",
+        penalty: values.penaltyValue,
+        reason: values.penaltyNoteValue || `Jump Start SS${st.order}`,
+      });
+    }
+    const eventPen = getRallyEventPenaltyValues(row);
+    if (eventPen.penaltyValue) {
+      out.push({
+        key: `${row.id}-event`,
+        startNumber: row.startNumber,
+        driver: row.driver || "—",
+        coDriver: row.coDriver || "—",
+        penalty: eventPen.penaltyValue,
+        reason: eventPen.penaltyNoteValue || "Event penalty",
+      });
+    }
+  }
+  return out.sort((a, b) =>
+    a.startNumber !== b.startNumber
+      ? a.startNumber - b.startNumber
+      : a.reason.localeCompare(b.reason),
+  );
 }
 
 /** Per-stage cell for leg classification: outcome markers vs clocked stage time. */

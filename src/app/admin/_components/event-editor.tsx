@@ -1247,11 +1247,23 @@ export function EventEditor({ event: initial }: Props) {
     if (meta.type !== "rally" || !selectedRallyTimingStage) return row;
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
     const current = blob[selectedRallyTimingStage.id] ?? {};
+    const jumpStartReason = `Jump Start SS${selectedRallyTimingStage.order}`;
+    const trimmedNote = penaltyNoteValue.trim();
+    const isDefaultJumpStart =
+      !trimmedNote ||
+      /^Jump Start SS\d+$/i.test(trimmedNote);
+    const nextNote = !penaltyValue.trim()
+      ? isDefaultJumpStart
+        ? ""
+        : trimmedNote
+      : trimmedNote && !isDefaultJumpStart
+        ? trimmedNote
+        : jumpStartReason;
     blob[selectedRallyTimingStage.id] = {
       startTime: current.startTime ?? "",
       finishTime: current.finishTime ?? "",
       penalty: penaltyValue,
-      penaltyNote: penaltyNoteValue,
+      penaltyNote: nextNote,
     };
     return {
       ...row,
@@ -1323,7 +1335,24 @@ export function EventEditor({ event: initial }: Props) {
       s,
     ).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
   };
-  const computeTotalTime = (startValue: string, finishValue: string): string => {
+  const parsePenaltyToMs = (value: string): number => {
+    const t = value.trim();
+    if (!t) return 0;
+    const m = t.match(/^(\d{1,3}):([0-5]?\d)$/);
+    if (m) {
+      const minutes = Number.parseInt(m[1] ?? "0", 10);
+      const seconds = Number.parseInt(m[2] ?? "0", 10);
+      if (!Number.isFinite(minutes) || !Number.isFinite(seconds)) return 0;
+      return (minutes * 60 + seconds) * 1000;
+    }
+    const secOnly = Number.parseInt(t, 10);
+    return Number.isFinite(secOnly) && secOnly >= 0 ? secOnly * 1000 : 0;
+  };
+  const computeTotalTime = (
+    startValue: string,
+    finishValue: string,
+    penaltyValue = "",
+  ): string => {
     const outcome = parseTimingOutcome(startValue, finishValue);
     const outcomeLabel = formatTimingOutcomeLabel(outcome);
     if (outcomeLabel) return outcomeLabel;
@@ -1332,7 +1361,7 @@ export function EventEditor({ event: initial }: Props) {
     if (startMs == null || finishMs == null) return "—";
     const diff = finishMs - startMs;
     if (diff < 0) return "—";
-    return formatDuration(diff);
+    return formatDuration(diff + parsePenaltyToMs(penaltyValue));
   };
   const setTimingOutcomeForEntry = (
     entryId: string,
@@ -2724,7 +2753,7 @@ export function EventEditor({ event: initial }: Props) {
                     </div>
                     <p className="mt-2 font-mono text-sm text-zinc-700 dark:text-zinc-200">
                       Total:{" "}
-                      {computeTotalTime(startValue, finishValue)}
+                      {computeTotalTime(startValue, finishValue, penaltyValue)}
                     </p>
                     <div className="mt-2 flex gap-2">
                       <button
@@ -2875,7 +2904,7 @@ export function EventEditor({ event: initial }: Props) {
                         />
                       </td>
                       <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
-                        {computeTotalTime(startValue, finishValue)}
+                        {computeTotalTime(startValue, finishValue, penaltyValue)}
                       </td>
                       <td className="py-2 pr-2">
                         <div className="flex flex-wrap gap-1">
