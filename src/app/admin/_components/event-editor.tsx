@@ -18,6 +18,12 @@ import type {
   StageProgressStatus,
 } from "@/lib/rally/types";
 import { AdminCountrySelect } from "./admin-country-select";
+import {
+  exportRallyAfterSsExcel,
+  exportRallyFinalExcel,
+  exportRallyLegExcel,
+  exportRallyStageExcel,
+} from "@/lib/rally/admin-excel-export";
 
 type Props = { event: RallyEvent };
 type AdminTab =
@@ -3214,6 +3220,84 @@ export function EventEditor({ event: initial }: Props) {
             </div>
           ) : null}
           <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            {meta.type === "rally" ? (
+              <div className="mr-auto flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  disabled={!selectedRallyTimingStage}
+                  onClick={() => {
+                    if (!selectedRallyTimingStage) return;
+                    void exportRallyStageExcel(
+                      meta.name || "event",
+                      entries,
+                      selectedRallyTimingStage,
+                    );
+                  }}
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Export SS Excel
+                </button>
+                <button
+                  type="button"
+                  disabled={!selectedRallyTimingStage}
+                  onClick={() => {
+                    if (!selectedRallyTimingStage) return;
+                    const upTo = [...stages]
+                      .sort((a, b) => a.order - b.order)
+                      .filter((s) => s.order <= selectedRallyTimingStage.order);
+                    void exportRallyAfterSsExcel(meta.name || "event", entries, upTo);
+                  }}
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Export After SS Excel
+                </button>
+                {(() => {
+                  const legs = [
+                    ...new Set(
+                      stages
+                        .map((s) => s.leg)
+                        .filter((n) => Number.isFinite(n) && n >= 1),
+                    ),
+                  ].sort((a, b) => a - b);
+                  return legs.map((leg) => {
+                    const stagesInLeg = stages
+                      .filter((s) => s.leg === leg)
+                      .sort((a, b) => a.order - b.order);
+                    return (
+                      <button
+                        key={`excel-leg-${leg}`}
+                        type="button"
+                        disabled={stagesInLeg.length === 0}
+                        onClick={() =>
+                          void exportRallyLegExcel(
+                            meta.name || "event",
+                            entries,
+                            stagesInLeg,
+                            leg,
+                          )
+                        }
+                        className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                      >
+                        Export LEG{leg} Excel
+                      </button>
+                    );
+                  });
+                })()}
+                <button
+                  type="button"
+                  onClick={() =>
+                    void exportRallyFinalExcel(
+                      meta.name || "event",
+                      entries,
+                      [...stages].sort((a, b) => a.order - b.order),
+                    )
+                  }
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Export Final Excel
+                </button>
+              </div>
+            ) : null}
             <button
               type="button"
               onClick={saveTiming}

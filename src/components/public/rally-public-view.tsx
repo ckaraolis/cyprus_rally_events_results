@@ -219,10 +219,16 @@ function buildLandscapeResultsPdfHtml(input: {
   logoUrl: string;
 }): string {
   const n = Math.max(input.tableRows.length, 1);
-  const fontPt =
-    n <= 12 ? 10 : n <= 18 ? 9 : n <= 24 ? 8 : n <= 32 ? 7 : n <= 40 ? 6.5 : 6;
+  const colCount = Math.max(input.columns.length, 1);
+  // More columns (e.g. LEG with many SS) need a tighter base size.
+  const colTighten = colCount >= 12 ? 1 : colCount >= 10 ? 0.5 : 0;
+  const fontPt = Math.max(
+    5.5,
+    (n <= 12 ? 10 : n <= 18 ? 9 : n <= 24 ? 8 : n <= 32 ? 7 : n <= 40 ? 6.5 : 6) -
+      colTighten,
+  );
   const padY = n <= 18 ? 1.6 : n <= 28 ? 1.1 : n <= 36 ? 0.7 : 0.45;
-  const padX = n <= 24 ? 2.2 : 1.4;
+  const padX = colCount >= 10 ? 1.0 : n <= 24 ? 2.2 : 1.4;
   const logoH = n <= 20 ? 48 : n <= 30 ? 36 : 28;
   const titlePt = n <= 24 ? 15 : 12;
   const subPt = n <= 24 ? 10 : 8;
@@ -376,6 +382,185 @@ function buildRallyOverallPdfRows(
       ? "—"
       : `+${formatDiffDurationMs(totalMs - leaderTotal)}`,
   ]);
+}
+
+/** Final Results sheet: stage time + event penalties → Total. */
+function buildRallyFinalPdfRows(entries: Entry[], stages: Stage[]): string[][] {
+  const ranked = [...entries]
+    .map((row) => {
+      const stageCells = stages.map((st) => {
+        const values = getRallyStageTimingValues(row, st.id);
+        const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+        const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+        const timeMs =
+          cell.durationMs != null ? cell.durationMs + jumpMs : null;
+        return { cell, timeMs };
+      });
+      const allTimed =
+        stages.length > 0 &&
+        stageCells.every((c) => c.cell.outcome == null && c.timeMs != null);
+      const timeMs = allTimed
+        ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
+        : null;
+      const penaltyMs = getRallyEventPenaltyTotalMs(row);
+      const totalMs = timeMs != null ? timeMs + penaltyMs : null;
+      return { row, timeMs, penaltyMs, totalMs };
+    })
+    .filter(
+      (x): x is {
+        row: Entry;
+        timeMs: number;
+        penaltyMs: number;
+        totalMs: number;
+      } => x.totalMs != null,
+    )
+    .sort((a, b) =>
+      a.totalMs !== b.totalMs
+        ? a.totalMs - b.totalMs
+        : a.row.startNumber - b.row.startNumber,
+    );
+  const leaderTotal = ranked[0]?.totalMs ?? null;
+  return ranked.map(({ row, timeMs, penaltyMs, totalMs }, i) => [
+    String(i + 1),
+    String(row.startNumber),
+    row.driver || "—",
+    row.coDriver || "—",
+    row.car || "—",
+    row.class || "—",
+    formatDurationMs(timeMs),
+    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+    formatDurationMs(totalMs),
+    leaderTotal == null || totalMs <= leaderTotal
+      ? "—"
+      : `+${formatDiffDurationMs(totalMs - leaderTotal)}`,
+  ]);
+}
+
+/** LEG sheet: all crews, per-SS times (only when stages are completed). */
+function buildRallyLegPdfSheet(
+  entries: Entry[],
+  stagesInLeg: Stage[],
+): { columns: string[]; tableRows: string[][] } {
+  const allLegStagesCompleted =
+    stagesInLeg.length > 0 &&
+    stagesInLeg.every((st) => st.progressStatus === "completed");
+  const legOrders = new Set(stagesInLeg.map((s) => s.order));
+
+  type LegPdfRow = {
+    row: Entry;
+    cells: string[];
+    penaltyMs: number;
+    totalMs: number | null;
+    sortTier: 0 | 1 | 2;
+    rowOutcome: "DNS" | "DNF" | "RET" | null;
+  };
+
+  const ranked: LegPdfRow[] = entries.map((row) => {
+    let jumpPenaltyMs = 0;
+    const cells = stagesInLeg.map((st) => {
+      if (!allLegStagesCompleted || st.progressStatus !== "completed") {
+        return { text: "—", outcome: null as "DNS" | "DNF" | "RET" | null, durationMs: null as number | null };
+      }
+      const values = getRallyStageTimingValues(row, st.id);
+      const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+      jumpPenaltyMs += pen;
+      const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+      if (cell.outcome != null) {
+        return { text: cell.outcome, outcome: cell.outcome, durationMs: null };
+      }
+      const durationMs =
+        cell.durationMs != null ? cell.durationMs + pen : null;
+      return {
+        text: formatDurationMs(durationMs),
+        outcome: null,
+        durationMs,
+      };
+    });
+    const rowOutcome = worstLegRowOutcome(
+      cells.map((c) => ({ outcome: c.outcome, durationMs: c.durationMs })),
+    );
+    const allTimedNoOutcome =
+      allLegStagesCompleted &&
+      cells.length > 0 &&
+      cells.every((c) => c.outcome == null && c.durationMs != null);
+    const eventPenaltyMs = allLegStagesCompleted
+      ? getRallyEventPenaltyItems(row)
+          .filter((item) => legOrders.has(item.afterStageOrder))
+          .reduce(
+            (sum, item) => sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
+            0,
+          )
+      : 0;
+    const stageTimeMs = allTimedNoOutcome
+      ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+      : null;
+    const totalMs =
+      stageTimeMs != null ? stageTimeMs + eventPenaltyMs : null;
+    const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
+    const sortTier: 0 | 1 | 2 =
+      allLegStagesCompleted && rowOutcome != null
+        ? 2
+        : totalMs != null
+          ? 0
+          : 1;
+    return {
+      row,
+      cells: cells.map((c) => c.text),
+      penaltyMs,
+      totalMs,
+      sortTier,
+      rowOutcome,
+    };
+  });
+
+  ranked.sort((a, b) => {
+    if (a.sortTier !== b.sortTier) return a.sortTier - b.sortTier;
+    if (a.sortTier === 0) {
+      const ta = a.totalMs ?? 0;
+      const tb = b.totalMs ?? 0;
+      if (ta !== tb) return ta - tb;
+      return a.row.startNumber - b.row.startNumber;
+    }
+    if (a.sortTier === 2) {
+      const ka = legOutcomeSortKey(a.rowOutcome!);
+      const kb = legOutcomeSortKey(b.rowOutcome!);
+      if (ka !== kb) return ka - kb;
+      return a.row.startNumber - b.row.startNumber;
+    }
+    return a.row.startNumber - b.row.startNumber;
+  });
+
+  const leaderTotal = ranked.find((x) => x.sortTier === 0)?.totalMs ?? null;
+  const columns = [
+    "Pos",
+    "#",
+    "Driver",
+    "Co-driver",
+    "Car",
+    ...stagesInLeg.map((st) => `SS${st.order}`),
+    "Penalty",
+    "Total",
+    "Diff",
+  ];
+  const tableRows = ranked.map((legRow, i) => [
+    String(i + 1),
+    String(legRow.row.startNumber),
+    legRow.row.driver || "—",
+    legRow.row.coDriver || "—",
+    legRow.row.car || "—",
+    ...legRow.cells,
+    legRow.penaltyMs > 0 ? formatDurationMs(legRow.penaltyMs) : "—",
+    allLegStagesCompleted && legRow.rowOutcome != null
+      ? legRow.rowOutcome
+      : formatDurationMs(legRow.totalMs),
+    legRow.sortTier !== 0 ||
+    leaderTotal == null ||
+    legRow.totalMs == null ||
+    legRow.totalMs <= leaderTotal
+      ? "—"
+      : `+${formatDiffDurationMs(legRow.totalMs - leaderTotal)}`,
+  ]);
+  return { columns, tableRows };
 }
 
 /** Detect changes when polling `/api/rally/config` (stage dots, entry times, etc.). */
@@ -741,15 +926,15 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       return;
     }
 
-    // Rally leg end: cumulative for stages in the leg.
+    // Rally leg end: per-SS columns for every crew (landscape, one-page fit).
     if (event.type === "rally" && selectedStripItem.type === "legEnd") {
       const stagesInLeg = selectedStripItem.stagesInLeg;
-      const tableRows = buildRallyOverallPdfRows(rows, stagesInLeg, "in-stages-only");
+      const { columns, tableRows } = buildRallyLegPdfSheet(rows, stagesInLeg);
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
         subtitle: `LEG${selectedStripItem.leg} Results`,
         modeLabel: "Leg classification",
-        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Penalty", "Diff"],
+        columns,
         tableRows,
         logoUrl,
       });
@@ -891,119 +1076,63 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         row.car || "—",
         row.class || "—",
         nonStarter
-          ? "-"
+          ? "—"
           : getSpeedRunOutcomeLabel(row, "trial") ?? formatDurationMs(trial),
         nonStarter
-          ? "-"
+          ? "—"
           : getSpeedRunOutcomeLabel(row, "run1") ?? formatDurationMs(run1),
         nonStarter
-          ? "-"
+          ? "—"
           : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2),
         nonStarter
           ? "NON STARTER"
           : bestDisplay != null
             ? formatDurationMs(bestDisplay)
-            : "-",
+            : "—",
         nonStarter ||
         leaderBest == null ||
         bestFromRuns == null ||
         bestFromRuns <= leaderBest
-          ? "-"
+          ? "—"
           : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`,
       ],
     );
+    const html = buildLandscapeResultsPdfHtml({
+      eventName: event.name,
+      subtitle: "Final Results",
+      modeLabel: "Ordered by Best Time",
+      columns,
+      tableRows,
+      logoUrl: normalizedLogoUrl,
+    });
+    printHtmlDocument(html, { landscape: true });
+  }
 
-    const bodyHtml =
-      tableRows.length > 0
-        ? tableRows
-            .map(
-              (r) =>
-                `<tr>${r
-                  .map((v, colIdx) => {
-                    const center =
-                      v === "-" ||
-                      colIdx === 0 ||
-                      colIdx === 1 ||
-                      colIdx >= 5;
-                    return `<td${center ? ' class="c"' : ""}>${escapeHtml(v)}</td>`;
-                  })
-                  .join("")}</tr>`,
-            )
-            .join("")
-        : `<tr><td colspan="${columns.length}" class="c" style="color:#666;">No entries.</td></tr>`;
-
-    // Compact enough for one landscape page, but readable (no CSS transform scale —
-    // that was shrinking the table to a tiny block at the top of portrait previews).
-    const n = Math.max(ranked.length, 1);
-    const fontPt =
-      n <= 12 ? 10 : n <= 18 ? 9 : n <= 24 ? 8 : n <= 32 ? 7 : n <= 40 ? 6.5 : 6;
-    const padY =
-      n <= 18 ? 1.6 : n <= 28 ? 1.1 : n <= 36 ? 0.7 : 0.45;
-    const padX = n <= 24 ? 2.2 : 1.4;
-    const logoH = n <= 20 ? 48 : n <= 30 ? 36 : 28;
-    const titlePt = n <= 24 ? 15 : 12;
-    const subPt = n <= 24 ? 10 : 8;
-
-    const logoUrl = normalizedLogoUrl;
-    const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(event.name)} - Final Results</title><style>
-    @page { size: A4 landscape; margin: 8mm; }
-    html, body {
-      margin: 0;
-      padding: 0;
-      color: #111;
-      background: #fff;
-      font-family: Arial, Helvetica, sans-serif;
-    }
-    .page {
-      width: 281mm; /* A4 landscape content width at 8mm margins */
-      max-width: 100%;
-      margin: 0 auto;
-      box-sizing: border-box;
-    }
-    .header {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      gap: 2px;
-      margin: 0 0 5mm;
-      text-align: center;
-    }
-    .logo { max-height: ${logoH}px; width: auto; }
-    h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.15; }
-    h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      table-layout: fixed;
-      font-size: ${fontPt}pt;
-    }
-    th, td {
-      border: 1px solid #bdbdbd;
-      padding: ${padY}mm ${padX}mm;
-      vertical-align: middle;
-      line-height: 1.2;
-    }
-    th { background: #f0f0f0; text-align: center; font-weight: 700; }
-    td.c, th.c { text-align: center; }
-    col.c-pos, col.c-num { width: 4.5%; }
-    col.c-driver { width: 17%; }
-    col.c-car { width: 15%; }
-    col.c-class { width: 8%; }
-    col.c-time { width: 8.5%; }
-    @media print {
-      @page { size: A4 landscape; margin: 8mm; }
-      html, body { margin: 0; background: #fff; }
-      .page { width: auto; }
-    }
-    @media screen {
-      body { padding: 12px; background: #e8e8e8; }
-      .page {
-        background: #fff;
-        padding: 8mm;
-        box-shadow: 0 1px 6px rgba(0,0,0,.2);
-      }
-    }
-    </style></head><body><div class="page"><div class="header">${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(event.name)}</h1><h2>Final Results — ordered by Best Time</h2></div><table><colgroup><col class="c-pos" /><col class="c-num" /><col class="c-driver" /><col class="c-car" /><col class="c-class" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" /></colgroup><thead><tr>${columns.map((c) => `<th class="c">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+  function printRallyFinalResultsPdf() {
+    if (event.type !== "rally") return;
+    const tableRows = buildRallyFinalPdfRows(
+      entriesForFinalResults,
+      stagesSorted,
+    );
+    const html = buildLandscapeResultsPdfHtml({
+      eventName: event.name,
+      subtitle: "Final Results",
+      modeLabel: "Overall classification",
+      columns: [
+        "Pos",
+        "#",
+        "Driver",
+        "Co-driver",
+        "Car",
+        "Class",
+        "Time",
+        "Penalty",
+        "Total time",
+        "Diff",
+      ],
+      tableRows,
+      logoUrl: normalizedLogoUrl,
+    });
     printHtmlDocument(html, { landscape: true });
   }
 
@@ -1774,7 +1903,17 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                   Print PDF
                 </button>
               </div>
-            ) : null}
+            ) : (
+              <div>
+                <button
+                  type="button"
+                  onClick={printRallyFinalResultsPdf}
+                  className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                >
+                  Print PDF
+                </button>
+              </div>
+            )}
             <div className="ewrc-panel overflow-hidden p-0">
               <div className="overflow-x-auto">
                 {event.type === "speed" ? (
@@ -1996,6 +2135,12 @@ function LegResultsTable({
     penaltyMs: number;
   };
 
+  const allLegStagesCompleted = useMemo(
+    () =>
+      stagesInLeg.length > 0 &&
+      stagesInLeg.every((st) => st.progressStatus === "completed"),
+    [stagesInLeg],
+  );
   const sorted = useMemo((): LegRow[] => {
     const legOrders = new Set(stagesInLeg.map((s) => s.order));
     const rows: LegRow[] = entries.map((row) => {
@@ -2003,6 +2148,10 @@ function LegResultsTable({
       const cells = stagesInLeg.map((st) => {
         const values = getRallyStageTimingValues(row, st.id);
         const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+        // Only reveal stage times once that stage is officially completed.
+        if (st.progressStatus !== "completed") {
+          return { outcome: null, durationMs: null };
+        }
         jumpPenaltyMs += pen;
         const cell = classifyRallyStageLegCell(
           values.startValue,
@@ -2019,22 +2168,29 @@ function LegResultsTable({
       const allTimedNoOutcome =
         cells.length > 0 &&
         cells.every((c) => c.outcome == null && c.durationMs != null);
-      const eventPenaltyMs = getRallyEventPenaltyItems(row)
-        .filter((item) => legOrders.has(item.afterStageOrder))
-        .reduce(
-          (sum, item) => sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
-          0,
-        );
+      const eventPenaltyMs = allLegStagesCompleted
+        ? getRallyEventPenaltyItems(row)
+            .filter((item) => legOrders.has(item.afterStageOrder))
+            .reduce(
+              (sum, item) => sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
+              0,
+            )
+        : 0;
       // Cells already include jump-start penalties; add event penalties tied
       // to After SS landmarks that fall inside this leg.
-      const stageTimeMs = allTimedNoOutcome
-        ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
-        : null;
+      const stageTimeMs =
+        allLegStagesCompleted && allTimedNoOutcome
+          ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+          : null;
       const totalMs =
         stageTimeMs != null ? stageTimeMs + eventPenaltyMs : null;
       const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
       const sortTier: 0 | 1 | 2 =
-        rowOutcome != null ? 2 : totalMs != null ? 0 : 1;
+        allLegStagesCompleted && rowOutcome != null
+          ? 2
+          : totalMs != null
+            ? 0
+            : 1;
       return { row, cells, sortTier, rowOutcome, totalMs, penaltyMs };
     });
 
@@ -2056,7 +2212,7 @@ function LegResultsTable({
       }
       return a.row.startNumber - b.row.startNumber;
     });
-  }, [entries, stagesInLeg]);
+  }, [allLegStagesCompleted, entries, stagesInLeg]);
 
   const leaderTotal = sorted.find((x) => x.sortTier === 0)?.totalMs ?? null;
 
@@ -2120,7 +2276,7 @@ function LegResultsTable({
               </td>
               <td className="align-middle">
                 <span className="flex w-full justify-center text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {rowOutcome != null
+                  {allLegStagesCompleted && rowOutcome != null
                     ? rowOutcome
                     : formatDurationMs(totalMs)}
                 </span>
