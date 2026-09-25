@@ -209,6 +209,136 @@ function printHtmlDocument(
   doc.close();
 }
 
+/** Shared landscape one-page results sheet used by rally/speed Print PDF. */
+function buildLandscapeResultsPdfHtml(input: {
+  eventName: string;
+  subtitle: string;
+  modeLabel: string;
+  columns: string[];
+  tableRows: string[][];
+  logoUrl: string;
+}): string {
+  const n = Math.max(input.tableRows.length, 1);
+  const fontPt =
+    n <= 12 ? 10 : n <= 18 ? 9 : n <= 24 ? 8 : n <= 32 ? 7 : n <= 40 ? 6.5 : 6;
+  const padY = n <= 18 ? 1.6 : n <= 28 ? 1.1 : n <= 36 ? 0.7 : 0.45;
+  const padX = n <= 24 ? 2.2 : 1.4;
+  const logoH = n <= 20 ? 48 : n <= 30 ? 36 : 28;
+  const titlePt = n <= 24 ? 15 : 12;
+  const subPt = n <= 24 ? 10 : 8;
+
+  const bodyHtml =
+    input.tableRows.length > 0
+      ? input.tableRows
+          .map(
+            (r) =>
+              `<tr>${r
+                .map((v, colIdx) => {
+                  const center =
+                    v === "-" ||
+                    v === "—" ||
+                    colIdx <= 1 ||
+                    colIdx >= input.columns.length - 2;
+                  return `<td${center ? ' class="c"' : ""}>${escapeHtml(v)}</td>`;
+                })
+                .join("")}</tr>`,
+          )
+          .join("")
+      : `<tr><td colspan="${input.columns.length}" class="c" style="color:#666;">No timed entries.</td></tr>`;
+
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(input.subtitle)}</title><style>
+  @page { size: A4 landscape; margin: 8mm; }
+  html, body { margin: 0; padding: 0; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; }
+  .page { width: 281mm; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
+  .header { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0 0 5mm; text-align: center; }
+  .logo { max-height: ${logoH}px; width: auto; }
+  h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.15; }
+  h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
+  h3 { margin: 1px 0 0; font-size: ${Math.max(7, subPt - 1)}pt; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; }
+  table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${fontPt}pt; }
+  th, td { border: 1px solid #bdbdbd; padding: ${padY}mm ${padX}mm; vertical-align: middle; line-height: 1.2; word-wrap: break-word; }
+  th { background: #f0f0f0; text-align: center; font-weight: 700; }
+  td.c, th.c { text-align: center; }
+  @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; } }
+  @media screen { body { padding: 12px; background: #e8e8e8; } .page { background: #fff; padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); } }
+  </style></head><body><div class="page"><div class="header">${input.logoUrl ? `<img src="${escapeHtml(input.logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(input.subtitle)}</h2><h3>${escapeHtml(input.modeLabel)}</h3></div><table><thead><tr>${input.columns.map((c) => `<th class="c">${escapeHtml(c)}</th>`).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+}
+
+function buildRallyStagePdfRows(entries: Entry[], stageId: string): string[][] {
+  const ranked = [...entries]
+    .map((row) => {
+      const { startValue, finishValue } = getRallyStageTimingValues(row, stageId);
+      const cell = classifyRallyStageLegCell(startValue, finishValue);
+      return { row, cell };
+    })
+    .filter(
+      (x) => x.cell.durationMs != null || x.cell.outcome != null,
+    )
+    .sort((a, b) => {
+      const aTimed = a.cell.durationMs != null;
+      const bTimed = b.cell.durationMs != null;
+      if (aTimed && !bTimed) return -1;
+      if (!aTimed && bTimed) return 1;
+      if (aTimed && bTimed && a.cell.durationMs !== b.cell.durationMs) {
+        return (a.cell.durationMs ?? 0) - (b.cell.durationMs ?? 0);
+      }
+      return a.row.startNumber - b.row.startNumber;
+    });
+  const leaderMs = ranked.find((x) => x.cell.durationMs != null)?.cell.durationMs ?? null;
+  return ranked.map(({ row, cell }, i) => [
+    String(i + 1),
+    String(row.startNumber),
+    row.driver || "—",
+    row.coDriver || "—",
+    row.car || "—",
+    row.class || "—",
+    cell.outcome != null
+      ? cell.outcome
+      : formatDurationMs(cell.durationMs),
+    cell.durationMs == null ||
+    leaderMs == null ||
+    cell.durationMs <= leaderMs
+      ? "—"
+      : `+${formatDiffDurationMs(cell.durationMs - leaderMs)}`,
+  ]);
+}
+
+function buildRallyOverallPdfRows(entries: Entry[], stages: Stage[]): string[][] {
+  const ranked = [...entries]
+    .map((row) => {
+      const stageTimes = stages.map((st) => {
+        const { startValue, finishValue } = getRallyStageTimingValues(row, st.id);
+        return classifyRallyStageLegCell(startValue, finishValue);
+      });
+      const allTimed =
+        stages.length > 0 &&
+        stageTimes.every((c) => c.outcome == null && c.durationMs != null);
+      const totalMs = allTimed
+        ? stageTimes.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+        : null;
+      return { row, totalMs };
+    })
+    .filter((x): x is { row: Entry; totalMs: number } => x.totalMs != null)
+    .sort((a, b) =>
+      a.totalMs !== b.totalMs
+        ? a.totalMs - b.totalMs
+        : a.row.startNumber - b.row.startNumber,
+    );
+  const leaderTotal = ranked[0]?.totalMs ?? null;
+  return ranked.map(({ row, totalMs }, i) => [
+    String(i + 1),
+    String(row.startNumber),
+    row.driver || "—",
+    row.coDriver || "—",
+    row.car || "—",
+    row.class || "—",
+    formatDurationMs(totalMs),
+    leaderTotal == null || totalMs <= leaderTotal
+      ? "—"
+      : `+${formatDiffDurationMs(totalMs - leaderTotal)}`,
+  ]);
+}
+
 /** Detect changes when polling `/api/rally/config` (stage dots, entry times, etc.). */
 function fingerprintEventForLivePoll(e: RallyEvent): string {
   return JSON.stringify({
@@ -523,21 +653,73 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     );
   }, [entriesForStageResults, selectedStripItem]);
 
-  function printStageResultsPdf() {
+  function printStageResultsPdf(mode: "auto" | "ss" | "overall" = "auto") {
     if (!selectedStripItem) return;
 
     const rows = [...entriesForStageResults];
+    const logoUrl = normalizedLogoUrl;
+
+    // Rally stage: SS results and/or After SSx overall.
+    if (event.type === "rally" && selectedStripItem.type === "stage") {
+      const stage = selectedStripItem.stage;
+      const wantOverall =
+        mode === "overall" ||
+        (mode === "auto" && effectiveRallyStageView === "afterStage");
+      if (wantOverall && cumulativeStagesUpToSelected.length >= 2) {
+        const tableRows = buildRallyOverallPdfRows(
+          rows,
+          cumulativeStagesUpToSelected,
+        );
+        const html = buildLandscapeResultsPdfHtml({
+          eventName: event.name,
+          subtitle: `After SS${stage.order} Results (SS1–SS${stage.order})`,
+          modeLabel: "Overall classification",
+          columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Diff"],
+          tableRows,
+          logoUrl,
+        });
+        printHtmlDocument(html, { landscape: true });
+        return;
+      }
+      const tableRows = buildRallyStagePdfRows(rows, stage.id);
+      const html = buildLandscapeResultsPdfHtml({
+        eventName: event.name,
+        subtitle: `SS${stage.order} ${stage.name}`,
+        modeLabel: "Stage results",
+        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Time", "Diff"],
+        tableRows,
+        logoUrl,
+      });
+      printHtmlDocument(html, { landscape: true });
+      return;
+    }
+
+    // Rally leg end: cumulative for stages in the leg.
+    if (event.type === "rally" && selectedStripItem.type === "legEnd") {
+      const stagesInLeg = selectedStripItem.stagesInLeg;
+      const tableRows = buildRallyOverallPdfRows(rows, stagesInLeg);
+      const html = buildLandscapeResultsPdfHtml({
+        eventName: event.name,
+        subtitle: `LEG${selectedStripItem.leg} Results`,
+        modeLabel: "Leg classification",
+        columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Total", "Diff"],
+        tableRows,
+        logoUrl,
+      });
+      printHtmlDocument(html, { landscape: true });
+      return;
+    }
+
     const headingStage =
       selectedStripItem.type === "stage"
         ? `SS${selectedStripItem.stage.order} ${selectedStripItem.stage.name}`
         : selectedStripItem.type === "legEnd"
           ? `LEG${selectedStripItem.leg} Results`
           : selectedStripItem.label;
-    const headingMode = "Results";
-    const logoUrl = normalizedLogoUrl;
 
     let columns: string[] = [];
     let tableRows: string[][] = [];
+    let modeLabel = "Results";
 
     if (event.type === "speed" && selectedStripItem.type === "speedRun" && selectedStripItem.runId === "best") {
       const ranked = buildSpeedFinalRanking(rows);
@@ -554,6 +736,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         "Best Time",
         "Diff",
       ];
+      modeLabel = "Best Time classification";
       tableRows = ranked.map(
         ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
           String(i + 1),
@@ -583,32 +766,19 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             : `+${formatDiffDurationMs(bestFromRuns - leaderBest)}`,
         ],
       );
-    } else if (selectedStripItem.type === "legEnd") {
-      columns = [
-        "Pos",
-        "#",
-        "Driver",
-        "Co-driver",
-        "Car",
-        "Class",
-        "Time",
-        "Penalty",
-        "Total time",
-        "Diff",
-      ];
-      tableRows = rows.map((r, i) => [
-        String(i + 1),
-        String(r.startNumber),
-        r.driver || "—",
-        r.coDriver || "—",
-        r.car || "—",
-        r.class || "—",
-        "—",
-        "—",
-        "—",
-        "—",
-      ]);
-    } else if (
+      const html = buildLandscapeResultsPdfHtml({
+        eventName: event.name,
+        subtitle: headingStage,
+        modeLabel,
+        columns,
+        tableRows,
+        logoUrl,
+      });
+      printHtmlDocument(html, { landscape: true });
+      return;
+    }
+
+    if (
       event.type === "speed" &&
       selectedStripItem.type === "speedRun" &&
       selectedStripItem.runId !== "best"
@@ -619,13 +789,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         .filter((x): x is { r: Entry; t: number } => x.t != null)
         .sort((a, b) => (a.t !== b.t ? a.t - b.t : a.r.startNumber - b.r.startNumber));
       const leader = ranked[0]?.t ?? null;
-      columns = [
-        "Pos",
-        "#",
-        "Driver",
-        "Time",
-        "Diff",
-      ];
+      columns = ["Pos", "#", "Driver", "Time", "Diff"];
+      modeLabel = "Run results";
       tableRows = ranked.map(({ r, t }, i) => [
         String(i + 1),
         String(r.startNumber),
@@ -633,89 +798,37 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         formatDurationMs(t),
         leader == null || t <= leader ? "—" : `+${formatDiffDurationMs(t - leader)}`,
       ]);
-    } else {
-      columns = ["Pos", "#", "Driver", "Co-driver", "Car", "Time", "Diff"];
-      tableRows = rows.map((r, i) => [
-        String(i + 1),
-        String(r.startNumber),
-        r.driver || "—",
-        r.coDriver || "—",
-        r.car || "—",
-        "—",
-        "—",
-      ]);
+      const html = buildLandscapeResultsPdfHtml({
+        eventName: event.name,
+        subtitle: headingStage,
+        modeLabel,
+        columns,
+        tableRows,
+        logoUrl,
+      });
+      printHtmlDocument(html, { landscape: true });
+      return;
     }
 
-    const headHtml = columns.map((c) => `<th>${escapeHtml(c)}</th>`).join("");
-    const bodyHtml =
-      tableRows.length > 0
-        ? tableRows
-            .map(
-              (r) =>
-                `<tr>${r
-                  .map((v) =>
-                    `<td${v === "-" || v === "—" ? ' style="text-align:center;"' : ""}>${escapeHtml(v)}</td>`,
-                  )
-                  .join("")}</tr>`,
-            )
-            .join("")
-        : `<tr><td colspan="${columns.length}" style="text-align:center;color:#666;">No crews in this class.</td></tr>`;
-
-    const html = `<!doctype html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(event.name)} - ${escapeHtml(headingStage)}</title>
-  <style>
-    body { font-family: Arial, Helvetica, sans-serif; margin: 24px; color: #111; }
-    .page { max-width: 1120px; margin: 0 auto; }
-    .header { display: flex; flex-direction: column; align-items: center; gap: 8px; margin-bottom: 14px; text-align: center; }
-    .logo-wrap { min-height: 10px; display: flex; justify-content: center; }
-    .logo { max-height: 72px; width: auto; }
-    .header-text { text-align: center; }
-    h1 { margin: 0; font-size: 22px; line-height: 1.15; }
-    h2 { margin: 6px 0 0; font-size: 16px; font-weight: 600; line-height: 1.2; }
-    h3 { margin: 4px 0 0; font-size: 13px; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; margin: 0 auto; }
-    th, td { border: 1px solid #cfcfcf; padding: 6px 8px; vertical-align: middle; }
-    th { background: #f4f4f4; text-align: left; }
-    @media print {
-      @page { size: A4 ${
-        event.type === "speed" &&
-        selectedStripItem.type === "speedRun" &&
-        selectedStripItem.runId === "best"
-          ? "landscape"
-          : "portrait"
-      }; margin: 10mm; }
-    }
-  </style>
-</head>
-<body>
-  <div class="page">
-    <div class="header">
-      <div class="logo-wrap">
-        ${logoUrl ? `<img src="${escapeHtml(logoUrl)}" alt="Rally logo" class="logo" />` : ""}
-      </div>
-      <div class="header-text">
-        <h1>${escapeHtml(event.name)}</h1>
-        <h2>${escapeHtml(headingStage)}</h2>
-        <h3>${escapeHtml(headingMode)}</h3>
-      </div>
-    </div>
-    <table>
-      <thead><tr>${headHtml}</tr></thead>
-      <tbody>${bodyHtml}</tbody>
-    </table>
-  </div>
-</body>
-</html>`;
-
-    printHtmlDocument(html, {
-      landscape:
-        event.type === "speed" &&
-        selectedStripItem.type === "speedRun" &&
-        selectedStripItem.runId === "best",
+    columns = ["Pos", "#", "Driver", "Co-driver", "Car", "Time", "Diff"];
+    tableRows = rows.map((r, i) => [
+      String(i + 1),
+      String(r.startNumber),
+      r.driver || "—",
+      r.coDriver || "—",
+      r.car || "—",
+      "—",
+      "—",
+    ]);
+    const html = buildLandscapeResultsPdfHtml({
+      eventName: event.name,
+      subtitle: headingStage,
+      modeLabel,
+      columns,
+      tableRows,
+      logoUrl,
     });
+    printHtmlDocument(html, { landscape: true });
   }
 
   function printSpeedFinalResultsPdf() {
@@ -1061,13 +1174,34 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                 filteredCount={entriesForStageResults.length}
                 totalCount={entriesSorted.length}
                 rightAction={
-                  <button
-                    type="button"
-                    onClick={printStageResultsPdf}
-                    className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
-                  >
-                    Print PDF
-                  </button>
+                  event.type === "rally" &&
+                  selectedStripItem?.type === "stage" &&
+                  showAfterStageTab ? (
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => printStageResultsPdf("ss")}
+                        className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-3 py-2 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                      >
+                        Print SS PDF
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => printStageResultsPdf("overall")}
+                        className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-3 py-2 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                      >
+                        Print Overall PDF
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => printStageResultsPdf("auto")}
+                      className="rounded-lg border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-4 py-2.5 text-sm font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                    >
+                      Print PDF
+                    </button>
+                  )
                 }
               />
               {resultsStripItems.length === 0 ? (
