@@ -864,14 +864,18 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     /**
      * Live updates via JSON polling — not `router.refresh()`, which re-runs the whole RSC tree
      * and often leaves the dev overlay stuck on “Rendering…”.
+     * Live results tab polls every 2s so admin timing changes show up quickly;
+     * other tabs use 5s to keep traffic lighter.
      */
     let cancelled = false;
-    const intervalMs = 8000;
+    let inFlight = false;
+    const intervalMs = tab === "stage-results" ? 2000 : 5000;
     const poll = async () => {
-      if (cancelled) return;
+      if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
         return;
       }
+      inFlight = true;
       try {
         const res = await fetch("/api/rally/config", {
           cache: "no-store",
@@ -896,15 +900,22 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         setEvent(match);
       } catch {
         /* offline / transient */
+      } finally {
+        inFlight = false;
       }
     };
     const id = window.setInterval(poll, intervalMs);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void poll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     void poll();
     return () => {
       cancelled = true;
       window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [initialEvent.id]);
+  }, [initialEvent.id, tab]);
 
   useEffect(() => {
     if (!tabs.some((t) => t.id === tab)) {
