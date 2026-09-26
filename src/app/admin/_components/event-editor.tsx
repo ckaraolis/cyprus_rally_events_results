@@ -19,6 +19,7 @@ import type {
   StageProgressStatus,
 } from "@/lib/rally/types";
 import { computeStartingOrderTime } from "@/lib/rally/leg-starting-order";
+import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
 import { AdminCountrySelect } from "./admin-country-select";
 import {
   exportRallyAfterSsExcel,
@@ -523,6 +524,21 @@ export function EventEditor({ event: initial }: Props) {
       if (removedInlineDocs > 0) setMeta(payload);
       setFlash(`Starting order for LEG ${startingOrderLeg} saved.`);
       router.refresh();
+    });
+  }
+
+  function printCurrentStartingOrder() {
+    if (startingOrderRows.length === 0) {
+      setFlash("Load starters before printing the starting order.");
+      return;
+    }
+    printStartingOrderPdf({
+      eventName: meta.name || "Event",
+      leg: startingOrderLeg,
+      logoUrl: meta.logoUrl ?? "",
+      rows: startingOrderRows,
+      firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
+      intervalMinutes: currentLegStartingOrder.intervalMinutes,
     });
   }
 
@@ -2602,6 +2618,14 @@ export function EventEditor({ event: initial }: Props) {
               </button>
               <button
                 type="button"
+                onClick={printCurrentStartingOrder}
+                disabled={startingOrderRows.length === 0}
+                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-600"
+              >
+                Print PDF
+              </button>
+              <button
+                type="button"
                 onClick={saveStartingOrder}
                 disabled={pending}
                 className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
@@ -2701,8 +2725,8 @@ export function EventEditor({ event: initial }: Props) {
                   <th className="pb-2 pr-2">Driver</th>
                   <th className="pb-2 pr-2">Co-driver</th>
                   <th className="pb-2 pr-2">Car</th>
-                  <th className="pb-2 pr-2">Class</th>
-                  <th className="pb-2 pr-2">Start time</th>
+                  <th className="pb-2 pr-2 text-center">Class</th>
+                  <th className="pb-2 pr-2 text-center">Start time</th>
                   <th className="pb-2 w-36" />
                 </tr>
               </thead>
@@ -2721,8 +2745,8 @@ export function EventEditor({ event: initial }: Props) {
                     <td className="py-2 pr-2">{row.driver || "—"}</td>
                     <td className="py-2 pr-2">{row.coDriver || "—"}</td>
                     <td className="py-2 pr-2">{row.car || "—"}</td>
-                    <td className="py-2 pr-2">{row.class || "—"}</td>
-                    <td className="py-2 pr-2 font-mono font-medium text-zinc-900 dark:text-zinc-100">
+                    <td className="py-2 pr-2 text-center">{row.class || "—"}</td>
+                    <td className="py-2 pr-2 text-center font-mono font-medium text-zinc-900 dark:text-zinc-100">
                       {computeStartingOrderTime(
                         currentLegStartingOrder.firstCarStartTime,
                         currentLegStartingOrder.intervalMinutes,
