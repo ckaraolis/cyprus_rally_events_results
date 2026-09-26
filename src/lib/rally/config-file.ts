@@ -16,6 +16,7 @@ import type {
   Stage,
   StageProgressStatus,
 } from "./types";
+import { normalizeLegStartingOrders } from "./leg-starting-order";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
@@ -253,6 +254,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
       rallyStageAlgeConfig: {},
       officialNoticeCustomCategories: [],
       officialNoticeDocuments: [],
+      legStartingOrders: {},
       stages: [],
       entries: [],
     };
@@ -307,6 +309,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
     officialNoticeDocuments: normalizeOfficialNoticeDocuments(
       o.officialNoticeDocuments,
     ),
+    legStartingOrders: normalizeLegStartingOrders(o.legStartingOrders),
     stages,
     entries,
   };

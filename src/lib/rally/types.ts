@@ -60,6 +60,18 @@ export interface Entry {
   coDriverCountryCode: string;
 }
 
+/** Admin starting order for one rally leg (TC / ceremonial start list). */
+export interface LegStartingOrder {
+  /** 1-based leg number. */
+  leg: number;
+  /** Entry IDs in start order (index 0 = first car away). */
+  entryIds: string[];
+  /** HH:mm start time for the first car. */
+  firstCarStartTime: string;
+  /** Minutes between consecutive cars. */
+  intervalMinutes: number;
+}
+
 export interface RallyEvent {
   id: string;
   name: string;
@@ -97,6 +109,8 @@ export interface RallyEvent {
     fileName: string;
     uploadedAt: string;
   }>;
+  /** Per-leg starting order + first-car time / interval (admin Starting Order tab). */
+  legStartingOrders: Record<string, LegStartingOrder>;
   stages: Stage[];
   entries: Entry[];
 }

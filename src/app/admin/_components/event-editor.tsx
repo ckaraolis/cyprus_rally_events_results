@@ -12,11 +12,13 @@ import type {
   Entry,
   EventStatus,
   EventType,
+  LegStartingOrder,
   RallyEvent,
   SpeedRunImportStatus,
   Stage,
   StageProgressStatus,
 } from "@/lib/rally/types";
+import { computeStartingOrderTime } from "@/lib/rally/leg-starting-order";
 import { AdminCountrySelect } from "./admin-country-select";
 import {
   exportRallyAfterSsExcel,
@@ -30,6 +32,7 @@ type AdminTab =
   | "details"
   | "stages"
   | "entries"
+  | "starting-order"
   | "timing"
   | "penalties"
   | "notice-board";
@@ -290,6 +293,7 @@ export function EventEditor({ event: initial }: Props) {
     ),
     officialNoticeCustomCategories: initial.officialNoticeCustomCategories ?? [],
     officialNoticeDocuments: initial.officialNoticeDocuments ?? [],
+    legStartingOrders: initial.legStartingOrders ?? {},
   });
   const [stages, setStages] = useState<Stage[]>(() =>
     [...initial.stages]
@@ -341,6 +345,7 @@ export function EventEditor({ event: initial }: Props) {
   const liveSaveInFlightRef = useRef(false);
   const liveSaveQueuedRef = useRef<Entry[] | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("details");
+  const [startingOrderLeg, setStartingOrderLeg] = useState<number>(1);
   const [timingRun, setTimingRun] = useState<SpeedTimingRun>("trial");
   const timingRunRef = useRef<SpeedTimingRun>("trial");
   const [rallyTimingStageId, setRallyTimingStageId] = useState<string>("");
@@ -390,6 +395,136 @@ export function EventEditor({ event: initial }: Props) {
     () => [...stages].sort((a, b) => a.order - b.order),
     [stages],
   );
+
+  const availableLegs = useMemo(() => {
+    const set = new Set<number>();
+    for (const s of stages) {
+      if (typeof s.leg === "number" && s.leg >= 1) set.add(Math.floor(s.leg));
+    }
+    const list = [...set].sort((a, b) => a - b);
+    return list.length > 0 ? list : [1];
+  }, [stages]);
+
+  useEffect(() => {
+    if (!availableLegs.includes(startingOrderLeg)) {
+      setStartingOrderLeg(availableLegs[0] ?? 1);
+    }
+  }, [availableLegs, startingOrderLeg]);
+
+  const currentLegStartingOrder: LegStartingOrder = useMemo(() => {
+    const key = String(startingOrderLeg);
+    const existing = meta.legStartingOrders[key];
+    if (existing) return existing;
+    return {
+      leg: startingOrderLeg,
+      entryIds: [],
+      firstCarStartTime: "09:00",
+      intervalMinutes: 1,
+    };
+  }, [meta.legStartingOrders, startingOrderLeg]);
+
+  const startingOrderRows = useMemo(() => {
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    return currentLegStartingOrder.entryIds
+      .map((id) => byId.get(id))
+      .filter((e): e is Entry => Boolean(e));
+  }, [currentLegStartingOrder.entryIds, entries]);
+
+  function patchCurrentLegStartingOrder(
+    patch: Partial<LegStartingOrder> | ((prev: LegStartingOrder) => LegStartingOrder),
+  ) {
+    setMeta((m) => {
+      const key = String(startingOrderLeg);
+      const prev = m.legStartingOrders[key] ?? {
+        leg: startingOrderLeg,
+        entryIds: [],
+        firstCarStartTime: "09:00",
+        intervalMinutes: 1,
+      };
+      const next =
+        typeof patch === "function" ? patch(prev) : { ...prev, ...patch, leg: startingOrderLeg };
+      return {
+        ...m,
+        legStartingOrders: {
+          ...m.legStartingOrders,
+          [key]: next,
+        },
+      };
+    });
+  }
+
+  function loadStartingOrderFromEntries() {
+    const starters = entries
+      .filter((e) => e.start !== false)
+      .slice()
+      .sort((a, b) => a.startNumber - b.startNumber);
+    if (starters.length === 0) {
+      setFlash("No entries with Start = Yes. Mark crews as Start Yes in Entries first.");
+      return;
+    }
+    const starterIds = new Set(starters.map((e) => e.id));
+    const prevIds = currentLegStartingOrder.entryIds.filter((id) => starterIds.has(id));
+    const prevSet = new Set(prevIds);
+    const appended = starters.filter((e) => !prevSet.has(e.id)).map((e) => e.id);
+    const entryIds = [...prevIds, ...appended];
+    patchCurrentLegStartingOrder({
+      entryIds,
+      firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
+      intervalMinutes:
+        currentLegStartingOrder.intervalMinutes >= 0
+          ? currentLegStartingOrder.intervalMinutes
+          : 1,
+    });
+    setFlash(
+      `Loaded ${entryIds.length} starter(s) for LEG ${startingOrderLeg} (Start = Yes).`,
+    );
+  }
+
+  function moveStartingOrderEntry(entryId: string, direction: -1 | 1) {
+    patchCurrentLegStartingOrder((prev) => {
+      const ids = [...prev.entryIds];
+      const idx = ids.indexOf(entryId);
+      if (idx < 0) return prev;
+      const nextIdx = idx + direction;
+      if (nextIdx < 0 || nextIdx >= ids.length) return prev;
+      const tmp = ids[idx]!;
+      ids[idx] = ids[nextIdx]!;
+      ids[nextIdx] = tmp;
+      return { ...prev, entryIds: ids };
+    });
+  }
+
+  function setStartingOrderFirst(entryId: string) {
+    patchCurrentLegStartingOrder((prev) => {
+      if (!prev.entryIds.includes(entryId)) return prev;
+      return {
+        ...prev,
+        entryIds: [entryId, ...prev.entryIds.filter((id) => id !== entryId)],
+      };
+    });
+  }
+
+  function removeFromStartingOrder(entryId: string) {
+    patchCurrentLegStartingOrder((prev) => ({
+      ...prev,
+      entryIds: prev.entryIds.filter((id) => id !== entryId),
+    }));
+  }
+
+  function saveStartingOrder() {
+    setFlash(null);
+    startTransition(async () => {
+      const { payload, removedInlineDocs } = sanitizeMetaForSave(meta);
+      const res = await updateEventMeta(eventId, payload);
+      if (!res.ok) {
+        setFlash(`Save failed: ${res.error}`);
+        return;
+      }
+      if (removedInlineDocs > 0) setMeta(payload);
+      setFlash(`Starting order for LEG ${startingOrderLeg} saved.`);
+      router.refresh();
+    });
+  }
 
   useEffect(() => {
     if (meta.type !== "rally") return;
@@ -1630,6 +1765,19 @@ export function EventEditor({ event: initial }: Props) {
           >
             Entries
           </button>
+          {meta.type === "rally" ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("starting-order")}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                activeTab === "starting-order"
+                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+              }`}
+            >
+              Starting order
+            </button>
+          ) : null}
           {meta.type === "speed" || meta.type === "rally" ? (
             <button
               type="button"
@@ -2435,6 +2583,201 @@ export function EventEditor({ event: initial }: Props) {
             <p className="mt-4 text-sm text-zinc-500">No entries yet.</p>
           ) : null}
         </div>
+        </section>
+      ) : null}
+
+      {meta.type === "rally" && activeTab === "starting-order" ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+              Starting order
+            </h2>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={loadStartingOrderFromEntries}
+                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm dark:border-zinc-600"
+              >
+                Load from entries
+              </button>
+              <button
+                type="button"
+                onClick={saveStartingOrder}
+                disabled={pending}
+                className="inline-flex items-center gap-2 rounded-lg bg-zinc-900 px-3 py-1.5 text-sm font-medium text-white disabled:opacity-60 dark:bg-zinc-100 dark:text-zinc-900"
+              >
+                {pending ? (
+                  <span
+                    className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-white border-r-transparent dark:border-zinc-900 dark:border-r-transparent"
+                    aria-hidden
+                  />
+                ) : null}
+                {pending ? "Saving…" : "Save starting order"}
+              </button>
+            </div>
+          </div>
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
+            Load crews with <strong>Start = Yes</strong>, choose who goes first, then set the
+            first-car time and interval. Start times update automatically for the list.
+          </p>
+
+          <div className="mt-4 flex flex-wrap gap-2">
+            {availableLegs.map((leg) => (
+              <button
+                key={leg}
+                type="button"
+                onClick={() => setStartingOrderLeg(leg)}
+                className={`rounded-lg px-3 py-1.5 text-sm ${
+                  startingOrderLeg === leg
+                    ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                    : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                }`}
+              >
+                LEG {leg}
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Who starts first
+              <select
+                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                value={startingOrderRows[0]?.id ?? ""}
+                disabled={startingOrderRows.length === 0}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (id) setStartingOrderFirst(id);
+                }}
+              >
+                {startingOrderRows.length === 0 ? (
+                  <option value="">Load entries first</option>
+                ) : (
+                  startingOrderRows.map((row) => (
+                    <option key={row.id} value={row.id}>
+                      #{row.startNumber} {row.driver || "—"}
+                      {row.coDriver ? ` / ${row.coDriver}` : ""}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              First car start time
+              <input
+                type="time"
+                step={60}
+                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                value={currentLegStartingOrder.firstCarStartTime || "09:00"}
+                onChange={(e) =>
+                  patchCurrentLegStartingOrder({ firstCarStartTime: e.target.value })
+                }
+              />
+            </label>
+            <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Interval (minutes)
+              <input
+                type="number"
+                min={0}
+                step={1}
+                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                value={currentLegStartingOrder.intervalMinutes}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  patchCurrentLegStartingOrder({
+                    intervalMinutes: Number.isFinite(n) && n >= 0 ? n : 0,
+                  });
+                }}
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[720px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
+                  <th className="pb-2 pr-2">Pos</th>
+                  <th className="pb-2 pr-2">#</th>
+                  <th className="pb-2 pr-2">Driver</th>
+                  <th className="pb-2 pr-2">Co-driver</th>
+                  <th className="pb-2 pr-2">Car</th>
+                  <th className="pb-2 pr-2">Class</th>
+                  <th className="pb-2 pr-2">Start time</th>
+                  <th className="pb-2 w-36" />
+                </tr>
+              </thead>
+              <tbody>
+                {startingOrderRows.map((row, index) => (
+                  <tr
+                    key={row.id}
+                    className="border-b border-zinc-100 dark:border-zinc-800"
+                  >
+                    <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
+                      {index + 1}
+                    </td>
+                    <td className="py-2 pr-2 font-mono text-zinc-900 dark:text-zinc-100">
+                      {row.startNumber}
+                    </td>
+                    <td className="py-2 pr-2">{row.driver || "—"}</td>
+                    <td className="py-2 pr-2">{row.coDriver || "—"}</td>
+                    <td className="py-2 pr-2">{row.car || "—"}</td>
+                    <td className="py-2 pr-2">{row.class || "—"}</td>
+                    <td className="py-2 pr-2 font-mono font-medium text-zinc-900 dark:text-zinc-100">
+                      {computeStartingOrderTime(
+                        currentLegStartingOrder.firstCarStartTime,
+                        currentLegStartingOrder.intervalMinutes,
+                        index,
+                      )}
+                    </td>
+                    <td className="py-2">
+                      <div className="flex flex-wrap gap-1">
+                        <button
+                          type="button"
+                          className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-600"
+                          onClick={() => moveStartingOrderEntry(row.id, -1)}
+                          disabled={index === 0}
+                          title="Move up"
+                        >
+                          ↑
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-600"
+                          onClick={() => moveStartingOrderEntry(row.id, 1)}
+                          disabled={index === startingOrderRows.length - 1}
+                          title="Move down"
+                        >
+                          ↓
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-zinc-300 px-2 py-0.5 text-xs dark:border-zinc-600"
+                          onClick={() => setStartingOrderFirst(row.id)}
+                          disabled={index === 0}
+                          title="Start first"
+                        >
+                          1st
+                        </button>
+                        <button
+                          type="button"
+                          className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-700 dark:border-red-900 dark:text-red-400"
+                          onClick={() => removeFromStartingOrder(row.id)}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {startingOrderRows.length === 0 ? (
+              <p className="mt-4 text-sm text-zinc-500">
+                No starting order yet. Click <strong>Load from entries</strong> to import
+                crews with Start = Yes.
+              </p>
+            ) : null}
+          </div>
         </section>
       ) : null}
 

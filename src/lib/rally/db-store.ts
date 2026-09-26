@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { normalizeLegStartingOrders } from "./leg-starting-order";
 import type { Entry, RallyEvent, RallySiteConfig, SiteSettings, Stage } from "./types";
 
 function toSite(row: {
@@ -145,6 +146,12 @@ function toEvent(row: {
         ];
       }),
   );
+  const legStartingOrdersRaw =
+    algeMap.__legStartingOrders &&
+    typeof algeMap.__legStartingOrders === "object" &&
+    !Array.isArray(algeMap.__legStartingOrders)
+      ? algeMap.__legStartingOrders
+      : {};
   return {
     id: row.id,
     name: row.name,
@@ -170,12 +177,18 @@ function toEvent(row: {
     },
     algeTriggerCountByKey: Object.fromEntries(
       Object.entries(algeMap)
-        .filter(([k]) => k !== "__officialNoticeData" && k !== "__rallyStageAlgeConfig")
+        .filter(
+          ([k]) =>
+            k !== "__officialNoticeData" &&
+            k !== "__rallyStageAlgeConfig" &&
+            k !== "__legStartingOrders",
+        )
         .map(([k, v]) => [k, typeof v === "number" ? v : 0]),
     ),
     rallyStageAlgeConfig,
     officialNoticeCustomCategories: customCategories,
     officialNoticeDocuments: officialDocs,
+    legStartingOrders: normalizeLegStartingOrders(legStartingOrdersRaw),
     stages: row.stages.map(toStage),
     entries: row.entries.map(toEntry),
   };
@@ -251,7 +264,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
               customCategories: e.officialNoticeCustomCategories,
               documents: e.officialNoticeDocuments,
             },
-          },
+            __legStartingOrders: e.legStartingOrders ?? {},
+          } as unknown as Prisma.InputJsonValue,
         },
         update: {
           name: e.name,
@@ -271,7 +285,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
               customCategories: e.officialNoticeCustomCategories,
               documents: e.officialNoticeDocuments,
             },
-          },
+            __legStartingOrders: e.legStartingOrders ?? {},
+          } as unknown as Prisma.InputJsonValue,
         },
       });
 
