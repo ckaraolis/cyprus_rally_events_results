@@ -1,5 +1,6 @@
 import type { Entry, Stage } from "@/lib/rally/types";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
+import { resolveStartingOrderTime } from "@/lib/rally/leg-starting-order";
 
 type TimingBlob = Record<
   string,
@@ -450,6 +451,36 @@ export async function exportRallyFinalExcel(
       "Total time",
       "Diff",
     ],
+    rows,
+  });
+}
+
+export async function exportRallyStartingOrderExcel(input: {
+  eventName: string;
+  leg: number;
+  rows: Entry[];
+  firstCarStartTime: string;
+  intervalMinutes: number;
+  startTimeByEntryId?: Record<string, string>;
+}): Promise<void> {
+  const order = {
+    firstCarStartTime: input.firstCarStartTime,
+    intervalMinutes: input.intervalMinutes,
+    startTimeByEntryId: input.startTimeByEntryId ?? {},
+  };
+  const rows = input.rows.map((row, i) => [
+    String(i + 1),
+    String(row.startNumber),
+    row.driver || "—",
+    row.coDriver || "—",
+    row.car || "—",
+    row.class || "—",
+    resolveStartingOrderTime(order, row.id, i),
+  ]);
+  await downloadExcelTable({
+    fileName: `${input.eventName}-LEG${input.leg}-Starting-Order`,
+    sheetName: `LEG${input.leg} Start`,
+    columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Start time"],
     rows,
   });
 }

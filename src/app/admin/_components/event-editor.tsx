@@ -29,6 +29,7 @@ import {
   exportRallyFinalExcel,
   exportRallyLegExcel,
   exportRallyStageExcel,
+  exportRallyStartingOrderExcel,
 } from "@/lib/rally/admin-excel-export";
 
 type Props = { event: RallyEvent };
@@ -584,6 +585,21 @@ export function EventEditor({ event: initial }: Props) {
       eventName: meta.name || "Event",
       leg: startingOrderLeg,
       logoUrl: meta.logoUrl ?? "",
+      rows: startingOrderRows,
+      firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
+      intervalMinutes: currentLegStartingOrder.intervalMinutes,
+      startTimeByEntryId: currentLegStartingOrder.startTimeByEntryId ?? {},
+    });
+  }
+
+  function exportCurrentStartingOrderExcel() {
+    if (startingOrderRows.length === 0) {
+      setFlash("Load starters before exporting the starting order.");
+      return;
+    }
+    void exportRallyStartingOrderExcel({
+      eventName: meta.name || "Event",
+      leg: startingOrderLeg,
       rows: startingOrderRows,
       firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
       intervalMinutes: currentLegStartingOrder.intervalMinutes,
@@ -2872,6 +2888,14 @@ export function EventEditor({ event: initial }: Props) {
                 className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-600"
               >
                 Print PDF
+              </button>
+              <button
+                type="button"
+                onClick={exportCurrentStartingOrderExcel}
+                disabled={startingOrderRows.length === 0}
+                className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm disabled:opacity-50 dark:border-zinc-600"
+              >
+                Export Excel
               </button>
               <button
                 type="button"
