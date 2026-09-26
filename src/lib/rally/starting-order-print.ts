@@ -1,5 +1,5 @@
 import type { Entry } from "./types";
-import { computeStartingOrderTime } from "./leg-starting-order";
+import { resolveStartingOrderTime } from "./leg-starting-order";
 
 function escapeHtml(raw: string): string {
   return raw
@@ -104,6 +104,7 @@ export function buildStartingOrderPdfHtml(input: {
   rows: Entry[];
   firstCarStartTime: string;
   intervalMinutes: number;
+  startTimeByEntryId?: Record<string, string>;
 }): string {
   const n = Math.max(input.rows.length, 1);
   const fontPt = Math.max(
@@ -128,6 +129,11 @@ export function buildStartingOrderPdfHtml(input: {
   // Center Pos/#, Class, and Start time (index 5+).
   const centerFrom = 5;
   const shouldCenter = (colIdx: number) => colIdx <= 1 || colIdx >= centerFrom;
+  const orderForResolve = {
+    firstCarStartTime: input.firstCarStartTime,
+    intervalMinutes: input.intervalMinutes,
+    startTimeByEntryId: input.startTimeByEntryId ?? {},
+  };
 
   const tableRows =
     input.rows.length > 0
@@ -138,11 +144,7 @@ export function buildStartingOrderPdfHtml(input: {
           row.coDriver || "—",
           row.car || "—",
           row.class || "—",
-          computeStartingOrderTime(
-            input.firstCarStartTime,
-            input.intervalMinutes,
-            i,
-          ),
+          resolveStartingOrderTime(orderForResolve, row.id, i),
         ])
       : [];
 
@@ -207,6 +209,7 @@ export function printStartingOrderPdf(input: {
   rows: Entry[];
   firstCarStartTime: string;
   intervalMinutes: number;
+  startTimeByEntryId?: Record<string, string>;
 }): void {
   const html = buildStartingOrderPdfHtml(input);
   printHtmlDocument(html, { landscape: true });

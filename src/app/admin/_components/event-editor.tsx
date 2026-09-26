@@ -18,7 +18,10 @@ import type {
   Stage,
   StageProgressStatus,
 } from "@/lib/rally/types";
-import { computeStartingOrderTime } from "@/lib/rally/leg-starting-order";
+import {
+  emptyLegStartingOrder,
+  resolveStartingOrderTime,
+} from "@/lib/rally/leg-starting-order";
 import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
 import { AdminCountrySelect } from "./admin-country-select";
 import {
@@ -415,13 +418,14 @@ export function EventEditor({ event: initial }: Props) {
   const currentLegStartingOrder: LegStartingOrder = useMemo(() => {
     const key = String(startingOrderLeg);
     const existing = meta.legStartingOrders[key];
-    if (existing) return existing;
-    return {
-      leg: startingOrderLeg,
-      entryIds: [],
-      firstCarStartTime: "09:00",
-      intervalMinutes: 1,
-    };
+    if (existing) {
+      return {
+        ...emptyLegStartingOrder(startingOrderLeg),
+        ...existing,
+        startTimeByEntryId: existing.startTimeByEntryId ?? {},
+      };
+    }
+    return emptyLegStartingOrder(startingOrderLeg);
   }, [meta.legStartingOrders, startingOrderLeg]);
 
   const startingOrderRows = useMemo(() => {
@@ -436,11 +440,10 @@ export function EventEditor({ event: initial }: Props) {
   ) {
     setMeta((m) => {
       const key = String(startingOrderLeg);
-      const prev = m.legStartingOrders[key] ?? {
-        leg: startingOrderLeg,
-        entryIds: [],
-        firstCarStartTime: "09:00",
-        intervalMinutes: 1,
+      const prev = {
+        ...emptyLegStartingOrder(startingOrderLeg),
+        ...(m.legStartingOrders[key] ?? {}),
+        startTimeByEntryId: m.legStartingOrders[key]?.startTimeByEntryId ?? {},
       };
       const next =
         typeof patch === "function" ? patch(prev) : { ...prev, ...patch, leg: startingOrderLeg };
@@ -468,6 +471,13 @@ export function EventEditor({ event: initial }: Props) {
     const prevSet = new Set(prevIds);
     const appended = starters.filter((e) => !prevSet.has(e.id)).map((e) => e.id);
     const entryIds = [...prevIds, ...appended];
+    const idSet = new Set(entryIds);
+    const startTimeByEntryId: Record<string, string> = {};
+    for (const [id, clock] of Object.entries(
+      currentLegStartingOrder.startTimeByEntryId ?? {},
+    )) {
+      if (idSet.has(id)) startTimeByEntryId[id] = clock;
+    }
     patchCurrentLegStartingOrder({
       entryIds,
       firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
@@ -475,6 +485,7 @@ export function EventEditor({ event: initial }: Props) {
         currentLegStartingOrder.intervalMinutes >= 0
           ? currentLegStartingOrder.intervalMinutes
           : 1,
+      startTimeByEntryId,
     });
     setFlash(
       `Loaded ${entryIds.length} starter(s) for LEG ${startingOrderLeg} (Start = Yes).`,
@@ -506,10 +517,36 @@ export function EventEditor({ event: initial }: Props) {
   }
 
   function removeFromStartingOrder(entryId: string) {
-    patchCurrentLegStartingOrder((prev) => ({
-      ...prev,
-      entryIds: prev.entryIds.filter((id) => id !== entryId),
-    }));
+    patchCurrentLegStartingOrder((prev) => {
+      const startTimeByEntryId = { ...(prev.startTimeByEntryId ?? {}) };
+      delete startTimeByEntryId[entryId];
+      return {
+        ...prev,
+        entryIds: prev.entryIds.filter((id) => id !== entryId),
+        startTimeByEntryId,
+      };
+    });
+  }
+
+  function setManualStartingOrderTime(entryId: string, value: string) {
+    patchCurrentLegStartingOrder((prev) => {
+      const startTimeByEntryId = { ...(prev.startTimeByEntryId ?? {}) };
+      const trimmed = value.trim();
+      if (!trimmed) {
+        delete startTimeByEntryId[entryId];
+      } else {
+        startTimeByEntryId[entryId] = trimmed;
+      }
+      return { ...prev, startTimeByEntryId };
+    });
+  }
+
+  /** Re-apply first-car + interval to every row (clears manual time overrides). */
+  function applyIntervalToAllStartTimes() {
+    patchCurrentLegStartingOrder({ startTimeByEntryId: {} });
+    setFlash(
+      `Applied ${currentLegStartingOrder.intervalMinutes} min interval from ${currentLegStartingOrder.firstCarStartTime || "09:00"} to all cars.`,
+    );
   }
 
   function saveStartingOrder() {
@@ -539,6 +576,7 @@ export function EventEditor({ event: initial }: Props) {
       rows: startingOrderRows,
       firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
       intervalMinutes: currentLegStartingOrder.intervalMinutes,
+      startTimeByEntryId: currentLegStartingOrder.startTimeByEntryId ?? {},
     });
   }
 
@@ -2641,8 +2679,9 @@ export function EventEditor({ event: initial }: Props) {
             </div>
           </div>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Load crews with <strong>Start = Yes</strong>, choose who goes first, then set the
-            first-car time and interval. Start times update automatically for the list.
+            Load crews with <strong>Start = Yes</strong>, set first-car time and interval, then
+            edit any car&apos;s start time manually when the gap differs (e.g. 4 min). Use{" "}
+            <strong>Apply interval to all</strong> to clear manual edits and recalculate.
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
@@ -2700,19 +2739,30 @@ export function EventEditor({ event: initial }: Props) {
             </label>
             <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
               Interval (minutes)
-              <input
-                type="number"
-                min={0}
-                step={1}
-                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                value={currentLegStartingOrder.intervalMinutes}
-                onChange={(e) => {
-                  const n = Number.parseInt(e.target.value, 10);
-                  patchCurrentLegStartingOrder({
-                    intervalMinutes: Number.isFinite(n) && n >= 0 ? n : 0,
-                  });
-                }}
-              />
+              <div className="mt-1 flex gap-2">
+                <input
+                  type="number"
+                  min={0}
+                  step={1}
+                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  value={currentLegStartingOrder.intervalMinutes}
+                  onChange={(e) => {
+                    const n = Number.parseInt(e.target.value, 10);
+                    patchCurrentLegStartingOrder({
+                      intervalMinutes: Number.isFinite(n) && n >= 0 ? n : 0,
+                    });
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={applyIntervalToAllStartTimes}
+                  disabled={startingOrderRows.length === 0}
+                  className="shrink-0 rounded-lg border border-zinc-300 px-3 py-2 text-xs font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  title="Recalculate every start time from first car + interval (clears manual edits)"
+                >
+                  Apply to all
+                </button>
+              </div>
             </label>
           </div>
 
@@ -2746,12 +2796,25 @@ export function EventEditor({ event: initial }: Props) {
                     <td className="py-2 pr-2">{row.coDriver || "—"}</td>
                     <td className="py-2 pr-2">{row.car || "—"}</td>
                     <td className="py-2 pr-2 text-center">{row.class || "—"}</td>
-                    <td className="py-2 pr-2 text-center font-mono font-medium text-zinc-900 dark:text-zinc-100">
-                      {computeStartingOrderTime(
-                        currentLegStartingOrder.firstCarStartTime,
-                        currentLegStartingOrder.intervalMinutes,
-                        index,
-                      )}
+                    <td className="py-2 pr-2 text-center">
+                      <input
+                        type="time"
+                        step={60}
+                        className="mx-auto w-[7.5rem] rounded border border-zinc-200 px-2 py-1 text-center font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                        value={resolveStartingOrderTime(
+                          currentLegStartingOrder,
+                          row.id,
+                          index,
+                        )}
+                        onChange={(e) =>
+                          setManualStartingOrderTime(row.id, e.target.value)
+                        }
+                        title={
+                          currentLegStartingOrder.startTimeByEntryId?.[row.id]
+                            ? "Manual start time (saved with starting order)"
+                            : "Auto from first car + interval — edit to override"
+                        }
+                      />
                     </td>
                     <td className="py-2">
                       <div className="flex flex-wrap gap-1">

@@ -70,6 +70,11 @@ export interface LegStartingOrder {
   firstCarStartTime: string;
   /** Minutes between consecutive cars. */
   intervalMinutes: number;
+  /**
+   * Optional per-entry HH:mm overrides after auto-fill.
+   * Missing entry id → use firstCarStartTime + index × intervalMinutes.
+   */
+  startTimeByEntryId: Record<string, string>;
 }
 
 export interface RallyEvent {

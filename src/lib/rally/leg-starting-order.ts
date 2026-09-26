@@ -10,6 +10,18 @@ function normalizeClockHm(v: unknown): string {
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
 }
 
+function normalizeStartTimeByEntryId(raw: unknown): Record<string, string> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Record<string, string> = {};
+  for (const [entryId, value] of Object.entries(raw as Record<string, unknown>)) {
+    const id = entryId.trim();
+    if (!id) continue;
+    const clock = normalizeClockHm(value);
+    if (clock) out[id] = clock;
+  }
+  return out;
+}
+
 export function normalizeLegStartingOrders(
   raw: unknown,
 ): RallyEvent["legStartingOrders"] {
@@ -40,11 +52,19 @@ export function normalizeLegStartingOrders(
       Number.isFinite(intervalRaw) && intervalRaw >= 0
         ? Math.floor(intervalRaw)
         : 1;
+    const startTimeByEntryId = normalizeStartTimeByEntryId(o.startTimeByEntryId);
+    // Drop overrides for entries no longer in the order list.
+    const idSet = new Set(entryIds);
+    const trimmedOverrides: Record<string, string> = {};
+    for (const [id, clock] of Object.entries(startTimeByEntryId)) {
+      if (idSet.has(id)) trimmedOverrides[id] = clock;
+    }
     const order: LegStartingOrder = {
       leg,
       entryIds,
       firstCarStartTime: normalizeClockHm(o.firstCarStartTime) || "09:00",
       intervalMinutes,
+      startTimeByEntryId: trimmedOverrides,
     };
     out[String(leg)] = order;
   }
@@ -67,4 +87,35 @@ export function computeStartingOrderTime(
   const hh = Math.floor(total / 60);
   const mm = total % 60;
   return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+}
+
+/** Prefer manual override for the entry; otherwise auto from first + interval. */
+export function resolveStartingOrderTime(
+  order: Pick<
+    LegStartingOrder,
+    "firstCarStartTime" | "intervalMinutes" | "startTimeByEntryId"
+  >,
+  entryId: string,
+  index: number,
+): string {
+  const override = order.startTimeByEntryId?.[entryId]?.trim();
+  if (override) {
+    const clock = normalizeClockHm(override);
+    if (clock) return clock;
+  }
+  return computeStartingOrderTime(
+    order.firstCarStartTime,
+    order.intervalMinutes,
+    index,
+  );
+}
+
+export function emptyLegStartingOrder(leg: number): LegStartingOrder {
+  return {
+    leg,
+    entryIds: [],
+    firstCarStartTime: "09:00",
+    intervalMinutes: 1,
+    startTimeByEntryId: {},
+  };
 }
