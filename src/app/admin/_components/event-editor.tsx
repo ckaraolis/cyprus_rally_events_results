@@ -277,6 +277,7 @@ export function EventEditor({ event: initial }: Props) {
     NOTICE_BOARD_DEFAULT_CATEGORIES[0],
   );
   const [newDocUrl, setNewDocUrl] = useState("");
+  const [editingNoticeDocId, setEditingNoticeDocId] = useState<string | null>(null);
   const [newCustomCategory, setNewCustomCategory] = useState("");
   const [meta, setMeta] = useState({
     name: initial.name,
@@ -1392,6 +1393,15 @@ export function EventEditor({ event: initial }: Props) {
   function addOfficialNoticeCustomCategory() {
     const value = newCustomCategory.trim();
     if (!value) return;
+    if (
+      NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
+        value as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
+      )
+    ) {
+      setFlash(`"${value}" is a built-in category and cannot be added again.`);
+      setNewCustomCategory("");
+      return;
+    }
     setMeta((m) => {
       if (m.officialNoticeCustomCategories.includes(value)) return m;
       return {
@@ -1403,31 +1413,120 @@ export function EventEditor({ event: initial }: Props) {
     setNewCustomCategory("");
   }
 
+  /** Remove a custom (or document-only) category; built-in categories stay. Docs move to Other. */
+  function removeOfficialNoticeCategory(category: string) {
+    const value = category.trim();
+    if (!value) return;
+    if (
+      NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
+        value as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
+      )
+    ) {
+      setFlash(`"${value}" is a built-in category and cannot be deleted.`);
+      return;
+    }
+    const usedCount = meta.officialNoticeDocuments.filter(
+      (d) => (d.category ?? "").trim() === value,
+    ).length;
+    if (
+      usedCount > 0 &&
+      !window.confirm(
+        `"${value}" is used by ${usedCount} document(s). Delete it and move those to "Other"?`,
+      )
+    ) {
+      return;
+    }
+    setMeta((m) => ({
+      ...m,
+      officialNoticeCustomCategories: m.officialNoticeCustomCategories.filter(
+        (c) => c !== value,
+      ),
+      officialNoticeDocuments: m.officialNoticeDocuments.map((doc) =>
+        (doc.category ?? "").trim() === value ? { ...doc, category: "Other" } : doc,
+      ),
+    }));
+    if (newDocCategory === value) {
+      setNewDocCategory("Other");
+    }
+    setFlash(
+      usedCount > 0
+        ? `Category "${value}" deleted. ${usedCount} document(s) moved to Other. Save notice board to publish.`
+        : `Category "${value}" deleted. Save notice board to publish.`,
+    );
+  }
+
+  const removableNoticeCategories = useMemo(() => {
+    const defaults = new Set<string>(NOTICE_BOARD_DEFAULT_CATEGORIES);
+    return officialNoticeCategoryOptions.filter((c) => !defaults.has(c));
+  }, [officialNoticeCategoryOptions]);
+
   function removeOfficialNoticeDocument(id: string) {
     setMeta((m) => ({
       ...m,
       officialNoticeDocuments: m.officialNoticeDocuments.filter((x) => x.id !== id),
     }));
+    if (editingNoticeDocId === id) {
+      cancelEditOfficialNoticeDocument();
+    }
+  }
+
+  function cancelEditOfficialNoticeDocument() {
+    setEditingNoticeDocId(null);
+    setNewDocTitle("");
+    setNewDocUrl("");
+    setNewDocCategory(NOTICE_BOARD_DEFAULT_CATEGORIES[0]);
+    setDocUploadError(null);
+  }
+
+  function startEditOfficialNoticeDocument(
+    doc: RallyEvent["officialNoticeDocuments"][number],
+  ) {
+    setDocUploadError(null);
+    setEditingNoticeDocId(doc.id);
+    setNewDocTitle(doc.title);
+    setNewDocCategory(doc.category || NOTICE_BOARD_DEFAULT_CATEGORIES[0]);
+    setNewDocUrl(doc.url);
+  }
+
+  function parseOfficialNoticeHttpUrl(rawUrl: string): URL | null {
+    const trimmed = rawUrl.trim();
+    if (!trimmed) {
+      setDocUploadError("Enter a document URL.");
+      return null;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      setDocUploadError("Invalid URL. Use full link, e.g. https://example.com/doc.pdf");
+      return null;
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      setDocUploadError("Only http/https links are allowed.");
+      return null;
+    }
+    return parsed;
+  }
+
+  function ensureNoticeCategoryInMeta(
+    m: typeof meta,
+    category: string,
+  ): string[] {
+    if (
+      NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
+        category as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
+      ) ||
+      m.officialNoticeCustomCategories.includes(category)
+    ) {
+      return m.officialNoticeCustomCategories;
+    }
+    return [...m.officialNoticeCustomCategories, category];
   }
 
   function addOfficialNoticeLink() {
     setDocUploadError(null);
-    const rawUrl = newDocUrl.trim();
-    if (!rawUrl) {
-      setDocUploadError("Enter a document URL.");
-      return;
-    }
-    let parsed: URL;
-    try {
-      parsed = new URL(rawUrl);
-    } catch {
-      setDocUploadError("Invalid URL. Use full link, e.g. https://example.com/doc.pdf");
-      return;
-    }
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-      setDocUploadError("Only http/https links are allowed.");
-      return;
-    }
+    const parsed = parseOfficialNoticeHttpUrl(newDocUrl);
+    if (!parsed) return;
     const title = newDocTitle.trim() || parsed.pathname.split("/").pop() || parsed.hostname;
     const category = newDocCategory.trim() || "Other";
     const fromPath = decodeURIComponent(parsed.pathname.split("/").pop() || "").trim();
@@ -1445,20 +1544,48 @@ export function EventEditor({ event: initial }: Props) {
         },
         ...m.officialNoticeDocuments,
       ],
-      officialNoticeCustomCategories:
-        NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
-          category as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
-        ) || m.officialNoticeCustomCategories.includes(category)
-          ? m.officialNoticeCustomCategories
-          : [...m.officialNoticeCustomCategories, category],
+      officialNoticeCustomCategories: ensureNoticeCategoryInMeta(m, category),
     }));
     setNewDocTitle("");
     setNewDocUrl("");
     setFlash("Link added. Click Save notice board to publish it.");
   }
 
+  function updateOfficialNoticeLink() {
+    setDocUploadError(null);
+    if (!editingNoticeDocId) return;
+    const parsed = parseOfficialNoticeHttpUrl(newDocUrl);
+    if (!parsed) return;
+    const title = newDocTitle.trim() || parsed.pathname.split("/").pop() || parsed.hostname;
+    const category = newDocCategory.trim() || "Other";
+    const fromPath = decodeURIComponent(parsed.pathname.split("/").pop() || "").trim();
+    const fileName = fromPath || parsed.hostname;
+    const id = editingNoticeDocId;
+    setMeta((m) => ({
+      ...m,
+      officialNoticeDocuments: m.officialNoticeDocuments.map((doc) =>
+        doc.id === id
+          ? {
+              ...doc,
+              title,
+              category,
+              url: parsed.toString(),
+              fileName,
+            }
+          : doc,
+      ),
+      officialNoticeCustomCategories: ensureNoticeCategoryInMeta(m, category),
+    }));
+    cancelEditOfficialNoticeDocument();
+    setFlash("Entry updated. Click Save notice board to publish it.");
+  }
+
   async function uploadOfficialNoticeDocument(file: File) {
     setDocUploadError(null);
+    if (editingNoticeDocId) {
+      setDocUploadError("Finish or cancel the current edit before uploading a new file.");
+      return;
+    }
     const title = newDocTitle.trim() || file.name;
     const category = newDocCategory.trim() || "Other";
     setDocUploading(true);
@@ -1489,15 +1616,10 @@ export function EventEditor({ event: initial }: Props) {
           },
           ...m.officialNoticeDocuments,
         ],
-        officialNoticeCustomCategories:
-          NOTICE_BOARD_DEFAULT_CATEGORIES.includes(
-            category as (typeof NOTICE_BOARD_DEFAULT_CATEGORIES)[number],
-          ) || m.officialNoticeCustomCategories.includes(category)
-            ? m.officialNoticeCustomCategories
-            : [...m.officialNoticeCustomCategories, category],
+        officialNoticeCustomCategories: ensureNoticeCategoryInMeta(m, category),
       }));
       setNewDocTitle("");
-      setFlash("Document uploaded. Click Save details to publish it.");
+      setFlash("Document uploaded. Click Save notice board to publish it.");
     } catch {
       setDocUploadError("Document upload failed. Please try again.");
     } finally {
@@ -2060,8 +2182,9 @@ export function EventEditor({ event: initial }: Props) {
             </button>
           </div>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Upload PDF/DOC files like Supplementary Regulations, Bulletins, Steward
-            Decisions, and custom categories.
+            Upload PDF/DOC files or add links (Supplementary Regulations, Bulletins,
+            Steward Decisions, custom categories). Use <strong>Edit</strong> on a row to
+            change title, category, or link.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto]">
@@ -2079,6 +2202,36 @@ export function EventEditor({ event: initial }: Props) {
               Add category
             </button>
           </div>
+          {removableNoticeCategories.length > 0 ? (
+            <div className="mt-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Custom categories
+              </p>
+              <ul className="mt-2 flex flex-wrap gap-2">
+                {removableNoticeCategories.map((cat) => (
+                  <li
+                    key={cat}
+                    className="inline-flex items-center gap-1 rounded-full border border-zinc-300 bg-zinc-50 pl-3 pr-1 py-1 text-sm text-zinc-800 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100"
+                  >
+                    <span>{cat}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeOfficialNoticeCategory(cat)}
+                      className="rounded-full px-2 py-0.5 text-xs text-red-700 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-950/50"
+                      title={`Delete category "${cat}"`}
+                      aria-label={`Delete category ${cat}`}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                Built-in categories cannot be deleted. Deleting a custom category moves its
+                documents to Other.
+              </p>
+            </div>
+          ) : null}
 
           <div className="mt-5 grid gap-3 md:grid-cols-4">
             <input
@@ -2101,16 +2254,23 @@ export function EventEditor({ event: initial }: Props) {
             <input
               type="url"
               className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              placeholder="https://... (optional link)"
+              placeholder="https://... (link)"
               value={newDocUrl}
               onChange={(e) => setNewDocUrl(e.target.value)}
             />
-            <label className="inline-flex cursor-pointer items-center justify-center rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800">
+            <label
+              className={`inline-flex items-center justify-center rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium dark:border-zinc-600 ${
+                editingNoticeDocId
+                  ? "cursor-not-allowed opacity-50"
+                  : "cursor-pointer hover:bg-zinc-50 dark:hover:bg-zinc-800"
+              }`}
+            >
               Upload document
               <input
                 type="file"
                 accept=".pdf,.doc,.docx,.txt,.rtf,.odt,.xlsx,.xls"
                 className="sr-only"
+                disabled={Boolean(editingNoticeDocId)}
                 onChange={(e) => {
                   const file = e.target.files?.[0];
                   if (file) void uploadOfficialNoticeDocument(file);
@@ -2119,15 +2279,40 @@ export function EventEditor({ event: initial }: Props) {
               />
             </label>
           </div>
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={addOfficialNoticeLink}
-              className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
-            >
-              Add link
-            </button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {editingNoticeDocId ? (
+              <>
+                <button
+                  type="button"
+                  onClick={updateOfficialNoticeLink}
+                  className="rounded-lg bg-red-700 px-3 py-2 text-sm font-medium text-white hover:bg-red-800 dark:bg-red-600"
+                >
+                  Update entry
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelEditOfficialNoticeDocument}
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+                >
+                  Cancel edit
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={addOfficialNoticeLink}
+                className="rounded-lg border border-zinc-300 px-3 py-2 text-sm dark:border-zinc-600"
+              >
+                Add link
+              </button>
+            )}
           </div>
+          {editingNoticeDocId ? (
+            <p className="mt-2 text-xs text-amber-700 dark:text-amber-400">
+              Editing an existing entry — change the link (and title/category if needed),
+              then click Update entry.
+            </p>
+          ) : null}
           {docUploading ? (
             <p className="mt-2 text-xs text-zinc-500">Uploading document…</p>
           ) : null}
@@ -2141,7 +2326,7 @@ export function EventEditor({ event: initial }: Props) {
                 <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
                   <th className="pb-2 pr-2">Category</th>
                   <th className="pb-2 pr-2">Title</th>
-                  <th className="pb-2 pr-2">File</th>
+                  <th className="pb-2 pr-2">File / Link</th>
                   <th className="pb-2 pr-2">Uploaded</th>
                   <th className="pb-2 text-right">Actions</th>
                 </tr>
@@ -2160,7 +2345,14 @@ export function EventEditor({ event: initial }: Props) {
                   [...meta.officialNoticeDocuments]
                     .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt))
                     .map((doc) => (
-                      <tr key={doc.id} className="border-b border-zinc-100 dark:border-zinc-800">
+                      <tr
+                        key={doc.id}
+                        className={`border-b border-zinc-100 dark:border-zinc-800 ${
+                          editingNoticeDocId === doc.id
+                            ? "bg-amber-50/80 dark:bg-amber-950/30"
+                            : ""
+                        }`}
+                      >
                         <td className="py-2 pr-2">{doc.category}</td>
                         <td className="py-2 pr-2">{doc.title}</td>
                         <td className="py-2 pr-2">
@@ -2168,22 +2360,31 @@ export function EventEditor({ event: initial }: Props) {
                             href={doc.url}
                             target="_blank"
                             rel="noreferrer"
-                            className="text-blue-700 hover:underline dark:text-blue-400"
+                            className="break-all text-blue-700 hover:underline dark:text-blue-400"
                           >
-                            {doc.fileName}
+                            {doc.fileName || doc.url}
                           </a>
                         </td>
                         <td className="py-2 pr-2 text-xs text-zinc-500 dark:text-zinc-400">
                           {new Date(doc.uploadedAt).toLocaleString()}
                         </td>
                         <td className="py-2 text-right">
-                          <button
-                            type="button"
-                            onClick={() => removeOfficialNoticeDocument(doc.id)}
-                            className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
-                          >
-                            Remove
-                          </button>
+                          <div className="flex flex-wrap justify-end gap-1">
+                            <button
+                              type="button"
+                              onClick={() => startEditOfficialNoticeDocument(doc)}
+                              className="rounded border border-zinc-300 px-2 py-1 text-xs text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                            >
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => removeOfficialNoticeDocument(doc.id)}
+                              className="rounded border border-red-300 px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
+                            >
+                              Remove
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     ))
