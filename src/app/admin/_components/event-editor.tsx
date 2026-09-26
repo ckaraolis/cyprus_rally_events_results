@@ -401,6 +401,16 @@ export function EventEditor({ event: initial }: Props) {
     [stages],
   );
 
+  /** Timing control only lists crews marked Start = Yes. */
+  const timingEntries = useMemo(
+    () =>
+      entries
+        .filter((e) => e.start !== false)
+        .slice()
+        .sort((a, b) => a.startNumber - b.startNumber),
+    [entries],
+  );
+
   const availableLegs = useMemo(() => {
     const set = new Set<number>();
     for (const s of stages) {
@@ -3152,13 +3162,14 @@ export function EventEditor({ event: initial }: Props) {
             )}
           </div>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-            Enter start and finish times for each driver on{" "}
+            Enter start and finish times for each starter on{" "}
             {meta.type === "speed"
               ? timingRunLabel
               : selectedRallyTimingStage
                 ? `SS ${selectedRallyTimingStage.order} (${selectedRallyTimingStage.name})`
                 : "the selected stage"}
-            This tab stores all timing values with entries.
+            . Only crews with <strong>Start = Yes</strong> appear here. Timing values are
+            stored with entries.
           </p>
           {meta.type === "speed" ? (
             <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
@@ -3488,10 +3499,12 @@ export function EventEditor({ event: initial }: Props) {
             </div>
           </>
           <div className="mt-4 space-y-3 sm:hidden">
-            {entries
-              .slice()
-              .sort((a, b) => a.startNumber - b.startNumber)
-              .map((row) => {
+            {timingEntries.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-zinc-300 p-4 text-center text-sm text-zinc-500 dark:border-zinc-600 dark:text-zinc-400">
+                No starters to time. Mark crews as Start = Yes in Entries.
+              </p>
+            ) : null}
+            {timingEntries.map((row) => {
                 const { startValue, finishValue, penaltyValue } =
                   getTimingValuesForEntry(row);
                 const outcome = parseTimingOutcome(startValue, finishValue);
@@ -3644,10 +3657,17 @@ export function EventEditor({ event: initial }: Props) {
                 </tr>
               </thead>
               <tbody>
-                {entries
-                  .slice()
-                  .sort((a, b) => a.startNumber - b.startNumber)
-                  .map((row) => {
+                {timingEntries.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={meta.type === "rally" ? 7 : 6}
+                      className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
+                    >
+                      No starters to time. Mark crews as Start = Yes in Entries.
+                    </td>
+                  </tr>
+                ) : null}
+                {timingEntries.map((row) => {
                     const { startValue, finishValue, penaltyValue } =
                       getTimingValuesForEntry(row);
                     const outcome = parseTimingOutcome(startValue, finishValue);
