@@ -181,7 +181,8 @@ function toEvent(row: {
           ([k]) =>
             k !== "__officialNoticeData" &&
             k !== "__rallyStageAlgeConfig" &&
-            k !== "__legStartingOrders",
+            k !== "__legStartingOrders" &&
+            k !== "__configUpdatedAt",
         )
         .map(([k, v]) => [k, typeof v === "number" ? v : 0]),
     ),
@@ -206,7 +207,20 @@ export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
   if (!site && events.length === 0) return null;
   const times: number[] = [];
   if (site?.updatedAt) times.push(site.updatedAt.getTime());
-  for (const ev of events) times.push(ev.updatedAt.getTime());
+  for (const ev of events) {
+    times.push(ev.updatedAt.getTime());
+    const alge =
+      ev.algeTriggerCountByKey &&
+      typeof ev.algeTriggerCountByKey === "object" &&
+      !Array.isArray(ev.algeTriggerCountByKey)
+        ? (ev.algeTriggerCountByKey as Record<string, unknown>)
+        : {};
+    const stamped = alge.__configUpdatedAt;
+    if (typeof stamped === "string") {
+      const ms = Date.parse(stamped);
+      if (!Number.isNaN(ms)) times.push(ms);
+    }
+  }
   const newestMs = times.length > 0 ? Math.max(...times) : Date.now();
   return {
     site: site
@@ -265,6 +279,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
               documents: e.officialNoticeDocuments,
             },
             __legStartingOrders: e.legStartingOrders ?? {},
+            /** Bumps on every save so public poll `updatedAt` always moves with timing edits. */
+            __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,
         },
         update: {
@@ -286,6 +302,7 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
               documents: e.officialNoticeDocuments,
             },
             __legStartingOrders: e.legStartingOrders ?? {},
+            __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,
         },
       });

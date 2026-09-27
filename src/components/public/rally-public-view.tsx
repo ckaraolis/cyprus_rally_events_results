@@ -651,6 +651,7 @@ function buildRallyLegPdfSheet(
 /** Detect changes when polling `/api/rally/config` (stage dots, entry times, etc.). */
 function fingerprintEventForLivePoll(e: RallyEvent): string {
   return JSON.stringify({
+    status: e.status,
     stages: e.stages.map((s) => ({
       id: s.id,
       order: s.order,
@@ -664,6 +665,7 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
     entries: e.entries.map((x) => ({
       id: x.id,
       sn: x.startNumber,
+      start: x.start !== false,
       trialStartTime: x.trialStartTime,
       trialFinishTime: x.trialFinishTime,
       run1StartTime: x.run1StartTime,
@@ -678,11 +680,13 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   const [event, setEvent] = useState(initialEvent);
   const lastConfigUpdatedAtRef = useRef<string | null>(null);
   const lastEventPollSigRef = useRef<string | null>(null);
+  // Only re-seed from RSC when navigating to a different event — not on every
+  // soft refresh, which can overwrite fresher polled times with a stale payload.
   useEffect(() => {
     setEvent(initialEvent);
     lastConfigUpdatedAtRef.current = null;
     lastEventPollSigRef.current = null;
-  }, [initialEvent]);
+  }, [initialEvent.id]);
 
   const [tab, setTab] = useState<TabId>("overview");
   const [selectedStripId, setSelectedStripId] = useState<string | null>(null);
@@ -1269,12 +1273,12 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     /**
      * Live updates via JSON polling — not `router.refresh()`, which re-runs the whole RSC tree
      * and often leaves the dev overlay stuck on “Rendering…”.
-     * Live results tab polls every 2s so admin timing changes show up quickly;
-     * other tabs use 5s to keep traffic lighter.
+     * Results tabs poll every 2s; other tabs use 5s.
      */
     let cancelled = false;
     let inFlight = false;
-    const intervalMs = tab === "stage-results" ? 2000 : 5000;
+    const intervalMs =
+      tab === "stage-results" || tab === "final-results" ? 2000 : 5000;
     const poll = async () => {
       if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -1282,9 +1286,14 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       }
       inFlight = true;
       try {
-        const res = await fetch("/api/rally/config", {
+        // Cache-bust so browsers/CDNs cannot serve a stale config snapshot.
+        const res = await fetch(`/api/rally/config?_=${Date.now()}`, {
           cache: "no-store",
           credentials: "same-origin",
+          headers: {
+            Pragma: "no-cache",
+            "Cache-Control": "no-cache",
+          },
         });
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as {
