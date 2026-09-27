@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { loadRallyConfig, saveRallyConfig } from "@/lib/rally/config-file";
+import { loadRallyConfig, saveEventEntriesFast, saveRallyConfig } from "@/lib/rally/config-file";
 import { canImportAlgeTimesForRun } from "@/lib/alge/import-gate";
 import { mergeImportedSpeedTimes, type SpeedImportRunId } from "@/lib/alge/speed-import";
 import { algeAuthorizationHeader, getAlgeAccessToken } from "@/lib/alge/token";
@@ -473,10 +473,70 @@ export async function replaceStages(eventId: string, stages: Stage[]) {
 }
 
 export async function replaceEntries(eventId: string, entries: Entry[]) {
+  try {
+    await saveEventEntriesFast(eventId, entries);
+  } catch (e) {
+    return {
+      ok: false as const,
+      error: e instanceof Error ? e.message : "Failed to save entries",
+    };
+  }
+  // Public live view polls /api/rally/config — do not revalidatePath on every
+  // keystroke (that stamped the cache and made open tabs thrash for some users).
+  return { ok: true as const };
+}
+
+/** One-shot Timing Control save: meta + entries in a single config write when needed. */
+export async function saveRallyTimingControl(
+  eventId: string,
+  input: {
+    meta: {
+      name: string;
+      type: EventType;
+      dateStart: string;
+      dateEnd: string;
+      location: string;
+      status: EventStatus;
+      logoUrl: string;
+      speedRunImportStatus: {
+        trial: SpeedRunImportStatus;
+        run1: SpeedRunImportStatus;
+        run2: SpeedRunImportStatus;
+      };
+      algeTriggerCountByKey: Record<string, number>;
+      rallyStageAlgeConfig: RallyEvent["rallyStageAlgeConfig"];
+      officialNoticeCustomCategories: string[];
+      officialNoticeDocuments: RallyEvent["officialNoticeDocuments"];
+      legStartingOrders: RallyEvent["legStartingOrders"];
+    };
+    entries: Entry[];
+    /** When false, only entries are patched (fast path for typing autosave). */
+    includeMeta?: boolean;
+  },
+) {
+  const includeMeta = input.includeMeta !== false;
+  if (!includeMeta) {
+    return replaceEntries(eventId, input.entries);
+  }
   const config = await loadRallyConfig();
   const i = findEventIndex(config, eventId);
   if (i === -1) return { ok: false as const, error: "Event not found" };
-  config.events[i].entries = entries;
+  const e = config.events[i]!;
+  const m = input.meta;
+  e.name = m.name.trim() || e.name;
+  e.logoUrl = m.logoUrl.trim();
+  e.type = m.type;
+  e.dateStart = m.dateStart;
+  e.dateEnd = m.dateEnd;
+  e.location = m.location.trim();
+  e.status = m.status;
+  e.speedRunImportStatus = m.speedRunImportStatus;
+  e.algeTriggerCountByKey = m.algeTriggerCountByKey;
+  e.rallyStageAlgeConfig = m.rallyStageAlgeConfig ?? {};
+  e.officialNoticeCustomCategories = m.officialNoticeCustomCategories;
+  e.officialNoticeDocuments = m.officialNoticeDocuments;
+  e.legStartingOrders = m.legStartingOrders ?? {};
+  e.entries = input.entries;
   await saveRallyConfig(config);
   revalidatePath(`/admin/events/${eventId}`);
   revalidatePath(`/rally/${eventId}`);

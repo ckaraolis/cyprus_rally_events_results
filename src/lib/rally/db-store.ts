@@ -243,6 +243,65 @@ const SAVE_CONFIG_TX_OPTIONS = {
   timeout: 120_000,
 } as const;
 
+/**
+ * Fast path for Timing Control: replace one event's entries and bump live-poll stamp.
+ * Avoids rewriting every event/stage on each keystroke save.
+ */
+export async function patchEventEntriesInDb(
+  eventId: string,
+  entries: Entry[],
+  configUpdatedAt: string,
+): Promise<void> {
+  await prisma.$transaction(async (tx) => {
+    const existing = await tx.event.findUnique({
+      where: { id: eventId },
+      select: { algeTriggerCountByKey: true },
+    });
+    if (!existing) {
+      throw new Error(`Event not found: ${eventId}`);
+    }
+    const algeMap =
+      existing.algeTriggerCountByKey &&
+      typeof existing.algeTriggerCountByKey === "object" &&
+      !Array.isArray(existing.algeTriggerCountByKey)
+        ? { ...(existing.algeTriggerCountByKey as Record<string, unknown>) }
+        : {};
+    algeMap.__configUpdatedAt = configUpdatedAt;
+
+    await tx.event.update({
+      where: { id: eventId },
+      data: {
+        algeTriggerCountByKey: algeMap as Prisma.InputJsonValue,
+      },
+    });
+
+    await tx.entry.deleteMany({ where: { eventId } });
+    if (entries.length > 0) {
+      await tx.entry.createMany({
+        data: entries.map((en) => ({
+          id: en.id,
+          eventId,
+          startNumber: en.startNumber,
+          entrance: en.entrance,
+          start: en.start,
+          trialStartTime: en.trialStartTime,
+          trialFinishTime: en.trialFinishTime,
+          run1StartTime: en.run1StartTime,
+          run1FinishTime: en.run1FinishTime,
+          run2StartTime: en.run2StartTime,
+          run2FinishTime: en.run2FinishTime,
+          driver: en.driver,
+          coDriver: en.coDriver,
+          car: en.car,
+          class: en.class,
+          driverCountryCode: en.driverCountryCode,
+          coDriverCountryCode: en.coDriverCountryCode,
+        })),
+      });
+    }
+  }, SAVE_CONFIG_TX_OPTIONS);
+}
+
 export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
   await prisma.$transaction(async (tx) => {
     await tx.siteSettings.upsert({

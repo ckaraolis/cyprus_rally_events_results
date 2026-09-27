@@ -3,7 +3,7 @@ import path from "path";
 import { unstable_noStore as noStore } from "next/cache";
 import { defaultRallyConfig } from "./defaults";
 import { normalizeCountryCode } from "@/lib/flags";
-import { loadConfigFromDb, saveConfigToDb } from "./db-store";
+import { loadConfigFromDb, patchEventEntriesInDb, saveConfigToDb } from "./db-store";
 import type {
   Entry,
   EventStatus,
@@ -468,6 +468,41 @@ export async function saveRallyConfig(config: RallySiteConfig): Promise<void> {
         `[rally] Database save failed${code ? ` (${code})` : ""}; wrote data/rally-site.json only. Fix DATABASE_URL or resume the Supabase project; set RALLY_DB_WRITES=0 to disable DB until it is reachable.`,
         e,
       );
+    }
+  }
+  if (FILE_WRITES) {
+    await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
+    await fs.writeFile(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
+  }
+}
+
+/**
+ * Persist entry timing for one event without rewriting every event/stage.
+ * Still writes the JSON file snapshot when file writes are enabled.
+ */
+export async function saveEventEntriesFast(
+  eventId: string,
+  entries: Entry[],
+): Promise<void> {
+  const config = await loadRallyConfig();
+  const i = config.events.findIndex((e) => e.id === eventId);
+  if (i === -1) throw new Error("Event not found");
+  config.events[i] = { ...config.events[i]!, entries };
+  const next: RallySiteConfig = {
+    ...config,
+    site: sanitizeSiteBranding(config.site),
+    updatedAt: new Date().toISOString(),
+  };
+  if (DB_WRITES) {
+    try {
+      await patchEventEntriesInDb(eventId, entries, next.updatedAt);
+    } catch (e) {
+      // Fall back to full rewrite if the fast path fails (e.g. missing row).
+      console.warn(
+        "[rally] Fast entry save failed; falling back to full config save.",
+        e,
+      );
+      await saveConfigToDb(next);
     }
   }
   if (FILE_WRITES) {

@@ -6,6 +6,7 @@ import {
   deleteEvent,
   replaceEntries,
   replaceStages,
+  saveRallyTimingControl,
   updateEventMeta,
 } from "../actions";
 import type {
@@ -43,6 +44,13 @@ type AdminTab =
   | "notice-board";
 type SpeedTimingRun = "trial" | "run1" | "run2";
 type SpeedTimingOutcome = "ret" | "dnf" | null;
+type AssignStartTimeRule = {
+  id: string;
+  fromCar: string;
+  toCar: string;
+  firstTime: string;
+  intervalMin: string;
+};
 type RallyStageTimingBlob = Record<
   string,
   { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
@@ -204,9 +212,11 @@ function timingSignature(meta: {
     run1: SpeedRunImportStatus;
     run2: SpeedRunImportStatus;
   };
+  rallyStageAlgeConfig?: RallyEvent["rallyStageAlgeConfig"];
 }, entries: Entry[]): string {
   return JSON.stringify({
     speedRunImportStatus: meta.speedRunImportStatus,
+    rallyStageAlgeConfig: meta.rallyStageAlgeConfig ?? {},
     times: entries.map((e) => ({
       id: e.id,
       trialStartTime: e.trialStartTime ?? "",
@@ -357,15 +367,21 @@ export function EventEditor({ event: initial }: Props) {
   const [rallyTimingStageId, setRallyTimingStageId] = useState<string>("");
   const rallyTimingStageIdRef = useRef<string>("");
   const [showAssignStartModal, setShowAssignStartModal] = useState(false);
-  const [assignStartFromCar, setAssignStartFromCar] = useState("1");
-  const [assignStartToCar, setAssignStartToCar] = useState("1");
-  const [assignStartFirstTime, setAssignStartFirstTime] = useState("10:00");
-  const [assignStartIntervalMin, setAssignStartIntervalMin] = useState("2");
+  const [assignStartRules, setAssignStartRules] = useState<AssignStartTimeRule[]>([
+    {
+      id: "rule-1",
+      fromCar: "1",
+      toCar: "1",
+      firstTime: "10:00",
+      intervalMin: "2",
+    },
+  ]);
   const metaRef = useRef(meta);
   const entriesRef = useRef(entries);
   const stagesRef = useRef(stages);
   const timingAutosaveInFlightRef = useRef(false);
   const timingAutosaveQueuedRef = useRef(false);
+  const timingAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastTimingSavedSigRef = useRef(timingSignature(meta, entries));
   const [savedRallyStageAlgeSig, setSavedRallyStageAlgeSig] = useState<string>(() =>
     JSON.stringify(
@@ -759,12 +775,15 @@ export function EventEditor({ event: initial }: Props) {
     setFlash(null);
     startTransition(async () => {
       const { payload, removedInlineDocs } = sanitizeMetaForSave(meta);
-      const metaRes = await updateEventMeta(eventId, payload);
-      if (!metaRes.ok) {
-        setFlash(`Timing save failed: ${metaRes.error}`);
+      const res = await saveRallyTimingControl(eventId, {
+        meta: payload,
+        entries,
+        includeMeta: true,
+      });
+      if (!res.ok) {
+        setFlash(`Timing save failed: ${res.error}`);
         return;
       }
-      await replaceEntries(eventId, entries);
       if (removedInlineDocs > 0) {
         setMeta(payload);
       }
@@ -779,42 +798,75 @@ export function EventEditor({ event: initial }: Props) {
     });
   }
 
-  function queueTimingAutosave() {
+  async function flushTimingAutosave() {
     if (timingAutosaveInFlightRef.current) {
       timingAutosaveQueuedRef.current = true;
       return;
     }
     timingAutosaveInFlightRef.current = true;
-    void (async () => {
-      try {
-        do {
-          timingAutosaveQueuedRef.current = false;
-          const m = metaRef.current;
-          const en = entriesRef.current;
-          const sig = timingSignature(m, en);
-          if (sig === lastTimingSavedSigRef.current) continue;
-          const { payload } = sanitizeMetaForSave(m);
-          const metaRes = await updateEventMeta(eventId, payload);
-          if (!metaRes.ok) {
-            console.error("Timing autosave: updateEventMeta failed:", metaRes.error);
-            break;
+    try {
+      do {
+        timingAutosaveQueuedRef.current = false;
+        const m = metaRef.current;
+        const en = entriesRef.current;
+        const sig = timingSignature(m, en);
+        if (sig === lastTimingSavedSigRef.current) continue;
+        const { payload } = sanitizeMetaForSave(m);
+        const last = (() => {
+          try {
+            return JSON.parse(lastTimingSavedSigRef.current || "{}") as {
+              speedRunImportStatus?: typeof payload.speedRunImportStatus;
+              rallyStageAlgeConfig?: RallyEvent["rallyStageAlgeConfig"];
+            };
+          } catch {
+            return {};
           }
-          const entRes = await replaceEntries(eventId, en);
-          if (!entRes.ok) {
-            console.error("Timing autosave: replaceEntries failed:", entRes.error);
-            break;
-          }
-          lastTimingSavedSigRef.current = timingSignature(payload, en);
+        })();
+        const metaChanged =
+          JSON.stringify(payload.speedRunImportStatus) !==
+            JSON.stringify(last.speedRunImportStatus ?? null) ||
+          JSON.stringify(payload.rallyStageAlgeConfig ?? {}) !==
+            JSON.stringify(last.rallyStageAlgeConfig ?? {});
+
+        const res = await saveRallyTimingControl(eventId, {
+          meta: payload,
+          entries: en,
+          includeMeta: metaChanged,
+        });
+        if (!res.ok) {
+          console.error("Timing autosave failed:", res.error);
+          break;
+        }
+        lastTimingSavedSigRef.current = sig;
+        if (metaChanged) {
           setSavedRallyStageAlgeSig(JSON.stringify(payload.rallyStageAlgeConfig));
-          router.refresh();
-        } while (timingAutosaveQueuedRef.current);
-      } catch (e) {
-        console.error("Timing autosave failed:", e);
-      } finally {
-        timingAutosaveInFlightRef.current = false;
-      }
-    })();
+        }
+      } while (timingAutosaveQueuedRef.current);
+    } catch (e) {
+      console.error("Timing autosave failed:", e);
+    } finally {
+      timingAutosaveInFlightRef.current = false;
+    }
   }
+
+  function queueTimingAutosave() {
+    if (timingAutosaveTimerRef.current) {
+      clearTimeout(timingAutosaveTimerRef.current);
+    }
+    // Debounce keystrokes so we don't hit the server on every character.
+    timingAutosaveTimerRef.current = setTimeout(() => {
+      timingAutosaveTimerRef.current = null;
+      void flushTimingAutosave();
+    }, 450);
+  }
+
+  useEffect(() => {
+    return () => {
+      if (timingAutosaveTimerRef.current) {
+        clearTimeout(timingAutosaveTimerRef.current);
+      }
+    };
+  }, []);
 
   /** Keep `entriesRef` in sync with state (avoids skipped saves when the 2s poll runs before useEffect). */
   function applyTimingEntryUpdate(reducer: (prev: Entry[]) => Entry[]) {
@@ -1866,35 +1918,102 @@ export function EventEditor({ event: initial }: Props) {
       .sort((a, b) => a - b);
     const first = sorted[0] ?? 1;
     const last = sorted[sorted.length - 1] ?? first;
-    setAssignStartFromCar(String(first));
-    setAssignStartToCar(String(last));
-    setAssignStartFirstTime("10:00");
-    setAssignStartIntervalMin("2");
+    setAssignStartRules([
+      {
+        id: crypto.randomUUID(),
+        fromCar: String(first),
+        toCar: String(last),
+        firstTime: "10:00",
+        intervalMin: "2",
+      },
+    ]);
     setShowAssignStartModal(true);
   };
+
+  const addAssignStartRule = () => {
+    setAssignStartRules((prev) => {
+      const last = prev[prev.length - 1];
+      return [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          fromCar: last?.fromCar ?? "1",
+          toCar: last?.toCar ?? last?.fromCar ?? "1",
+          firstTime: last?.firstTime ?? "10:00",
+          intervalMin: last?.intervalMin ?? "2",
+        },
+      ];
+    });
+  };
+
+  const updateAssignStartRule = (
+    id: string,
+    patch: Partial<Omit<AssignStartTimeRule, "id">>,
+  ) => {
+    setAssignStartRules((prev) =>
+      prev.map((rule) => (rule.id === id ? { ...rule, ...patch } : rule)),
+    );
+  };
+
+  const removeAssignStartRule = (id: string) => {
+    setAssignStartRules((prev) =>
+      prev.length <= 1 ? prev : prev.filter((rule) => rule.id !== id),
+    );
+  };
+
   const applyBulkStartTimes = () => {
     if (meta.type !== "rally" || !selectedRallyTimingStage) return;
-    const from = Number.parseInt(assignStartFromCar, 10);
-    const to = Number.parseInt(assignStartToCar, 10);
-    const interval = Number.parseInt(assignStartIntervalMin, 10);
-    const baseMs = parseTimeToMs(assignStartFirstTime);
-    if (
-      Number.isNaN(from) ||
-      Number.isNaN(to) ||
-      Number.isNaN(interval) ||
-      baseMs == null
-    ) {
-      setFlash("Set valid car range, first start time, and interval.");
+    if (assignStartRules.length === 0) {
+      setFlash("Add at least one car range to assign.");
       return;
     }
-    const startNo = Math.min(from, to);
-    const endNo = Math.max(from, to);
-    const intervalMs = Math.max(0, interval) * 60_000;
+
+    type ParsedRule = {
+      startNo: number;
+      endNo: number;
+      baseMs: number;
+      intervalMs: number;
+    };
+    const parsedRules: ParsedRule[] = [];
+    for (let i = 0; i < assignStartRules.length; i += 1) {
+      const rule = assignStartRules[i]!;
+      const from = Number.parseInt(rule.fromCar, 10);
+      const to = Number.parseInt(rule.toCar, 10);
+      const interval = Number.parseInt(rule.intervalMin, 10);
+      const baseMs = parseTimeToMs(rule.firstTime);
+      if (
+        Number.isNaN(from) ||
+        Number.isNaN(to) ||
+        Number.isNaN(interval) ||
+        baseMs == null
+      ) {
+        setFlash(
+          `Rule ${i + 1}: set a valid car range, first start time, and interval.`,
+        );
+        return;
+      }
+      parsedRules.push({
+        startNo: Math.min(from, to),
+        endNo: Math.max(from, to),
+        baseMs,
+        intervalMs: Math.max(0, interval) * 60_000,
+      });
+    }
+
+    const touched = new Set<number>();
     setEntries((prev) => {
       const next = prev.map((row) => {
-        if (row.startNumber < startNo || row.startNumber > endNo) return row;
-        const offsetIndex = row.startNumber - startNo;
-        const scheduled = formatClockFromMs(baseMs + offsetIndex * intervalMs);
+        // Apply rules in order; later rules override earlier for the same car.
+        let scheduled: string | null = null;
+        for (const rule of parsedRules) {
+          if (row.startNumber < rule.startNo || row.startNumber > rule.endNo) {
+            continue;
+          }
+          const offsetIndex = row.startNumber - rule.startNo;
+          scheduled = formatClockFromMs(rule.baseMs + offsetIndex * rule.intervalMs);
+        }
+        if (scheduled == null) return row;
+        touched.add(row.startNumber);
         const current = getTimingValuesForEntry(row);
         return updateEntryTimingValues(row, scheduled, current.finishValue);
       });
@@ -1902,8 +2021,11 @@ export function EventEditor({ event: initial }: Props) {
       return next;
     });
     setShowAssignStartModal(false);
+    const ranges = parsedRules
+      .map((r) => (r.startNo === r.endNo ? `#${r.startNo}` : `#${r.startNo}–#${r.endNo}`))
+      .join(", ");
     setFlash(
-      `Assigned start times for cars ${startNo}-${endNo} on SS ${selectedRallyTimingStage.order}.`,
+      `Assigned start times (${touched.size} car${touched.size === 1 ? "" : "s"}: ${ranges}) on SS ${selectedRallyTimingStage.order}.`,
     );
     queueTimingAutosave();
   };
@@ -3824,57 +3946,104 @@ export function EventEditor({ event: initial }: Props) {
           </div>
           {meta.type === "rally" && showAssignStartModal ? (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-              <div className="w-full max-w-md rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
+              <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-xl border border-zinc-200 bg-white p-4 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
                 <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
                   Assign start times
                 </h3>
                 <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  Set first-car start and interval for a car range on the selected stage.
+                  Add one or more ranges (e.g. car 5 alone, then car 4 alone). Later
+                  rules override earlier ones if cars overlap.
                 </p>
-                <div className="mt-3 grid grid-cols-2 gap-2">
-                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    From car
-                    <input
-                      type="number"
-                      min={1}
-                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      value={assignStartFromCar}
-                      onChange={(e) => setAssignStartFromCar(e.target.value)}
-                    />
-                  </label>
-                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    To car
-                    <input
-                      type="number"
-                      min={1}
-                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      value={assignStartToCar}
-                      onChange={(e) => setAssignStartToCar(e.target.value)}
-                    />
-                  </label>
+                <div className="mt-3 space-y-3">
+                  {assignStartRules.map((rule, index) => (
+                    <div
+                      key={rule.id}
+                      className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                          Entry {index + 1}
+                        </p>
+                        {assignStartRules.length > 1 ? (
+                          <button
+                            type="button"
+                            onClick={() => removeAssignStartRule(rule.id)}
+                            className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-400 dark:hover:bg-red-950/40"
+                          >
+                            Remove
+                          </button>
+                        ) : null}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                          From car
+                          <input
+                            type="number"
+                            min={1}
+                            className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={rule.fromCar}
+                            onChange={(e) =>
+                              updateAssignStartRule(rule.id, {
+                                fromCar: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                          To car
+                          <input
+                            type="number"
+                            min={1}
+                            className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={rule.toCar}
+                            onChange={(e) =>
+                              updateAssignStartRule(rule.id, {
+                                toCar: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-2">
+                        <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                          Car {rule.fromCar || "1"} start
+                          <input
+                            type="time"
+                            step={60}
+                            className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={rule.firstTime}
+                            onChange={(e) =>
+                              updateAssignStartRule(rule.id, {
+                                firstTime: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                          Interval (min)
+                          <input
+                            type="number"
+                            min={0}
+                            className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={rule.intervalMin}
+                            onChange={(e) =>
+                              updateAssignStartRule(rule.id, {
+                                intervalMin: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    Car {assignStartFromCar || "1"} start
-                    <input
-                      type="time"
-                      step={60}
-                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      value={assignStartFirstTime}
-                      onChange={(e) => setAssignStartFirstTime(e.target.value)}
-                    />
-                  </label>
-                  <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    Interval (min)
-                    <input
-                      type="number"
-                      min={0}
-                      className="mt-1 w-full rounded border border-zinc-200 px-2 py-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                      value={assignStartIntervalMin}
-                      onChange={(e) => setAssignStartIntervalMin(e.target.value)}
-                    />
-                  </label>
-                </div>
+                <button
+                  type="button"
+                  onClick={addAssignStartRule}
+                  className="mt-3 rounded-lg border border-zinc-300 px-3 py-1.5 text-sm text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  + Add entry
+                </button>
                 <div className="mt-4 flex justify-end gap-2">
                   <button
                     type="button"
@@ -3888,7 +4057,7 @@ export function EventEditor({ event: initial }: Props) {
                     onClick={applyBulkStartTimes}
                     className="rounded-lg bg-red-700 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-800 dark:bg-red-600"
                   >
-                    Apply
+                    Apply all
                   </button>
                 </div>
               </div>

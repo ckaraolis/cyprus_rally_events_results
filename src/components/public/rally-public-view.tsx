@@ -286,21 +286,23 @@ function buildLandscapeResultsPdfHtml(input: {
 
   let colgroup = "";
   if (legLayout && legStageCount > 0) {
-    const ssCols = Array.from({ length: legStageCount }, () => '<col class="c-ss" />').join(
-      "",
-    );
+    // Reserve four trailing time cols (SS Times, Penalty, Total, Diff).
+    const ssCols = Array.from(
+      { length: legStageCount },
+      () => '<col class="c-ss" />',
+    ).join("");
     colgroup = `<colgroup>
       <col class="c-pos" /><col class="c-num" />
       <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
       ${ssCols}
-      <col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" />
+      <col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-diff" />
     </colgroup>`;
   } else if (rallyLayout && colCount >= 10) {
     // Pos, #, Driver, Co-driver, Car, Class, SS Time(s), Penalty, Total time, Diff
     colgroup = `<colgroup>
       <col class="c-pos" /><col class="c-num" />
       <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
-      <col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-time" />
+      <col class="c-time" /><col class="c-time" /><col class="c-time" /><col class="c-diff" />
     </colgroup>`;
   } else if (input.narrowPosNum || rallyLayout || legLayout) {
     colgroup = `<colgroup><col class="c-pos" /><col class="c-num" />${input.columns
@@ -308,6 +310,13 @@ function buildLandscapeResultsPdfHtml(input: {
       .map(() => "<col />")
       .join("")}</colgroup>`;
   }
+
+  // LEG with many SS columns must leave room for Diff (was getting clipped off-page).
+  const legSsWidthPct =
+    legStageCount >= 6 ? 3.6 : legStageCount >= 4 ? 4.2 : 5.0;
+  const legDriverWidthPct = legStageCount >= 6 ? 11.0 : legStageCount >= 4 ? 12.0 : 13.2;
+  const legCarWidthPct = legStageCount >= 6 ? 9.0 : 11;
+  const legTimeWidthPct = legStageCount >= 6 ? 5.6 : legStageCount >= 4 ? 6.0 : 6.4;
 
   return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(input.subtitle)}</title><style>
   @page { size: A4 landscape; margin: 8mm; }
@@ -319,17 +328,18 @@ function buildLandscapeResultsPdfHtml(input: {
   h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
   h3 { margin: 1px 0 0; font-size: ${Math.max(7, subPt - 1)}pt; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; }
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${fontPt}pt; }
-  th, td { border: 1px solid #bdbdbd; padding: ${padY}mm ${padX}mm; vertical-align: middle; line-height: 1.2; word-wrap: break-word; }
+  th, td { border: 1px solid #bdbdbd; padding: ${padY}mm ${legLayout && legStageCount >= 6 ? Math.min(padX, 0.7) : padX}mm; vertical-align: middle; line-height: 1.2; word-wrap: break-word; overflow: hidden; }
   th { background: #f0f0f0; font-weight: 700; }
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
-  col.c-pos, col.c-num { width: ${legLayout ? "2.1%" : "2.2%"}; }
-  col.c-driver, col.c-codriver { width: ${legLayout ? "13.2%" : "13%"}; }
-  col.c-car { width: 11%; }
-  col.c-class { width: 4.8%; }
-  col.c-ss { width: 4.4%; }
-  col.c-time { width: ${legLayout ? "6.4%" : "7.2%"}; }
-  @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; } }
+  col.c-pos, col.c-num { width: ${legLayout ? "1.8%" : "2.2%"}; }
+  col.c-driver, col.c-codriver { width: ${legLayout ? `${legDriverWidthPct}%` : "13%"}; }
+  col.c-car { width: ${legLayout ? `${legCarWidthPct}%` : "11%"}; }
+  col.c-class { width: ${legLayout ? "4.2%" : "4.8%"}; }
+  col.c-ss { width: ${legSsWidthPct}%; }
+  col.c-time { width: ${legLayout ? `${legTimeWidthPct}%` : "7.2%"}; }
+  col.c-diff { width: ${legLayout ? `${legTimeWidthPct}%` : "7.2%"}; }
+  @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; overflow: visible; } table { width: 100% !important; } }
   @media screen { body { padding: 12px; background: #e8e8e8; } .page { background: #fff; padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); } }
   </style></head><body><div class="page"><div class="header">${input.logoUrl ? `<img src="${escapeHtml(input.logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(input.subtitle)}</h2><h3>${escapeHtml(input.modeLabel)}</h3></div><table>${colgroup}<thead><tr>${input.columns
     .map((c, colIdx) => {
@@ -1303,10 +1313,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         const match = data.events?.find((e) => e.id === initialEvent.id);
         if (!match || cancelled) return;
         const sig = fingerprintEventForLivePoll(match);
-        if (
-          sig === lastEventPollSigRef.current &&
-          data.updatedAt === lastConfigUpdatedAtRef.current
-        ) {
+        // Only re-render when stage/entry *content* changes. Admin saves also bump
+        // config `updatedAt` on every keystroke; reacting to that alone made the
+        // public page look like it was constantly refreshing for some viewers.
+        if (sig === lastEventPollSigRef.current) {
+          lastConfigUpdatedAtRef.current = data.updatedAt;
           return;
         }
         lastConfigUpdatedAtRef.current = data.updatedAt;
