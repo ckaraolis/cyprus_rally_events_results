@@ -451,7 +451,7 @@ export async function exportRallyFinalExcel(
         tier = 0;
       } else if (nonStarter) {
         tier = 2;
-        statusLabel = "NON STARTER";
+        statusLabel = "DNS";
       } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
         tier = 1;
         statusLabel = rowOutcome;

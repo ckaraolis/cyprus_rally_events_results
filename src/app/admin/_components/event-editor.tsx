@@ -1681,23 +1681,41 @@ export function EventEditor({ event: initial }: Props) {
         setDocUploadError(data.error ?? "Document upload failed.");
         return;
       }
-      setMeta((m) => ({
-        ...m,
-        officialNoticeDocuments: [
-          {
-            id: crypto.randomUUID(),
-            title,
-            category,
-            url: data.url!,
-            fileName: data.fileName?.trim() || file.name,
-            uploadedAt: new Date().toISOString(),
-          },
-          ...m.officialNoticeDocuments,
-        ],
-        officialNoticeCustomCategories: ensureNoticeCategoryInMeta(m, category),
-      }));
+      const uploadedDoc: RallyEvent["officialNoticeDocuments"][number] = {
+        id: crypto.randomUUID(),
+        title,
+        category,
+        url: data.url,
+        fileName: data.fileName?.trim() || file.name,
+        uploadedAt: new Date().toISOString(),
+      };
+      let nextMeta = meta;
+      setMeta((m) => {
+        nextMeta = {
+          ...m,
+          officialNoticeDocuments: [uploadedDoc, ...m.officialNoticeDocuments],
+          officialNoticeCustomCategories: ensureNoticeCategoryInMeta(m, category),
+        };
+        return nextMeta;
+      });
       setNewDocTitle("");
-      setFlash("Document uploaded. Click Save notice board to publish it.");
+      const { payload, removedInlineDocs } = sanitizeMetaForSave(nextMeta);
+      if (removedInlineDocs > 0) {
+        setMeta(payload);
+        setFlash(
+          `Upload saved locally, but ${removedInlineDocs} oversized inline document(s) were blocked. Click Save notice board.`,
+        );
+        return;
+      }
+      const saveRes = await updateEventMeta(eventId, payload);
+      if (!saveRes.ok) {
+        setFlash(
+          `Document uploaded, but publish failed: ${saveRes.error}. Click Save notice board.`,
+        );
+        return;
+      }
+      setFlash("Document uploaded and published to the Official Notice Board.");
+      router.refresh();
     } catch {
       setDocUploadError("Document upload failed. Please try again.");
     } finally {

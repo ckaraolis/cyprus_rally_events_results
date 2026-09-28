@@ -636,7 +636,7 @@ function buildRallyLegPdfSheet(
   return { columns, tableRows };
 }
 
-/** Detect changes when polling `/api/rally/config` (stage dots, entry times, etc.). */
+/** Detect changes when polling live config (times, stages, notice board, etc.). */
 function fingerprintEventForLivePoll(e: RallyEvent): string {
   return JSON.stringify({
     status: e.status,
@@ -660,6 +660,15 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
       run1FinishTime: x.run1FinishTime,
       run2StartTime: x.run2StartTime,
       run2FinishTime: x.run2FinishTime,
+    })),
+    noticeCategories: e.officialNoticeCustomCategories ?? [],
+    noticeDocs: (e.officialNoticeDocuments ?? []).map((d) => ({
+      id: d.id,
+      title: d.title,
+      category: d.category,
+      url: d.url,
+      fileName: d.fileName,
+      uploadedAt: d.uploadedAt,
     })),
   });
 }
@@ -1261,12 +1270,14 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     /**
      * Live updates via JSON polling — not `router.refresh()`, which re-runs the whole RSC tree
      * and often leaves the dev overlay stuck on “Rendering…”.
-     * Results tabs poll every 1s via a one-event endpoint; other tabs use 5s.
+     * Results / Notice Board tabs poll every 1s via a one-event endpoint; other tabs use 5s.
      */
     let cancelled = false;
     let inFlight = false;
     const resultsLive =
-      tab === "stage-results" || tab === "final-results";
+      tab === "stage-results" ||
+      tab === "final-results" ||
+      tab === "official-notice-board";
     const intervalMs = resultsLive ? 1000 : 5000;
     const poll = async () => {
       if (cancelled || inFlight) return;
@@ -3303,7 +3314,7 @@ type RallyFinalRankRow = {
  * Official Final Results order:
  * (0) classified finishers by total time,
  * (1) retirements (RET then DNF),
- * (2) did not start (DNS / Start=No as NON STARTER).
+ * (2) did not start (DNS, including Start=No).
  */
 function buildRallyFinalRanking(
   entries: Entry[],
@@ -3341,7 +3352,7 @@ function buildRallyFinalRanking(
         tier = 0;
       } else if (nonStarter) {
         tier = 2;
-        statusLabel = "NON STARTER";
+        statusLabel = "DNS";
       } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
         tier = 1;
         statusLabel = rowOutcome;
