@@ -467,54 +467,32 @@ function buildRallyOverallPdfRows(
 
 /** Final Results sheet: stage time + event penalties → Total. */
 function buildRallyFinalPdfRows(entries: Entry[], stages: Stage[]): string[][] {
-  const ranked = [...entries]
-    .map((row) => {
-      const stageCells = stages.map((st) => {
-        const values = getRallyStageTimingValues(row, st.id);
-        const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
-        const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-        const timeMs =
-          cell.durationMs != null ? cell.durationMs + jumpMs : null;
-        return { cell, timeMs };
-      });
-      const allTimed =
-        stages.length > 0 &&
-        stageCells.every((c) => c.cell.outcome == null && c.timeMs != null);
-      const timeMs = allTimed
-        ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
-        : null;
-      const penaltyMs = getRallyEventPenaltyTotalMs(row);
-      const totalMs = timeMs != null ? timeMs + penaltyMs : null;
-      return { row, timeMs, penaltyMs, totalMs };
-    })
-    .filter(
-      (x): x is {
-        row: Entry;
-        timeMs: number;
-        penaltyMs: number;
-        totalMs: number;
-      } => x.totalMs != null,
-    )
-    .sort((a, b) =>
-      a.totalMs !== b.totalMs
-        ? a.totalMs - b.totalMs
-        : a.row.startNumber - b.row.startNumber,
-    );
-  const leaderTotal = ranked[0]?.totalMs ?? null;
-  return ranked.map(({ row, timeMs, penaltyMs, totalMs }, i) => [
-    String(i + 1),
-    String(row.startNumber),
-    row.driver || "—",
-    row.coDriver || "—",
-    row.car || "—",
-    row.class || "—",
-    formatDurationMs(timeMs),
-    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    formatDurationMs(totalMs),
-    leaderTotal == null || totalMs <= leaderTotal
-      ? "—"
-      : `+${formatDiffDurationMs(totalMs - leaderTotal)}`,
-  ]);
+  const ranked = buildRallyFinalRanking(entries, stages);
+  const leaderTotal = ranked.find((x) => x.tier === 0)?.totalMs ?? null;
+  let classifiedPos = 0;
+  return ranked.map(({ row, timeMs, penaltyMs, totalMs, tier, statusLabel }) => {
+    const pos =
+      tier === 0 ? String(++classifiedPos) : "—";
+    return [
+      pos,
+      String(row.startNumber),
+      row.driver || "—",
+      row.coDriver || "—",
+      row.car || "—",
+      row.class || "—",
+      tier === 0 ? formatDurationMs(timeMs) : "—",
+      tier === 0 && penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+      tier === 0
+        ? formatDurationMs(totalMs)
+        : statusLabel ?? "—",
+      tier === 0 &&
+      leaderTotal != null &&
+      totalMs != null &&
+      totalMs > leaderTotal
+        ? `+${formatDiffDurationMs(totalMs - leaderTotal)}`
+        : "—",
+    ];
+  });
 }
 
 /** LEG sheet: all crews, per-SS times (only when stages are completed). */
@@ -2775,46 +2753,18 @@ function OverallClassificationTable({
   rows: Entry[];
   stages: Stage[];
 }) {
-  const sorted = useMemo(() => {
-    const ranked = [...rows]
-      .map((row) => {
-        const stageCells = stages.map((st) => {
-          const values = getRallyStageTimingValues(row, st.id);
-          const cell = classifyRallyStageLegCell(
-            values.startValue,
-            values.finishValue,
-          );
-          const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-          const timeMs =
-            cell.durationMs != null ? cell.durationMs + jumpMs : null;
-          return { cell, timeMs };
-        });
-        const allTimed =
-          stages.length > 0 &&
-          stageCells.every((c) => c.cell.outcome == null && c.timeMs != null);
-        const timeMs = allTimed
-          ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
-          : null;
-        const penaltyMs = getRallyEventPenaltyTotalMs(row);
-        const totalMs = timeMs != null ? timeMs + penaltyMs : null;
-        return { row, timeMs, penaltyMs, totalMs };
-      })
-      .filter(
-        (x): x is {
-          row: Entry;
-          timeMs: number;
-          penaltyMs: number;
-          totalMs: number;
-        } => x.totalMs != null,
-      )
-      .sort((a, b) =>
-        a.totalMs !== b.totalMs
-          ? a.totalMs - b.totalMs
-          : a.row.startNumber - b.row.startNumber,
-      );
-    return ranked;
-  }, [rows, stages]);
-  const leaderTotal = sorted[0]?.totalMs ?? null;
+  const sorted = useMemo(
+    () => buildRallyFinalRanking(rows, stages),
+    [rows, stages],
+  );
+  const leaderTotal = sorted.find((x) => x.tier === 0)?.totalMs ?? null;
+  const displayRows = useMemo(() => {
+    let classifiedPos = 0;
+    return sorted.map((item) => ({
+      ...item,
+      pos: item.tier === 0 ? ++classifiedPos : null,
+    }));
+  }, [sorted]);
 
   if (stages.length === 0) {
     return (
@@ -2827,7 +2777,7 @@ function OverallClassificationTable({
   if (sorted.length === 0) {
     return (
       <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
-        Final results appear once every stage has a time for a crew.
+        Final results appear once crews have times, retirements, or non-starters.
       </p>
     );
   }
@@ -2847,34 +2797,41 @@ function OverallClassificationTable({
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, timeMs, penaltyMs, totalMs }, i) => (
-          <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
-            <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
-              {i + 1}
-            </td>
-            <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
-              {row.startNumber}
-            </td>
-            <CrewStackCell row={row} />
-            <td className="align-middle !text-center text-[11px] text-[var(--ewrc-muted)] sm:text-xs">
-              {row.class || "—"}
-            </td>
-            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-              {formatDurationMs(timeMs)}
-            </td>
-            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
-              {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
-            </td>
-            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-              {formatDurationMs(totalMs)}
-            </td>
-            <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
-              {leaderTotal == null || totalMs <= leaderTotal
-                ? "—"
-                : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
-            </td>
-          </tr>
-        ))}
+        {displayRows.map(
+          ({ row, timeMs, penaltyMs, totalMs, tier, statusLabel, pos }, i) => (
+            <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+              <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
+                {pos ?? "—"}
+              </td>
+              <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
+                {row.startNumber}
+              </td>
+              <CrewStackCell row={row} />
+              <td className="align-middle !text-center text-[11px] text-[var(--ewrc-muted)] sm:text-xs">
+                {row.class || "—"}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {tier === 0 ? formatDurationMs(timeMs) : "—"}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+                {tier === 0 && penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {tier === 0
+                  ? formatDurationMs(totalMs)
+                  : statusLabel ?? "—"}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+                {tier === 0 &&
+                leaderTotal != null &&
+                totalMs != null &&
+                totalMs > leaderTotal
+                  ? `+${formatDiffDurationMs(totalMs - leaderTotal)}`
+                  : "—"}
+              </td>
+            </tr>
+          ),
+        )}
       </tbody>
     </table>
   );
@@ -3330,6 +3287,93 @@ function collectRallyPublicPenalties(
       ? a.startNumber - b.startNumber
       : a.reason.localeCompare(b.reason),
   );
+}
+
+type RallyFinalRankRow = {
+  row: Entry;
+  timeMs: number | null;
+  penaltyMs: number;
+  totalMs: number | null;
+  /** 0 = classified, 1 = retired (RET/DNF), 2 = did not start */
+  tier: 0 | 1 | 2;
+  statusLabel: string | null;
+};
+
+/**
+ * Official Final Results order:
+ * (0) classified finishers by total time,
+ * (1) retirements (RET then DNF),
+ * (2) did not start (DNS / Start=No as NON STARTER).
+ */
+function buildRallyFinalRanking(
+  entries: Entry[],
+  stages: Stage[],
+): RallyFinalRankRow[] {
+  if (stages.length === 0) return [];
+
+  return entries
+    .map((row) => {
+      const stageCells = stages.map((st) => {
+        const values = getRallyStageTimingValues(row, st.id);
+        const cell = classifyRallyStageLegCell(
+          values.startValue,
+          values.finishValue,
+        );
+        const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+        const timeMs =
+          cell.durationMs != null ? cell.durationMs + jumpMs : null;
+        return { cell, timeMs };
+      });
+      const allTimed = stageCells.every(
+        (c) => c.cell.outcome == null && c.timeMs != null,
+      );
+      const timeMs = allTimed
+        ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
+        : null;
+      const penaltyMs = getRallyEventPenaltyTotalMs(row);
+      const totalMs = timeMs != null ? timeMs + penaltyMs : null;
+      const rowOutcome = worstLegRowOutcome(stageCells.map((c) => c.cell));
+      const nonStarter = row.start === false;
+
+      let tier: 0 | 1 | 2 | null = null;
+      let statusLabel: string | null = null;
+      if (totalMs != null) {
+        tier = 0;
+      } else if (nonStarter) {
+        tier = 2;
+        statusLabel = "NON STARTER";
+      } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
+        tier = 1;
+        statusLabel = rowOutcome;
+      } else if (rowOutcome === "DNS") {
+        tier = 2;
+        statusLabel = "DNS";
+      }
+
+      return { row, timeMs, penaltyMs, totalMs, tier, statusLabel };
+    })
+    .filter((x): x is RallyFinalRankRow => x.tier != null)
+    .sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.tier === 0 && b.tier === 0) {
+        const at = a.totalMs ?? 0;
+        const bt = b.totalMs ?? 0;
+        return at !== bt
+          ? at - bt
+          : a.row.startNumber - b.row.startNumber;
+      }
+      if (a.tier === 1 && b.tier === 1) {
+        const ao = a.statusLabel === "RET" ? 0 : 1;
+        const bo = b.statusLabel === "RET" ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+      }
+      if (a.tier === 2 && b.tier === 2) {
+        const ao = a.statusLabel === "DNS" ? 0 : 1;
+        const bo = b.statusLabel === "DNS" ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+      }
+      return a.row.startNumber - b.row.startNumber;
+    });
 }
 
 /** Per-stage cell for leg classification: outcome markers vs clocked stage time. */

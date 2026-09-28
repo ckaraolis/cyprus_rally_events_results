@@ -401,41 +401,111 @@ export async function exportRallyFinalExcel(
   entries: Entry[],
   stages: Stage[],
 ): Promise<void> {
-  const ranked = started(entries)
+  type FinalExcelRow = {
+    row: Entry;
+    timeMs: number | null;
+    penaltyMs: number;
+    totalMs: number | null;
+    tier: 0 | 1 | 2;
+    statusLabel: string | null;
+  };
+
+  const ranked: FinalExcelRow[] = entries
     .map((row) => {
       const cells = stages.map((st) => {
         const v = stageValues(row, st.id);
         const cell = classifyCell(v.start, v.finish);
         const jump = parsePenaltyMs(v.penalty) ?? 0;
-        return cell.durationMs != null ? cell.durationMs + jump : null;
+        const timeMs =
+          cell.durationMs != null ? cell.durationMs + jump : null;
+        return { cell, timeMs };
       });
-      const allTimed = cells.length > 0 && cells.every((c) => c != null);
-      const timeMs = allTimed ? cells.reduce((sum, c) => sum + (c ?? 0), 0) : null;
+      const allTimed =
+        cells.length > 0 &&
+        cells.every((c) => c.cell.outcome == null && c.timeMs != null);
+      const timeMs = allTimed
+        ? cells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
+        : null;
       const penaltyMs = eventPenaltyMs(row);
       const totalMs = timeMs != null ? timeMs + penaltyMs : null;
-      return { row, timeMs, penaltyMs, totalMs };
+      let hasDns = false;
+      let hasDnf = false;
+      let hasRet = false;
+      for (const c of cells) {
+        if (c.cell.outcome === "DNS") hasDns = true;
+        else if (c.cell.outcome === "DNF") hasDnf = true;
+        else if (c.cell.outcome === "RET") hasRet = true;
+      }
+      const rowOutcome = hasDns
+        ? "DNS"
+        : hasDnf
+          ? "DNF"
+          : hasRet
+            ? "RET"
+            : null;
+      const nonStarter = row.start === false;
+
+      let tier: 0 | 1 | 2 | null = null;
+      let statusLabel: string | null = null;
+      if (totalMs != null) {
+        tier = 0;
+      } else if (nonStarter) {
+        tier = 2;
+        statusLabel = "NON STARTER";
+      } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
+        tier = 1;
+        statusLabel = rowOutcome;
+      } else if (rowOutcome === "DNS") {
+        tier = 2;
+        statusLabel = "DNS";
+      }
+
+      return { row, timeMs, penaltyMs, totalMs, tier, statusLabel };
     })
-    .filter((x): x is { row: Entry; timeMs: number; penaltyMs: number; totalMs: number } =>
-      x.totalMs != null,
-    )
-    .sort((a, b) =>
-      a.totalMs !== b.totalMs
-        ? a.totalMs - b.totalMs
-        : a.row.startNumber - b.row.startNumber,
-    );
-  const leader = ranked[0]?.totalMs ?? null;
-  const rows = ranked.map(({ row, timeMs, penaltyMs, totalMs }, i) => [
-    String(i + 1),
-    String(row.startNumber),
-    row.driver || "—",
-    row.coDriver || "—",
-    row.car || "—",
-    row.class || "—",
-    formatDurationMs(timeMs),
-    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    formatDurationMs(totalMs),
-    leader == null || totalMs <= leader ? "—" : `+${formatDiffMs(totalMs - leader)}`,
-  ]);
+    .filter((x): x is FinalExcelRow => x.tier != null)
+    .sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.tier === 0 && b.tier === 0) {
+        const at = a.totalMs ?? 0;
+        const bt = b.totalMs ?? 0;
+        return at !== bt
+          ? at - bt
+          : a.row.startNumber - b.row.startNumber;
+      }
+      if (a.tier === 1 && b.tier === 1) {
+        const ao = a.statusLabel === "RET" ? 0 : 1;
+        const bo = b.statusLabel === "RET" ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+      }
+      if (a.tier === 2 && b.tier === 2) {
+        const ao = a.statusLabel === "DNS" ? 0 : 1;
+        const bo = b.statusLabel === "DNS" ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+      }
+      return a.row.startNumber - b.row.startNumber;
+    });
+
+  const leader = ranked.find((x) => x.tier === 0)?.totalMs ?? null;
+  let classifiedPos = 0;
+  const rows = ranked.map(
+    ({ row, timeMs, penaltyMs, totalMs, tier, statusLabel }) => [
+      tier === 0 ? String(++classifiedPos) : "—",
+      String(row.startNumber),
+      row.driver || "—",
+      row.coDriver || "—",
+      row.car || "—",
+      row.class || "—",
+      tier === 0 ? formatDurationMs(timeMs) : "—",
+      tier === 0 && penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+      tier === 0 ? formatDurationMs(totalMs) : statusLabel ?? "—",
+      tier === 0 &&
+      leader != null &&
+      totalMs != null &&
+      totalMs > leader
+        ? `+${formatDiffMs(totalMs - leader)}`
+        : "—",
+    ],
+  );
   await downloadExcelTable({
     fileName: `${eventName}-Final-Results`,
     sheetName: "Final Results",
