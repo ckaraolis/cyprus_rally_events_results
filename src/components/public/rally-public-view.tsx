@@ -1283,12 +1283,13 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     /**
      * Live updates via JSON polling — not `router.refresh()`, which re-runs the whole RSC tree
      * and often leaves the dev overlay stuck on “Rendering…”.
-     * Results tabs poll every 2s; other tabs use 5s.
+     * Results tabs poll every 1s via a one-event endpoint; other tabs use 5s.
      */
     let cancelled = false;
     let inFlight = false;
-    const intervalMs =
-      tab === "stage-results" || tab === "final-results" ? 2000 : 5000;
+    const resultsLive =
+      tab === "stage-results" || tab === "final-results";
+    const intervalMs = resultsLive ? 1000 : 5000;
     const poll = async () => {
       if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -1296,8 +1297,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       }
       inFlight = true;
       try {
-        // Cache-bust so browsers/CDNs cannot serve a stale config snapshot.
-        const res = await fetch(`/api/rally/config?_=${Date.now()}`, {
+        const url = resultsLive
+          ? `/api/rally/events/${encodeURIComponent(initialEvent.id)}/live?_=${Date.now()}`
+          : `/api/rally/config?_=${Date.now()}`;
+        const res = await fetch(url, {
           cache: "no-store",
           credentials: "same-origin",
           headers: {
@@ -1307,10 +1310,12 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         });
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as {
-          events: RallyEvent[];
+          events?: RallyEvent[];
+          event?: RallyEvent;
           updatedAt: string;
         };
-        const match = data.events?.find((e) => e.id === initialEvent.id);
+        const match =
+          data.event ?? data.events?.find((e) => e.id === initialEvent.id);
         if (!match || cancelled) return;
         const sig = fingerprintEventForLivePoll(match);
         // Only re-render when stage/entry *content* changes. Admin saves also bump

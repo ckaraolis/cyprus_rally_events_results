@@ -195,6 +195,25 @@ function toEvent(row: {
   };
 }
 
+function eventLiveStampMs(row: {
+  updatedAt: Date;
+  algeTriggerCountByKey: unknown;
+}): number {
+  const times = [row.updatedAt.getTime()];
+  const alge =
+    row.algeTriggerCountByKey &&
+    typeof row.algeTriggerCountByKey === "object" &&
+    !Array.isArray(row.algeTriggerCountByKey)
+      ? (row.algeTriggerCountByKey as Record<string, unknown>)
+      : {};
+  const stamped = alge.__configUpdatedAt;
+  if (typeof stamped === "string") {
+    const ms = Date.parse(stamped);
+    if (!Number.isNaN(ms)) times.push(ms);
+  }
+  return Math.max(...times);
+}
+
 export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
   const site = await prisma.siteSettings.findUnique({ where: { id: 1 } });
   const events = await prisma.event.findMany({
@@ -208,18 +227,7 @@ export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
   const times: number[] = [];
   if (site?.updatedAt) times.push(site.updatedAt.getTime());
   for (const ev of events) {
-    times.push(ev.updatedAt.getTime());
-    const alge =
-      ev.algeTriggerCountByKey &&
-      typeof ev.algeTriggerCountByKey === "object" &&
-      !Array.isArray(ev.algeTriggerCountByKey)
-        ? (ev.algeTriggerCountByKey as Record<string, unknown>)
-        : {};
-    const stamped = alge.__configUpdatedAt;
-    if (typeof stamped === "string") {
-      const ms = Date.parse(stamped);
-      if (!Number.isNaN(ms)) times.push(ms);
-    }
+    times.push(eventLiveStampMs(ev));
   }
   const newestMs = times.length > 0 ? Math.max(...times) : Date.now();
   return {
@@ -234,6 +242,26 @@ export async function loadConfigFromDb(): Promise<RallySiteConfig | null> {
         },
     events: events.map(toEvent),
     updatedAt: new Date(newestMs).toISOString(),
+  };
+}
+
+/**
+ * One-event snapshot for public live polling — avoids loading every event each tick.
+ */
+export async function loadEventLiveFromDb(
+  eventId: string,
+): Promise<{ event: RallyEvent; updatedAt: string } | null> {
+  const row = await prisma.event.findUnique({
+    where: { id: eventId },
+    include: {
+      stages: { orderBy: { order: "asc" } },
+      entries: { orderBy: { startNumber: "asc" } },
+    },
+  });
+  if (!row) return null;
+  return {
+    event: toEvent(row),
+    updatedAt: new Date(eventLiveStampMs(row)).toISOString(),
   };
 }
 

@@ -3,7 +3,12 @@ import path from "path";
 import { unstable_noStore as noStore } from "next/cache";
 import { defaultRallyConfig } from "./defaults";
 import { normalizeCountryCode } from "@/lib/flags";
-import { loadConfigFromDb, patchEventEntriesInDb, saveConfigToDb } from "./db-store";
+import {
+  loadConfigFromDb,
+  loadEventLiveFromDb,
+  patchEventEntriesInDb,
+  saveConfigToDb,
+} from "./db-store";
 import type {
   Entry,
   EventStatus,
@@ -478,12 +483,27 @@ export async function saveRallyConfig(config: RallySiteConfig): Promise<void> {
 
 /**
  * Persist entry timing for one event without rewriting every event/stage.
- * Still writes the JSON file snapshot when file writes are enabled.
+ * On Vercel (DB writes on, file writes off) skips a full config reload.
  */
 export async function saveEventEntriesFast(
   eventId: string,
   entries: Entry[],
 ): Promise<void> {
+  const updatedAt = new Date().toISOString();
+
+  // Production path: patch one event in Postgres only (no full-site read).
+  if (DB_WRITES && !FILE_WRITES) {
+    try {
+      await patchEventEntriesInDb(eventId, entries, updatedAt);
+      return;
+    } catch (e) {
+      console.warn(
+        "[rally] Fast entry save failed; falling back to full config save.",
+        e,
+      );
+    }
+  }
+
   const config = await loadRallyConfig();
   const i = config.events.findIndex((e) => e.id === eventId);
   if (i === -1) throw new Error("Event not found");
@@ -491,13 +511,12 @@ export async function saveEventEntriesFast(
   const next: RallySiteConfig = {
     ...config,
     site: sanitizeSiteBranding(config.site),
-    updatedAt: new Date().toISOString(),
+    updatedAt,
   };
   if (DB_WRITES) {
     try {
       await patchEventEntriesInDb(eventId, entries, next.updatedAt);
     } catch (e) {
-      // Fall back to full rewrite if the fast path fails (e.g. missing row).
       console.warn(
         "[rally] Fast entry save failed; falling back to full config save.",
         e,
@@ -509,4 +528,30 @@ export async function saveEventEntriesFast(
     await fs.mkdir(path.dirname(CONFIG_PATH), { recursive: true });
     await fs.writeFile(CONFIG_PATH, JSON.stringify(next, null, 2), "utf-8");
   }
+}
+
+/**
+ * Lightweight public poll payload for one event (stages + entries + live stamp).
+ */
+export async function loadEventLiveSnapshot(
+  eventId: string,
+): Promise<{ event: RallyEvent; updatedAt: string } | null> {
+  noStore();
+  if (DB_READS) {
+    try {
+      const raced = await Promise.race([
+        loadEventLiveFromDb(eventId).then((v) => ({ kind: "db" as const, v })),
+        new Promise<{ kind: "timeout" }>((resolve) =>
+          setTimeout(() => resolve({ kind: "timeout" }), DB_READ_TIMEOUT_MS),
+        ),
+      ]);
+      if (raced.kind === "db" && raced.v) return raced.v;
+    } catch {
+      // fall through to full config / file
+    }
+  }
+  const config = await loadRallyConfig();
+  const event = config.events.find((e) => e.id === eventId);
+  if (!event) return null;
+  return { event, updatedAt: config.updatedAt };
 }
