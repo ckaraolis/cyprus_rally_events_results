@@ -636,9 +636,15 @@ function buildRallyLegPdfSheet(
   return { columns, tableRows };
 }
 
-/** Detect changes when polling live config (times, stages, notice board, etc.). */
+/** Detect any public-facing event change while polling the live endpoint. */
 function fingerprintEventForLivePoll(e: RallyEvent): string {
   return JSON.stringify({
+    name: e.name,
+    logoUrl: e.logoUrl,
+    type: e.type,
+    dateStart: e.dateStart,
+    dateEnd: e.dateEnd,
+    location: e.location,
     status: e.status,
     stages: e.stages.map((s) => ({
       id: s.id,
@@ -653,7 +659,14 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
     entries: e.entries.map((x) => ({
       id: x.id,
       sn: x.startNumber,
+      entrance: x.entrance,
       start: x.start !== false,
+      driver: x.driver,
+      coDriver: x.coDriver,
+      car: x.car,
+      class: x.class,
+      driverCountryCode: x.driverCountryCode,
+      coDriverCountryCode: x.coDriverCountryCode,
       trialStartTime: x.trialStartTime,
       trialFinishTime: x.trialFinishTime,
       run1StartTime: x.run1StartTime,
@@ -922,12 +935,6 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     ) {
       return [];
     }
-    const now = new Date(nowMs);
-    const nowDayMs =
-      now.getHours() * 3_600_000 +
-      now.getMinutes() * 60_000 +
-      now.getSeconds() * 1_000 +
-      now.getMilliseconds();
     const stageId = selectedStripItem.stage.id;
     return entriesForStageResults
       .map((row) => {
@@ -946,10 +953,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           startValue: string;
         } => x.startMs != null,
       )
-      .filter((x) => x.startMs <= nowDayMs)
+      // Show as soon as ALGE/admin writes a start time (do not wait for wall clock).
       .filter((x) => x.finishMs == null)
       .sort((a, b) => a.startMs - b.startMs);
-  }, [entriesForStageResults, event.type, nowMs, selectedStripItem]);
+  }, [entriesForStageResults, event.type, selectedStripItem]);
   const entriesForSelectedSpeedRun = useMemo(() => {
     if (!selectedStripItem || selectedStripItem.type !== "speedRun") return [];
     if (selectedStripItem.runId === "best") {
@@ -1270,15 +1277,12 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     /**
      * Live updates via JSON polling — not `router.refresh()`, which re-runs the whole RSC tree
      * and often leaves the dev overlay stuck on “Rendering…”.
-     * Results / Notice Board tabs poll every 1s via a one-event endpoint; other tabs use 5s.
+     * Every public tab polls the one-event live endpoint every 1s so Overview, Entry List,
+     * Itinerary, Penalties, Results, and Notice Board all stay in sync.
      */
     let cancelled = false;
     let inFlight = false;
-    const resultsLive =
-      tab === "stage-results" ||
-      tab === "final-results" ||
-      tab === "official-notice-board";
-    const intervalMs = resultsLive ? 1000 : 5000;
+    const intervalMs = 1000;
     const poll = async () => {
       if (cancelled || inFlight) return;
       if (typeof document !== "undefined" && document.visibilityState !== "visible") {
@@ -1286,9 +1290,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       }
       inFlight = true;
       try {
-        const url = resultsLive
-          ? `/api/rally/events/${encodeURIComponent(initialEvent.id)}/live?_=${Date.now()}`
-          : `/api/rally/config?_=${Date.now()}`;
+        const url = `/api/rally/events/${encodeURIComponent(initialEvent.id)}/live?_=${Date.now()}`;
         const res = await fetch(url, {
           cache: "no-store",
           credentials: "same-origin",
@@ -1307,7 +1309,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           data.event ?? data.events?.find((e) => e.id === initialEvent.id);
         if (!match || cancelled) return;
         const sig = fingerprintEventForLivePoll(match);
-        // Only re-render when stage/entry *content* changes. Admin saves also bump
+        // Only re-render when public content actually changes. Admin saves also bump
         // config `updatedAt` on every keystroke; reacting to that alone made the
         // public page look like it was constantly refreshing for some viewers.
         if (sig === lastEventPollSigRef.current) {
@@ -1334,7 +1336,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [initialEvent.id, tab]);
+  }, [initialEvent.id]);
 
   useEffect(() => {
     if (!tabs.some((t) => t.id === tab)) {
@@ -1679,7 +1681,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                             <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-[var(--ewrc-strong)]">
                               {onStageRallyRows.map(({ row, startValue }) => (
                                 <span key={`on-stage-rally-${row.id}`} className="font-mono">
-                                  #{row.startNumber} {row.driver || "—"} ({startValue})
+                                  #{row.startNumber} {row.driver || "—"} (
+                                  {formatOnStageStartHm(startValue)})
                                 </span>
                               ))}
                             </div>
@@ -3081,6 +3084,13 @@ function normalizeLogoUrl(raw: string): string {
   if (/^https?:\/\//i.test(value)) return value;
   if (value.startsWith("/")) return value;
   return `/${value}`;
+}
+
+/** Display ALGE/admin stage start as HH:MM in the On Stage strip. */
+function formatOnStageStartHm(value: string): string {
+  const m = value.trim().match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return value.trim() || "—";
+  return `${m[1]!.padStart(2, "0")}:${m[2]}`;
 }
 
 function parseClockToDayMs(value: string): number | null {

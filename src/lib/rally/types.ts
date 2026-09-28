@@ -95,10 +95,12 @@ export interface RallyEvent {
   };
   /** Last observed ALGE trigger counts per polling key. */
   algeTriggerCountByKey: Record<string, number>;
-  /** Rally stage -> ALGE finish-line device (concurrent SS can use different devices). */
+  /** Rally stage → ALGE start/finish devices (concurrent SS can use different clocks). */
   rallyStageAlgeConfig: Record<
     string,
     {
+      startDeviceId: string;
+      startChannelId: string;
       finishDeviceId: string;
       finishChannelId: string;
     }
