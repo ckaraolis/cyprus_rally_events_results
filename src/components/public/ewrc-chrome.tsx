@@ -2,6 +2,9 @@ import Link from "next/link";
 import type { SiteSettings } from "@/lib/rally/types";
 import { ThemeToggle } from "./theme-toggle";
 
+/** Set true when sponsors should show again in the public footer. */
+const SHOW_FOOTER_SPONSORS = false;
+
 export function EwrcChrome({
   site,
   children,
@@ -33,16 +36,18 @@ export function EwrcChrome({
         </div>
       </header>
       {children}
-      <footer className="border-t border-[var(--ewrc-border)] bg-[var(--ewrc-footer-bg)] py-6 text-center text-xs text-[var(--ewrc-muted-3)]">
-        <p>{site.resultsPageSubtitle}</p>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src="/uploads/hondagalatariotis.png"
-          alt="Hondagalatariotis logo"
-          className="mx-auto mt-3 h-auto max-h-14 w-auto object-contain"
-          loading="lazy"
-        />
-      </footer>
+      {SHOW_FOOTER_SPONSORS ? (
+        <footer className="border-t border-[var(--ewrc-border)] bg-[var(--ewrc-footer-bg)] py-6 text-center text-xs text-[var(--ewrc-muted-3)]">
+          <p>{site.resultsPageSubtitle}</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/uploads/hondagalatariotis.png"
+            alt="Hondagalatariotis logo"
+            className="mx-auto mt-3 h-auto max-h-14 w-auto object-contain"
+            loading="lazy"
+          />
+        </footer>
+      ) : null}
     </div>
   );
 }
