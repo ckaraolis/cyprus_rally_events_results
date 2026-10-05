@@ -24,6 +24,16 @@ import {
   resolveStartingOrderTime,
 } from "@/lib/rally/leg-starting-order";
 import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
+import {
+  createPreEventStage,
+  isCompetitiveStage,
+  isPreEventStage,
+  reindexStagesInKindOrder,
+  sortStagesByKindThenOrder,
+  stageControlLabel,
+  stageHasKind,
+  competitiveStages,
+} from "@/lib/rally/stage-kind";
 import { AdminCountrySelect } from "./admin-country-select";
 import {
   exportRallyAfterSsExcel,
@@ -320,17 +330,19 @@ export function EventEditor({ event: initial }: Props) {
     legStartingOrders: initial.legStartingOrders ?? {},
   });
   const [stages, setStages] = useState<Stage[]>(() =>
-    [...initial.stages]
-      .sort((a, b) => a.order - b.order)
-      .map((s) => ({
+    sortStagesByKindThenOrder(
+      [...initial.stages].map((s) => ({
         ...s,
+        kind:
+          s.kind === "shakedown" || s.kind === "qualify" ? s.kind : "ss",
         progressStatus: s.progressStatus ?? "pending",
         firstCarStartTime: s.firstCarStartTime ?? null,
         leg:
-          typeof s.leg === "number" && Number.isFinite(s.leg) && Math.floor(s.leg) >= 1
+          typeof s.leg === "number" && Number.isFinite(s.leg) && Math.floor(s.leg) >= 0
             ? Math.floor(s.leg)
             : 1,
       })),
+    ),
   );
   const [entries, setEntries] = useState<Entry[]>(() =>
     [...initial.entries].map((e) => ({
@@ -422,7 +434,7 @@ export function EventEditor({ event: initial }: Props) {
   }, [stages]);
 
   const sortedStages = useMemo(
-    () => [...stages].sort((a, b) => a.order - b.order),
+    () => sortStagesByKindThenOrder(stages),
     [stages],
   );
 
@@ -439,11 +451,29 @@ export function EventEditor({ event: initial }: Props) {
   const availableLegs = useMemo(() => {
     const set = new Set<number>();
     for (const s of stages) {
+      if (!isCompetitiveStage(s)) continue;
       if (typeof s.leg === "number" && s.leg >= 1) set.add(Math.floor(s.leg));
     }
     const list = [...set].sort((a, b) => a - b);
     return list.length > 0 ? list : [1];
   }, [stages]);
+
+  const hasShakedown = stageHasKind(stages, "shakedown");
+  const hasQualify = stageHasKind(stages, "qualify");
+
+  function setPreEventStageEnabled(
+    kind: "shakedown" | "qualify",
+    enabled: boolean,
+  ) {
+    setStages((prev) => {
+      const without = prev.filter((s) => (s.kind ?? "ss") !== kind);
+      if (!enabled) return reindexStagesInKindOrder(without);
+      if (without.some((s) => (s.kind ?? "ss") === kind)) {
+        return reindexStagesInKindOrder(without);
+      }
+      return reindexStagesInKindOrder([...without, createPreEventStage(kind)]);
+    });
+  }
 
   useEffect(() => {
     if (!availableLegs.includes(startingOrderLeg)) {
@@ -710,7 +740,7 @@ export function EventEditor({ event: initial }: Props) {
 
   function saveStages() {
     setFlash(null);
-    const ordered = sortedStages.map((s, i) => ({ ...s, order: i + 1 }));
+    const ordered = reindexStagesInKindOrder(stages);
     startTransition(async () => {
       await replaceStages(eventId, ordered);
       setStages(ordered);
@@ -733,7 +763,9 @@ export function EventEditor({ event: initial }: Props) {
     const byCar = new Map<number, EventPenaltyItem[]>();
     const unknownCars: string[] = [];
     const entryByCar = new Map(entries.map((e) => [e.startNumber, e]));
-    const validOrders = new Set(stages.map((s) => s.order));
+    const validOrders = new Set(
+      competitiveStages(stages).map((s) => s.order),
+    );
     for (const line of penaltyLines) {
       const carRaw = line.carNumber.trim();
       const penalty = normalizePenaltyInput(line.penalty).trim();
@@ -886,18 +918,23 @@ export function EventEditor({ event: initial }: Props) {
     queueTimingAutosave();
   }
 
-  function formatTriggerClock(timestamp100ns: number, timeOffsetMin: number): string {
+  function formatTriggerClock(
+    timestamp100ns: number,
+    timeOffsetMin: number,
+    fractionDigits: 2 | 3 = 2,
+  ): string {
     const adjusted100ns = timestamp100ns + timeOffsetMin * 60 * 10_000_000;
     const ms = Math.floor(adjusted100ns / 10_000);
     const d = new Date(ms);
     const hh = String(d.getUTCHours()).padStart(2, "0");
     const mm = String(d.getUTCMinutes()).padStart(2, "0");
     const ss = String(d.getUTCSeconds()).padStart(2, "0");
-    const cs = String(Math.floor((d.getUTCMilliseconds() % 1000) / 10)).padStart(
-      2,
-      "0",
-    );
-    return `${hh}:${mm}:${ss}.${cs}`;
+    const millis = d.getUTCMilliseconds() % 1000;
+    const frac =
+      fractionDigits === 3
+        ? String(millis).padStart(3, "0")
+        : String(Math.floor(millis / 10)).padStart(2, "0");
+    return `${hh}:${mm}:${ss}.${frac}`;
   }
 
   /**
@@ -1199,7 +1236,9 @@ export function EventEditor({ event: initial }: Props) {
                         const st = sid
                           ? stagesRef.current.find((s) => s.id === sid)
                           : undefined;
-                        const label = st ? `SS ${st.order} (${st.progressStatus})` : "selected stage";
+                        const label = st
+                          ? `${stageControlLabel(st, stagesRef.current)} (${st.progressStatus})`
+                          : "selected stage";
                         return `${label} is not Live — set the stage to Live on the Stages tab for ALGE (Completed = manual only)`;
                       })();
                 setStreamInfo(
@@ -1207,9 +1246,20 @@ export function EventEditor({ event: initial }: Props) {
                 );
                 return;
               }
+              const activeRallyStageId =
+                metaRef.current.type === "rally"
+                  ? (sub.stageId ?? rallyTimingStageIdRef.current)
+                  : undefined;
+              const activeRallyStage =
+                activeRallyStageId
+                  ? stagesRef.current.find((s) => s.id === activeRallyStageId)
+                  : undefined;
+              const clockDigits: 2 | 3 =
+                activeRallyStage && isPreEventStage(activeRallyStage) ? 3 : 2;
               const rawTriggerTime = formatTriggerClock(
                 timestampNum,
                 Number.isNaN(timeOffsetNum) ? 0 : timeOffsetNum,
+                clockDigits,
               );
               let matched = false;
               const finishChannelNum = Number.parseInt(algeFinishChannelId, 10);
@@ -1226,14 +1276,13 @@ export function EventEditor({ event: initial }: Props) {
                         timingChannelNum === Number.parseInt(algeStartChannelId, 10)
                       ? "start"
                       : "start");
+              // Competitive SS starts round to the minute; Shakedown/Qualify keep exact ALGE time.
               const triggerTime =
-                metaRef.current.type === "rally" && activeTrigger === "start"
+                metaRef.current.type === "rally" &&
+                activeTrigger === "start" &&
+                (!activeRallyStage || isCompetitiveStage(activeRallyStage))
                   ? roundRallyStartClockToNearestMinute(rawTriggerTime)
                   : rawTriggerTime;
-              const activeRallyStageId =
-                metaRef.current.type === "rally"
-                  ? (sub.stageId ?? rallyTimingStageIdRef.current)
-                  : undefined;
               let nextEntriesSnapshot: Entry[] | null = null;
               setEntries((prev) => {
                 const next = prev.map((x) => {
@@ -1317,24 +1366,26 @@ export function EventEditor({ event: initial }: Props) {
   }
 
   function addStage() {
-    const nextOrder =
-      sortedStages.length === 0
-        ? 1
-        : Math.max(...sortedStages.map((s) => s.order)) + 1;
-    const last = sortedStages[sortedStages.length - 1];
-    const defaultLeg = last?.leg ?? 1;
-    setStages((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        name: `Stage ${nextOrder}`,
-        order: nextOrder,
-        leg: defaultLeg,
-        distanceKm: null,
-        firstCarStartTime: null,
-        progressStatus: "pending",
-      },
-    ]);
+    const competitive = stages.filter(isCompetitiveStage);
+    const nextSsNumber = competitive.length + 1;
+    const lastCompetitive = competitive[competitive.length - 1];
+    const defaultLeg =
+      lastCompetitive && lastCompetitive.leg >= 1 ? lastCompetitive.leg : 1;
+    setStages((prev) =>
+      reindexStagesInKindOrder([
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          name: `SS ${nextSsNumber}`,
+          order: prev.length + 1,
+          leg: defaultLeg,
+          kind: "ss",
+          distanceKm: null,
+          firstCarStartTime: null,
+          progressStatus: "pending",
+        },
+      ]),
+    );
   }
 
   function moveStage(id: string, dir: -1 | 1) {
@@ -1342,16 +1393,26 @@ export function EventEditor({ event: initial }: Props) {
     const i = list.findIndex((s) => s.id === id);
     const j = i + dir;
     if (i < 0 || j < 0 || j >= list.length) return;
-    const t = list[i];
-    list[i] = list[j];
-    list[j] = t;
-    setStages(
-      list.map((s, idx) => ({ ...s, order: idx + 1 })),
-    );
+    const a = list[i]!;
+    const b = list[j]!;
+    // Keep Shakedown / Qualify pinned above competitive SS.
+    if (isPreEventStage(a) || isPreEventStage(b)) {
+      if ((a.kind ?? "ss") !== (b.kind ?? "ss")) return;
+    }
+    list[i] = b;
+    list[j] = a;
+    setStages(reindexStagesInKindOrder(list));
   }
 
   function removeStage(id: string) {
-    setStages((prev) => prev.filter((s) => s.id !== id));
+    setStages((prev) => {
+      const target = prev.find((s) => s.id === id);
+      if (target && isPreEventStage(target)) {
+        // Use the Shakedown / Qualify checkboxes instead.
+        return prev;
+      }
+      return reindexStagesInKindOrder(prev.filter((s) => s.id !== id));
+    });
   }
 
   function addEntry() {
@@ -1816,6 +1877,16 @@ export function EventEditor({ event: initial }: Props) {
     meta.type === "rally"
       ? sortedStages.find((s) => s.id === rallyTimingStageId) ?? sortedStages[0] ?? null
       : null;
+  const timingFractionDigits: 2 | 3 =
+    selectedRallyTimingStage && isPreEventStage(selectedRallyTimingStage)
+      ? 3
+      : 2;
+  const timingClockPlaceholder =
+    timingFractionDigits === 3 ? "HH:mm:ss.ccc" : "HH:mm:ss.cc";
+  const timingClockTitle =
+    timingFractionDigits === 3
+      ? "24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.ccc"
+      : "24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc";
   const selectedRallyStageAlgeConfig =
     meta.type === "rally" && selectedRallyTimingStage
       ? getRallyStageAlgeConfig(selectedRallyTimingStage.id)
@@ -1950,15 +2021,21 @@ export function EventEditor({ event: initial }: Props) {
         : Number.parseInt(fracRaw.padEnd(3, "0").slice(0, 3), 10);
     return ((h * 60 + min) * 60 + sec) * 1000 + ms;
   };
-  const formatDuration = (totalMs: number): string => {
+  const formatDuration = (
+    totalMs: number,
+    fractionDigits: 2 | 3 = 2,
+  ): string => {
     const msSafe = Math.max(0, totalMs);
     const h = Math.floor(msSafe / 3_600_000);
     const m = Math.floor((msSafe % 3_600_000) / 60_000);
     const s = Math.floor((msSafe % 60_000) / 1000);
-    const cs = Math.floor((msSafe % 1000) / 10);
+    const frac =
+      fractionDigits === 3
+        ? Math.floor(msSafe % 1000)
+        : Math.floor((msSafe % 1000) / 10);
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(
       s,
-    ).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+    ).padStart(2, "0")}.${String(frac).padStart(fractionDigits, "0")}`;
   };
   const parsePenaltyToMs = (value: string): number => {
     const t = value.trim();
@@ -1977,6 +2054,7 @@ export function EventEditor({ event: initial }: Props) {
     startValue: string,
     finishValue: string,
     penaltyValue = "",
+    fractionDigits: 2 | 3 = 2,
   ): string => {
     const outcome = parseTimingOutcome(startValue, finishValue);
     const outcomeLabel = formatTimingOutcomeLabel(outcome);
@@ -1986,7 +2064,10 @@ export function EventEditor({ event: initial }: Props) {
     if (startMs == null || finishMs == null) return "—";
     const diff = finishMs - startMs;
     if (diff < 0) return "—";
-    return formatDuration(diff + parsePenaltyToMs(penaltyValue));
+    return formatDuration(
+      diff + parsePenaltyToMs(penaltyValue),
+      fractionDigits,
+    );
   };
   const setTimingOutcomeForEntry = (
     entryId: string,
@@ -2126,7 +2207,7 @@ export function EventEditor({ event: initial }: Props) {
       .map((r) => (r.startNo === r.endNo ? `#${r.startNo}` : `#${r.startNo}–#${r.endNo}`))
       .join(", ");
     setFlash(
-      `Assigned start times (${touched.size} car${touched.size === 1 ? "" : "s"}: ${ranges}) on SS ${selectedRallyTimingStage.order}.`,
+      `Assigned start times (${touched.size} car${touched.size === 1 ? "" : "s"}: ${ranges}) on ${stageControlLabel(selectedRallyTimingStage, sortedStages)}.`,
     );
     queueTimingAutosave();
   };
@@ -2678,13 +2759,42 @@ export function EventEditor({ event: initial }: Props) {
           <strong>Bar status</strong> drives the public Stage results strip:
           not started (yellow), live (green), completed (red). ALGE can update
           this later via API. <strong>Leg</strong> groups stages on the public
-          Itinerary (same number = same leg).
+          Itinerary (same number = same leg). Optional{" "}
+          <strong>Shakedown</strong> / <strong>Qualify</strong> sit at the top of
+          the itinerary and Stages Control, but do not count in rally results.
         </p>
+        {meta.type === "rally" ? (
+          <div className="mt-3 flex flex-wrap gap-4 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-100">
+              <input
+                type="checkbox"
+                className="rounded border-zinc-300"
+                checked={hasShakedown}
+                onChange={(e) =>
+                  setPreEventStageEnabled("shakedown", e.target.checked)
+                }
+              />
+              Has Shakedown
+            </label>
+            <label className="inline-flex items-center gap-2 text-sm text-zinc-800 dark:text-zinc-100">
+              <input
+                type="checkbox"
+                className="rounded border-zinc-300"
+                checked={hasQualify}
+                onChange={(e) =>
+                  setPreEventStageEnabled("qualify", e.target.checked)
+                }
+              />
+              Has Qualify stage
+            </label>
+          </div>
+        ) : null}
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[1000px] text-left text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-xs uppercase text-zinc-500 dark:border-zinc-700">
                 <th className="pb-2 pr-2">#</th>
+                <th className="pb-2 pr-2">Type</th>
                 <th className="pb-2 pr-2">Name</th>
                 <th className="pb-2 pr-2 w-16">Leg</th>
                 {meta.type === "rally" ? (
@@ -2708,6 +2818,15 @@ export function EventEditor({ event: initial }: Props) {
                 >
                   <td className="py-2 pr-2 text-zinc-500">{idx + 1}</td>
                   <td className="py-2 pr-2">
+                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
+                      {s.kind === "shakedown"
+                        ? "Shakedown"
+                        : s.kind === "qualify"
+                          ? "Qualify"
+                          : "SS"}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-2">
                     <input
                       className="w-full min-w-[8rem] rounded border border-zinc-200 px-2 py-1 dark:border-zinc-700 dark:bg-zinc-950"
                       value={s.name}
@@ -2721,27 +2840,36 @@ export function EventEditor({ event: initial }: Props) {
                     />
                   </td>
                   <td className="py-2 pr-2">
-                    <input
-                      type="number"
-                      min={1}
-                      step={1}
-                      className="w-14 rounded border border-zinc-200 px-2 py-1 text-center dark:border-zinc-700 dark:bg-zinc-950"
-                      value={s.leg}
-                      onChange={(e) => {
-                        const raw = e.target.value;
-                        const n =
-                          raw === ""
-                            ? 1
-                            : Math.max(1, Math.floor(Number.parseInt(raw, 10) || 1));
-                        setStages((prev) =>
-                          prev.map((x) =>
-                            x.id === s.id ? { ...x, leg: n } : x,
-                          ),
-                        );
-                      }}
-                      title="Itinerary leg (1, 2, …)"
-                      aria-label="Leg number"
-                    />
+                    {isPreEventStage(s) ? (
+                      <span className="text-xs text-zinc-400" title="Pre-event">
+                        —
+                      </span>
+                    ) : (
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        className="w-14 rounded border border-zinc-200 px-2 py-1 text-center dark:border-zinc-700 dark:bg-zinc-950"
+                        value={s.leg}
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          const n =
+                            raw === ""
+                              ? 1
+                              : Math.max(
+                                  1,
+                                  Math.floor(Number.parseInt(raw, 10) || 1),
+                                );
+                          setStages((prev) =>
+                            prev.map((x) =>
+                              x.id === s.id ? { ...x, leg: n } : x,
+                            ),
+                          );
+                        }}
+                        title="Itinerary leg (1, 2, …)"
+                        aria-label="Leg number"
+                      />
+                    )}
                   </td>
                   {meta.type === "rally" ? (
                     <td className="py-2 pr-2">
@@ -2821,25 +2949,46 @@ export function EventEditor({ event: initial }: Props) {
                     <div className="flex gap-1">
                       <button
                         type="button"
-                        className="rounded border border-zinc-200 px-2 py-0.5 text-xs dark:border-zinc-700"
+                        className="rounded border border-zinc-200 px-2 py-0.5 text-xs dark:border-zinc-700 disabled:opacity-40"
                         onClick={() => moveStage(s.id, -1)}
+                        disabled={isPreEventStage(s)}
+                        title={
+                          isPreEventStage(s)
+                            ? "Shakedown / Qualify stay at the top"
+                            : "Move up"
+                        }
                       >
                         ↑
                       </button>
                       <button
                         type="button"
-                        className="rounded border border-zinc-200 px-2 py-0.5 text-xs dark:border-zinc-700"
+                        className="rounded border border-zinc-200 px-2 py-0.5 text-xs dark:border-zinc-700 disabled:opacity-40"
                         onClick={() => moveStage(s.id, 1)}
+                        disabled={isPreEventStage(s)}
+                        title={
+                          isPreEventStage(s)
+                            ? "Shakedown / Qualify stay at the top"
+                            : "Move down"
+                        }
                       >
                         ↓
                       </button>
-                      <button
-                        type="button"
-                        className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-800 dark:border-red-900 dark:text-red-400"
-                        onClick={() => removeStage(s.id)}
-                      >
-                        ✕
-                      </button>
+                      {!isPreEventStage(s) ? (
+                        <button
+                          type="button"
+                          className="rounded border border-red-200 px-2 py-0.5 text-xs text-red-800 dark:border-red-900 dark:text-red-400"
+                          onClick={() => removeStage(s.id)}
+                        >
+                          ✕
+                        </button>
+                      ) : (
+                        <span
+                          className="px-1 text-[10px] uppercase tracking-wide text-zinc-400"
+                          title="Turn off with Has Shakedown / Has Qualify above"
+                        >
+                          —
+                        </span>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -3398,7 +3547,7 @@ export function EventEditor({ event: initial }: Props) {
                         : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
                     }`}
                   >
-                    SS {stage.order}
+                    {stageControlLabel(stage, sortedStages)}
                   </button>
                 );
               })
@@ -3413,10 +3562,17 @@ export function EventEditor({ event: initial }: Props) {
             {meta.type === "speed"
               ? timingRunLabel
               : selectedRallyTimingStage
-                ? `SS ${selectedRallyTimingStage.order} (${selectedRallyTimingStage.name})`
+                ? `${stageControlLabel(selectedRallyTimingStage, sortedStages)} (${selectedRallyTimingStage.name})`
                 : "the selected stage"}
             . Only crews with <strong>Start = Yes</strong> appear here. Timing values are
             stored with entries.
+            {meta.type === "rally" ? (
+              <>
+                {" "}
+                Shakedown / Qualify times are stored for display but do not count in
+                rally results.
+              </>
+            ) : null}
           </p>
           {meta.type === "speed" ? (
             <p className="mt-2 text-xs text-zinc-600 dark:text-zinc-300">
@@ -3515,7 +3671,8 @@ export function EventEditor({ event: initial }: Props) {
               <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    ALGE start / finish for SS {selectedRallyTimingStage.order}
+                    ALGE start / finish for{" "}
+                    {stageControlLabel(selectedRallyTimingStage, sortedStages)}
                   </p>
                   <div className="flex items-center gap-2">
                     <span
@@ -3601,9 +3758,10 @@ export function EventEditor({ event: initial }: Props) {
                 </div>
                 <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
                   Save devices before connecting the stream so start and finish
-                  clocks are kept if you reload the page. Rally start triggers are
-                  rounded to the nearest minute (e.g. 11:12:58.97 → 11:13:00.00);
-                  finish times stay exact.
+                  clocks are kept if you reload the page. Competitive SS start
+                  triggers are rounded to the nearest minute (e.g. 11:12:58.97 →
+                  11:13:00.00). Shakedown / Qualify keep exact times to
+                  thousandths (0.001s); finish times stay exact.
                 </p>
               </div>
             ) : null}
@@ -3650,7 +3808,9 @@ export function EventEditor({ event: initial }: Props) {
                             className="flex flex-wrap items-center justify-between gap-2 py-1.5"
                           >
                             <div className="flex flex-wrap items-center gap-2">
-                              <span className="font-medium">SS {s.order}</span>
+                              <span className="font-medium">
+                                {stageControlLabel(s, sortedStages)}
+                              </span>
                               {liveBadge}
                               {cfg.startDeviceId.trim() ? (
                                 <span className="text-xs text-zinc-600 dark:text-zinc-300">
@@ -3835,7 +3995,7 @@ export function EventEditor({ event: initial }: Props) {
                           type="text"
                           inputMode="numeric"
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
-                          placeholder="HH:mm:ss.cc"
+                          placeholder={timingClockPlaceholder}
                           className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={startValue}
                           onChange={(e) =>
@@ -3851,7 +4011,7 @@ export function EventEditor({ event: initial }: Props) {
                               ),
                             )
                           }
-                          title="24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc"
+                          title={timingClockTitle}
                         />
                       </label>
                       <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
@@ -3860,7 +4020,7 @@ export function EventEditor({ event: initial }: Props) {
                           type="text"
                           inputMode="numeric"
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
-                          placeholder="HH:mm:ss.cc"
+                          placeholder={timingClockPlaceholder}
                           className="mt-1 w-full rounded border border-zinc-200 px-2 py-2 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={finishValue}
                           onChange={(e) =>
@@ -3876,13 +4036,18 @@ export function EventEditor({ event: initial }: Props) {
                               ),
                             )
                           }
-                          title="24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc"
+                          title={timingClockTitle}
                         />
                       </label>
                     </div>
                     <p className="mt-2 font-mono text-sm text-zinc-700 dark:text-zinc-200">
                       Total:{" "}
-                      {computeTotalTime(startValue, finishValue, penaltyValue)}
+                      {computeTotalTime(
+                        startValue,
+                        finishValue,
+                        penaltyValue,
+                        timingFractionDigits,
+                      )}
                     </p>
                     <div className="mt-2 flex gap-2">
                       <button
@@ -3949,8 +4114,8 @@ export function EventEditor({ event: initial }: Props) {
                   <th className="pb-2 pr-2">
                     {meta.type === "rally" ? "Crew" : "Driver"}
                   </th>
-                  <th className="pb-2 pr-2 w-24">Start</th>
-                  <th className="pb-2 pr-2 w-40">Finish</th>
+                  <th className="pb-2 pr-2 w-28">Start</th>
+                  <th className="pb-2 pr-2 w-44">Finish</th>
                   <th className="pb-2 pr-2 w-36">Total time</th>
                   <th className="pb-2 pr-2 w-28">Status</th>
                   {meta.type === "rally" ? (
@@ -3996,8 +4161,8 @@ export function EventEditor({ event: initial }: Props) {
                           type="text"
                           inputMode="numeric"
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
-                          placeholder="HH:mm:ss.cc"
-                          className="w-24 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          placeholder={timingClockPlaceholder}
+                          className="w-28 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={startValue}
                           onChange={(e) =>
                             applyTimingEntryUpdate((prev) =>
@@ -4012,7 +4177,7 @@ export function EventEditor({ event: initial }: Props) {
                               ),
                             )
                           }
-                          title="24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc"
+                          title={timingClockTitle}
                         />
                       </td>
                       <td className="py-2 pr-2">
@@ -4020,8 +4185,8 @@ export function EventEditor({ event: initial }: Props) {
                           type="text"
                           inputMode="numeric"
                           pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
-                          placeholder="HH:mm:ss.cc"
-                          className="w-40 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                          placeholder={timingClockPlaceholder}
+                          className="w-44 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
                           value={finishValue}
                           onChange={(e) =>
                             applyTimingEntryUpdate((prev) =>
@@ -4036,11 +4201,16 @@ export function EventEditor({ event: initial }: Props) {
                               ),
                             )
                           }
-                          title="24-hour format: HH:mm, HH:mm:ss or HH:mm:ss.cc"
+                          title={timingClockTitle}
                         />
                       </td>
                       <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
-                        {computeTotalTime(startValue, finishValue, penaltyValue)}
+                        {computeTotalTime(
+                          startValue,
+                          finishValue,
+                          penaltyValue,
+                          timingFractionDigits,
+                        )}
                       </td>
                       <td className="py-2 pr-2">
                         <div className="flex flex-wrap gap-1">
@@ -4289,7 +4459,7 @@ export function EventEditor({ event: initial }: Props) {
                     void exportRallyFinalExcel(
                       meta.name || "event",
                       entries,
-                      [...stages].sort((a, b) => a.order - b.order),
+                      competitiveStages(stages),
                     )
                   }
                   className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
@@ -4435,17 +4605,15 @@ export function EventEditor({ event: initial }: Props) {
                             )
                           }
                         >
-                          {stages.length === 0 ? (
+                          {competitiveStages(stages).length === 0 ? (
                             <option value={1}>No stages yet</option>
                           ) : (
-                            [...stages]
-                              .sort((a, b) => a.order - b.order)
-                              .map((st) => (
-                                <option key={st.id} value={st.order}>
-                                  After SS{st.order}
-                                  {st.name ? ` — ${st.name}` : ""}
-                                </option>
-                              ))
+                            competitiveStages(stages).map((st) => (
+                              <option key={st.id} value={st.order}>
+                                After {stageControlLabel(st, stages)}
+                                {st.name ? ` — ${st.name}` : ""}
+                              </option>
+                            ))
                           )}
                         </select>
                       </td>
@@ -4490,7 +4658,7 @@ export function EventEditor({ event: initial }: Props) {
               type="button"
               onClick={() => {
                 const defaultOrder =
-                  [...stages].sort((a, b) => a.order - b.order)[0]?.order ?? 1;
+                  competitiveStages(stages)[0]?.order ?? 1;
                 setPenaltyLines((prev) => [
                   ...prev,
                   {

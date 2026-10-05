@@ -22,6 +22,7 @@ import type {
   StageProgressStatus,
 } from "./types";
 import { normalizeLegStartingOrders } from "./leg-starting-order";
+import { normalizeStageKind } from "./stage-kind";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
@@ -203,6 +204,7 @@ function normalizeStage(raw: unknown): Stage {
     name: typeof o.name === "string" ? o.name : "Stage",
     order: typeof o.order === "number" ? o.order : 0,
     leg: normalizeLeg(o.leg),
+    kind: normalizeStageKind(o.kind),
     distanceKm: typeof km === "number" ? km : null,
     firstCarStartTime: normalizeFirstCarStartTime(o.firstCarStartTime),
     progressStatus: normalizeProgressStatus(o.progressStatus),

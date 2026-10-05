@@ -1,6 +1,7 @@
 import type { Entry, Stage } from "@/lib/rally/types";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
 import { resolveStartingOrderTime } from "@/lib/rally/leg-starting-order";
+import { isPreEventStage } from "@/lib/rally/stage-kind";
 
 type TimingBlob = Record<
   string,
@@ -65,20 +66,27 @@ function parsePenaltyMs(raw: string): number | null {
   return Number.isFinite(secOnly) && secOnly >= 0 ? secOnly * 1000 : null;
 }
 
-function formatDurationMs(ms: number | null): string {
+function formatDurationMs(
+  ms: number | null,
+  fractionDigits: 2 | 3 = 2,
+): string {
   if (ms == null) return "—";
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   const s = Math.floor((ms % 60_000) / 1000);
-  const cs = Math.floor((ms % 1000) / 10);
+  const frac =
+    fractionDigits === 3
+      ? Math.floor(ms % 1000)
+      : Math.floor((ms % 1000) / 10);
+  const fracStr = String(frac).padStart(fractionDigits, "0");
   if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${fracStr}`;
   }
-  return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}.${fracStr}`;
 }
 
-function formatDiffMs(ms: number): string {
-  const base = formatDurationMs(ms);
+function formatDiffMs(ms: number, fractionDigits: 2 | 3 = 2): string {
+  const base = formatDurationMs(ms, fractionDigits);
   return base.startsWith("0:") ? base.slice(2) : base;
 }
 
@@ -160,6 +168,7 @@ export async function exportRallyStageExcel(
   entries: Entry[],
   stage: Stage,
 ): Promise<void> {
+  const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
   const ranked = started(entries)
     .map((row) => {
       const v = stageValues(row, stage.id);
@@ -190,12 +199,12 @@ export async function exportRallyStageExcel(
     row.coDriver || "—",
     row.car || "—",
     row.class || "—",
-    cell.outcome ?? formatDurationMs(ssTimeMs),
+    cell.outcome ?? formatDurationMs(ssTimeMs, timeDigits),
     penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    cell.outcome ?? formatDurationMs(totalMs),
+    cell.outcome ?? formatDurationMs(totalMs, timeDigits),
     totalMs == null || leader == null || totalMs <= leader
       ? "—"
-      : `+${formatDiffMs(totalMs - leader)}`,
+      : `+${formatDiffMs(totalMs - leader, timeDigits)}`,
   ]);
   await downloadExcelTable({
     fileName: `${eventName}-SS${stage.order}`,

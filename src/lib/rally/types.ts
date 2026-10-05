@@ -10,6 +10,9 @@ export type OfficialNoticeCategory =
 /** Public “Stage results” bar: dot colour (yellow / green / red). */
 export type StageProgressStatus = "pending" | "live" | "completed";
 
+/** Competitive SS vs optional pre-event stages (times only; not in rally results). */
+export type StageKind = "ss" | "shakedown" | "qualify";
+
 export interface SiteSettings {
   resultsPageTitle: string;
   resultsPageSubtitle: string;
@@ -25,6 +28,11 @@ export interface Stage {
   order: number;
   /** 1-based leg for itinerary grouping (e.g. SS1–SS2 = leg 1, SS3 = leg 2). */
   leg: number;
+  /**
+   * `ss` = competitive special stage (counts in results).
+   * `shakedown` / `qualify` = pre-event only (itinerary + timing; not in results).
+   */
+  kind: StageKind;
   distanceKm: number | null;
   /** Local time when car 1 starts the stage (HH:mm from admin). Null = TBA. */
   firstCarStartTime: string | null;

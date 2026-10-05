@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { normalizeLegStartingOrders } from "./leg-starting-order";
+import { normalizeStageKind } from "./stage-kind";
 import type { Entry, RallyEvent, RallySiteConfig, SiteSettings, Stage } from "./types";
 
 function toSite(row: {
@@ -27,12 +28,13 @@ function toStage(row: {
   distanceKm: number | null;
   firstCarStartTime: string | null;
   progressStatus: string;
-}): Stage {
+}, kindRaw?: unknown): Stage {
   return {
     id: row.id,
     name: row.name,
     order: row.order,
     leg: row.leg,
+    kind: normalizeStageKind(kindRaw),
     distanceKm: row.distanceKm,
     firstCarStartTime: row.firstCarStartTime,
     progressStatus: (() => {
@@ -156,6 +158,12 @@ function toEvent(row: {
     !Array.isArray(algeMap.__legStartingOrders)
       ? algeMap.__legStartingOrders
       : {};
+  const stageKindsRaw =
+    algeMap.__stageKinds &&
+    typeof algeMap.__stageKinds === "object" &&
+    !Array.isArray(algeMap.__stageKinds)
+      ? (algeMap.__stageKinds as Record<string, unknown>)
+      : {};
   return {
     id: row.id,
     name: row.name,
@@ -186,6 +194,7 @@ function toEvent(row: {
             k !== "__officialNoticeData" &&
             k !== "__rallyStageAlgeConfig" &&
             k !== "__legStartingOrders" &&
+            k !== "__stageKinds" &&
             k !== "__configUpdatedAt",
         )
         .map(([k, v]) => [k, typeof v === "number" ? v : 0]),
@@ -194,7 +203,7 @@ function toEvent(row: {
     officialNoticeCustomCategories: customCategories,
     officialNoticeDocuments: officialDocs,
     legStartingOrders: normalizeLegStartingOrders(legStartingOrdersRaw),
-    stages: row.stages.map(toStage),
+    stages: row.stages.map((s) => toStage(s, stageKindsRaw[s.id])),
     entries: row.entries.map(toEntry),
   };
 }
@@ -370,6 +379,9 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
               documents: e.officialNoticeDocuments,
             },
             __legStartingOrders: e.legStartingOrders ?? {},
+            __stageKinds: Object.fromEntries(
+              e.stages.map((s) => [s.id, s.kind ?? "ss"]),
+            ),
             /** Bumps on every save so public poll `updatedAt` always moves with timing edits. */
             __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,
@@ -393,6 +405,9 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
               documents: e.officialNoticeDocuments,
             },
             __legStartingOrders: e.legStartingOrders ?? {},
+            __stageKinds: Object.fromEntries(
+              e.stages.map((s) => [s.id, s.kind ?? "ss"]),
+            ),
             __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,
         },

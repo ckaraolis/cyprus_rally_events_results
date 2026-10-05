@@ -11,6 +11,12 @@ import type {
   Stage,
   StageProgressStatus,
 } from "@/lib/rally/types";
+import {
+  competitiveStages,
+  isCompetitiveStage,
+  isPreEventStage,
+  sortStagesByKindThenOrder,
+} from "@/lib/rally/stage-kind";
 
 const RALLY_TABS = [
   { id: "overview", label: "Overview" },
@@ -349,7 +355,9 @@ function buildLandscapeResultsPdfHtml(input: {
     .join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
 }
 
-function buildRallyStagePdfRows(entries: Entry[], stageId: string): string[][] {
+function buildRallyStagePdfRows(entries: Entry[], stage: Stage): string[][] {
+  const stageId = stage.id;
+  const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
   const ranked = [...entries]
     .map((row) => {
       const values = getRallyStageTimingValues(row, stageId);
@@ -391,12 +399,12 @@ function buildRallyStagePdfRows(entries: Entry[], stageId: string): string[][] {
     row.coDriver || "—",
     row.car || "—",
     row.class || "—",
-    cell.outcome != null ? cell.outcome : formatDurationMs(ssTimeMs),
+    cell.outcome != null ? cell.outcome : formatDurationMs(ssTimeMs, timeDigits),
     penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    cell.outcome != null ? cell.outcome : formatDurationMs(totalMs),
+    cell.outcome != null ? cell.outcome : formatDurationMs(totalMs, timeDigits),
     totalMs == null || leaderMs == null || totalMs <= leaderMs
       ? "—"
-      : `+${formatDiffDurationMs(totalMs - leaderMs)}`,
+      : `+${formatDiffDurationMs(totalMs - leaderMs, timeDigits)}`,
   ]);
 }
 
@@ -649,6 +657,7 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
     stages: e.stages.map((s) => ({
       id: s.id,
       order: s.order,
+      kind: s.kind ?? "ss",
       progressStatus: s.progressStatus,
       name: s.name,
       leg: s.leg,
@@ -717,7 +726,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   const [finalResultsClassFilter, setFinalResultsClassFilter] = useState("");
 
   const stagesSorted = useMemo(
-    () => [...event.stages].sort((a, b) => a.order - b.order),
+    () => sortStagesByKindThenOrder(event.stages),
+    [event.stages],
+  );
+  const competitiveStagesSorted = useMemo(
+    () => competitiveStages(event.stages),
     [event.stages],
   );
 
@@ -874,21 +887,22 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     resultsStripItems.find((x) => x.id === selectedStripId) ??
     resultsStripItems[0] ??
     null;
-  /** All SS from the first up to and including the currently selected stage (rally only). */
+  /** Competitive SS from the first up to the selected stage (excludes Shakedown/Qualify). */
   const cumulativeStagesUpToSelected = useMemo<Stage[]>(() => {
     if (
       event.type !== "rally" ||
       !selectedStripItem ||
-      selectedStripItem.type !== "stage"
+      selectedStripItem.type !== "stage" ||
+      !isCompetitiveStage(selectedStripItem.stage)
     ) {
       return [];
     }
-    const idx = stagesSorted.findIndex(
+    const idx = competitiveStagesSorted.findIndex(
       (s) => s.id === selectedStripItem.stage.id,
     );
     if (idx < 0) return [];
-    return stagesSorted.slice(0, idx + 1);
-  }, [event.type, selectedStripItem, stagesSorted]);
+    return competitiveStagesSorted.slice(0, idx + 1);
+  }, [competitiveStagesSorted, event.type, selectedStripItem]);
   const showAfterStageTab = cumulativeStagesUpToSelected.length >= 2;
   const effectiveRallyStageView: "stage" | "afterStage" = showAfterStageTab
     ? rallyStageView
@@ -1019,7 +1033,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         printHtmlDocument(html, { landscape: true });
         return;
       }
-      const tableRows = buildRallyStagePdfRows(rows, stage.id);
+      const tableRows = buildRallyStagePdfRows(rows, stage);
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
         subtitle: `SS${stage.order} ${stage.name}`,
@@ -1234,7 +1248,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     if (event.type !== "rally") return;
     const tableRows = buildRallyFinalPdfRows(
       entriesForFinalResults,
-      stagesSorted,
+      competitiveStagesSorted,
     );
     const html = buildLandscapeResultsPdfHtml({
       eventName: event.name,
@@ -1759,9 +1773,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                     ) : (
                       <StageTimesTable
                         entries={entriesForStageResults}
-                        stageId={
+                        stage={
                           event.type === "rally"
-                            ? selectedStripItem.stage.id
+                            ? selectedStripItem.stage
                             : undefined
                         }
                       />
@@ -2054,7 +2068,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                 ) : (
                   <OverallClassificationTable
                     rows={entriesForFinalResults}
-                    stages={stagesSorted}
+                    stages={competitiveStagesSorted}
                   />
                 )}
               </div>
@@ -2575,11 +2589,14 @@ function CumulativeAfterStageTable({
 
 function StageTimesTable({
   entries,
-  stageId,
+  stage,
 }: {
   entries: Entry[];
-  stageId?: string;
+  stage?: Stage;
 }) {
+  const stageId = stage?.id;
+  const timeDigits: 2 | 3 =
+    stage && isPreEventStage(stage) ? 3 : 2;
   const sorted = useMemo(
     () =>
       [...entries]
@@ -2662,7 +2679,7 @@ function StageTimesTable({
             </td>
             <CrewStackCell row={row} />
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {formatDurationMs(durationMs)}
+              {formatDurationMs(durationMs, timeDigits)}
             </td>
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
               {penaltyRaw.trim() ? penaltyRaw.trim() : "—"}
@@ -2670,7 +2687,7 @@ function StageTimesTable({
             <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
               {leaderMs == null || durationMs <= leaderMs
                 ? "—"
-                : `+${formatDiffDurationMs(durationMs - leaderMs)}`}
+                : `+${formatDiffDurationMs(durationMs - leaderMs, timeDigits)}`}
             </td>
           </tr>
         ))}
@@ -3567,20 +3584,44 @@ function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
     });
 }
 
-function formatDurationMs(ms: number | null): string {
+/**
+ * Format a stage/run duration.
+ * `fractionDigits`: 2 = hundredths (0.01s), 3 = thousandths (0.001s).
+ * Competitive SS use hundredths; Shakedown / Qualify use thousandths.
+ */
+function formatDurationMs(
+  ms: number | null,
+  fractionDigits: 2 | 3 = 2,
+): string {
   if (ms == null) return "—";
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   const s = Math.floor((ms % 60_000) / 1000);
-  const cs = Math.floor((ms % 1000) / 10);
+  const frac =
+    fractionDigits === 3
+      ? Math.floor(ms % 1000)
+      : Math.floor((ms % 1000) / 10);
+  const fracStr = String(frac).padStart(fractionDigits, "0");
   if (h > 0) {
-    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+    return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}.${fracStr}`;
   }
-  return `${m}:${String(s).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}.${fracStr}`;
 }
 
-function formatDiffDurationMs(ms: number | null): string {
-  const base = formatDurationMs(ms);
+function formatStageDurationMs(
+  ms: number | null,
+  stage?: Pick<Stage, "kind"> | null,
+): string {
+  const digits: 2 | 3 =
+    stage && isPreEventStage(stage) ? 3 : 2;
+  return formatDurationMs(ms, digits);
+}
+
+function formatDiffDurationMs(
+  ms: number | null,
+  fractionDigits: 2 | 3 = 2,
+): string {
+  const base = formatDurationMs(ms, fractionDigits);
   if (base.startsWith("0:")) return base.slice(2);
   return base;
 }
