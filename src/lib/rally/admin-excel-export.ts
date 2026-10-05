@@ -2,11 +2,17 @@ import type { Entry, Stage } from "@/lib/rally/types";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
 import { resolveStartingOrderTime, startingOrderScopeLabel } from "@/lib/rally/leg-starting-order";
 import { isPreEventStage, stageControlLabel } from "@/lib/rally/stage-kind";
+import {
+  SHAKEDOWN_PASS_COUNT,
+  findShakedownBestDurationMs,
+  getShakedownPassDurationsMs,
+  getShakedownPasses,
+  isShakedownStage,
+  parseStageTimingBlobEntry,
+  type StageTimingBlobEntry,
+} from "@/lib/rally/shakedown-passes";
 
-type TimingBlob = Record<
-  string,
-  { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
->;
+type TimingBlob = Record<string, StageTimingBlobEntry>;
 
 const RALLY_EVENT_PENALTY_KEY = "__event_penalty__";
 const RALLY_EVENT_PENALTY_LIST_KEY = "__event_penalties__";
@@ -20,13 +26,7 @@ function parseBlob(raw: string): TimingBlob {
     const out: TimingBlob = {};
     for (const [stageId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const item = value as Record<string, unknown>;
-      out[stageId] = {
-        startTime: typeof item.startTime === "string" ? item.startTime : "",
-        finishTime: typeof item.finishTime === "string" ? item.finishTime : "",
-        penalty: typeof item.penalty === "string" ? item.penalty : "",
-        penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
-      };
+      out[stageId] = parseStageTimingBlobEntry(value as Record<string, unknown>);
     }
     return out;
   } catch {
@@ -176,6 +176,60 @@ export async function exportRallyStageExcel(
       ? "Qualify"
       : "Shakedown"
     : chip || `SS${stage.order}`;
+
+  if (isShakedownStage(stage)) {
+    const ranked = started(entries)
+      .map((row) => {
+        const blob = parseBlob(row.trialStartTime ?? "");
+        const passes = getShakedownPasses(blob[stage.id]);
+        const durations = getShakedownPassDurationsMs(passes, parseClockToDayMs);
+        const bestMs = findShakedownBestDurationMs(durations);
+        return { row, durations, bestMs };
+      })
+      .filter((x) => x.bestMs != null)
+      .sort((a, b) =>
+        (a.bestMs ?? 0) !== (b.bestMs ?? 0)
+          ? (a.bestMs ?? 0) - (b.bestMs ?? 0)
+          : a.row.startNumber - b.row.startNumber,
+      );
+    const leader = ranked[0]?.bestMs ?? null;
+    const rows = ranked.map(({ row, durations, bestMs }, i) => [
+      String(i + 1),
+      String(row.startNumber),
+      row.driver || "—",
+      row.coDriver || "—",
+      row.car || "—",
+      row.class || "—",
+      ...Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, pi) => {
+        const d = durations[pi];
+        return d != null ? formatDurationMs(d, timeDigits) : "—";
+      }),
+      bestMs != null ? formatDurationMs(bestMs, timeDigits) : "—",
+      bestMs == null || leader == null || bestMs <= leader
+        ? "—"
+        : `+${formatDiffMs(bestMs - leader, timeDigits)}`,
+    ]);
+    await downloadExcelTable({
+      fileName: `${eventName}-${fileTag}`,
+      sheetName: fileTag.slice(0, 31),
+      columns: [
+        "Pos",
+        "#",
+        "Driver",
+        "Co-driver",
+        "Car",
+        "Class",
+        "1",
+        "2",
+        "3",
+        "Best",
+        "Diff",
+      ],
+      rows,
+    });
+    return;
+  }
+
   const ranked = started(entries)
     .map((row) => {
       const v = stageValues(row, stage.id);

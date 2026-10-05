@@ -36,6 +36,15 @@ import {
   stageHasKind,
   competitiveStages,
 } from "@/lib/rally/stage-kind";
+import {
+  findShakedownPassForTrigger,
+  getShakedownPasses,
+  isShakedownStage,
+  parseStageTimingBlobEntry,
+  setShakedownPass,
+  type ShakedownPassIndex,
+  type StageTimingBlobEntry,
+} from "@/lib/rally/shakedown-passes";
 import { AdminCountrySelect } from "./admin-country-select";
 import {
   exportRallyAfterSsExcel,
@@ -63,10 +72,7 @@ type AssignStartTimeRule = {
   firstTime: string;
   intervalMin: string;
 };
-type RallyStageTimingBlob = Record<
-  string,
-  { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
->;
+type RallyStageTimingBlob = Record<string, StageTimingBlobEntry>;
 const RALLY_PENALTY_KEY = "__event_penalty__";
 /** Multiple event-level penalties (admin Penalties tab); JSON array in `.penalty`. */
 const RALLY_PENALTY_LIST_KEY = "__event_penalties__";
@@ -282,13 +288,7 @@ function parseRallyStageTimingBlob(raw: string): RallyStageTimingBlob {
     const out: RallyStageTimingBlob = {};
     for (const [stageId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const item = value as Record<string, unknown>;
-      out[stageId] = {
-        startTime: typeof item.startTime === "string" ? item.startTime : "",
-        finishTime: typeof item.finishTime === "string" ? item.finishTime : "",
-        penalty: typeof item.penalty === "string" ? item.penalty : "",
-        penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
-      };
+      out[stageId] = parseStageTimingBlobEntry(value as Record<string, unknown>);
     }
     return out;
   } catch {
@@ -1023,10 +1023,24 @@ export function EventEditor({ event: initial }: Props) {
       if (!stageId) return row;
       const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
       const current = blob[stageId] ?? {};
-      blob[stageId] =
-        trigger === "start"
-          ? { ...current, startTime: triggerTime }
-          : { ...current, finishTime: triggerTime };
+      const stage = stagesRef.current.find((s) => s.id === stageId);
+      if (stage && isShakedownStage(stage)) {
+        const passes = getShakedownPasses(current);
+        const passIndex = findShakedownPassForTrigger(passes, trigger);
+        if (passIndex == null) return row;
+        blob[stageId] = setShakedownPass(
+          current,
+          passIndex,
+          trigger === "start"
+            ? { start: triggerTime }
+            : { finish: triggerTime },
+        );
+      } else {
+        blob[stageId] =
+          trigger === "start"
+            ? { ...current, startTime: triggerTime }
+            : { ...current, finishTime: triggerTime };
+      }
       return {
         ...row,
         trialStartTime: JSON.stringify(blob),
@@ -1906,6 +1920,8 @@ export function EventEditor({ event: initial }: Props) {
     meta.type === "rally" && selectedRallyTimingStage
       ? getRallyStageAlgeConfig(selectedRallyTimingStage.id)
       : DEFAULT_RALLY_STAGE_ALGE_CONFIG;
+  const isShakedownTiming =
+    !!selectedRallyTimingStage && isShakedownStage(selectedRallyTimingStage);
   const timingStartField: keyof Entry =
     timingRun === "trial"
       ? "trialStartTime"
@@ -1921,6 +1937,7 @@ export function EventEditor({ event: initial }: Props) {
   const timingRunStatus = meta.speedRunImportStatus[timingRun];
   const getTimingValuesForEntry = (
     row: Entry,
+    passIndex?: ShakedownPassIndex,
   ): {
     startValue: string;
     finishValue: string;
@@ -1945,6 +1962,18 @@ export function EventEditor({ event: initial }: Props) {
     }
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
     const current = blob[selectedRallyTimingStage.id] ?? {};
+    if (passIndex != null && isShakedownStage(selectedRallyTimingStage)) {
+      const pass = getShakedownPasses(current)[passIndex - 1] ?? {
+        startTime: "",
+        finishTime: "",
+      };
+      return {
+        startValue: pass.startTime?.trim() ?? "",
+        finishValue: pass.finishTime?.trim() ?? "",
+        penaltyValue: "",
+        penaltyNoteValue: "",
+      };
+    }
     return {
       startValue: current.startTime?.trim() ?? "",
       finishValue: current.finishTime?.trim() ?? "",
@@ -1956,6 +1985,7 @@ export function EventEditor({ event: initial }: Props) {
     row: Entry,
     startValue: string,
     finishValue: string,
+    passIndex?: ShakedownPassIndex,
   ): Entry => {
     if (meta.type !== "rally") {
       return {
@@ -1967,12 +1997,20 @@ export function EventEditor({ event: initial }: Props) {
     if (!selectedRallyTimingStage) return row;
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
     const current = blob[selectedRallyTimingStage.id] ?? {};
-    blob[selectedRallyTimingStage.id] = {
-      startTime: startValue,
-      finishTime: finishValue,
-      penalty: current.penalty ?? "",
-      penaltyNote: current.penaltyNote ?? "",
-    };
+    if (passIndex != null && isShakedownStage(selectedRallyTimingStage)) {
+      blob[selectedRallyTimingStage.id] = setShakedownPass(current, passIndex, {
+        start: startValue,
+        finish: finishValue,
+      });
+    } else {
+      blob[selectedRallyTimingStage.id] = {
+        startTime: startValue,
+        finishTime: finishValue,
+        penalty: current.penalty ?? "",
+        penaltyNote: current.penaltyNote ?? "",
+        ...(current.passes ? { passes: current.passes } : {}),
+      };
+    }
     return {
       ...row,
       trialStartTime: JSON.stringify(blob),
@@ -2008,6 +2046,7 @@ export function EventEditor({ event: initial }: Props) {
       finishTime: current.finishTime ?? "",
       penalty: penaltyValue,
       penaltyNote: nextNote,
+      ...(current.passes ? { passes: current.passes } : {}),
     };
     return {
       ...row,
@@ -2088,13 +2127,19 @@ export function EventEditor({ event: initial }: Props) {
     entryId: string,
     nextOutcome: "ret" | "dnf",
     currentOutcome: SpeedTimingOutcome,
+    passIndex?: ShakedownPassIndex,
   ) => {
     const marker = nextOutcome === "ret" ? "RET" : "DNF";
     const clear = currentOutcome === nextOutcome;
     setEntries((prev) => {
       const next = prev.map((x) =>
         x.id === entryId
-          ? updateEntryTimingValues(x, clear ? "" : marker, clear ? "" : marker)
+          ? updateEntryTimingValues(
+              x,
+              clear ? "" : marker,
+              clear ? "" : marker,
+              passIndex,
+            )
           : x,
       );
       entriesRef.current = next;
@@ -2211,8 +2256,16 @@ export function EventEditor({ event: initial }: Props) {
         }
         if (scheduled == null) return row;
         touched.add(row.startNumber);
-        const current = getTimingValuesForEntry(row);
-        return updateEntryTimingValues(row, scheduled, current.finishValue);
+        const passIndex: ShakedownPassIndex | undefined = isShakedownTiming
+          ? 1
+          : undefined;
+        const current = getTimingValuesForEntry(row, passIndex);
+        return updateEntryTimingValues(
+          row,
+          scheduled,
+          current.finishValue,
+          passIndex,
+        );
       });
       entriesRef.current = next;
       return next;
@@ -3988,20 +4041,30 @@ export function EventEditor({ event: initial }: Props) {
                 No starters to time. Mark crews as Start = Yes in Entries.
               </p>
             ) : null}
-            {timingEntries.map((row) => {
+            {timingEntries.flatMap((row) => {
+              const passIndexes: Array<ShakedownPassIndex | undefined> =
+                isShakedownTiming
+                  ? ([1, 2, 3] as ShakedownPassIndex[])
+                  : [undefined];
+              return passIndexes.map((passIndex) => {
                 const { startValue, finishValue, penaltyValue } =
-                  getTimingValuesForEntry(row);
+                  getTimingValuesForEntry(row, passIndex);
                 const outcome = parseTimingOutcome(startValue, finishValue);
                 return (
                   <div
-                    key={`mobile-${timingRun}-${row.id}`}
+                    key={`mobile-${timingRun}-${row.id}-p${passIndex ?? 0}`}
                     className="rounded-lg border border-zinc-200 p-3 dark:border-zinc-700"
                   >
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <p className="font-mono text-sm text-zinc-600 dark:text-zinc-300">
-                        #{row.startNumber}
-                      </p>
                       <div className="min-w-0">
+                        <p className="font-mono text-sm text-zinc-600 dark:text-zinc-300">
+                          #{row.startNumber}
+                          {passIndex != null ? (
+                            <span className="ml-2 text-xs font-sans font-semibold uppercase tracking-wide text-zinc-500">
+                              Pass {passIndex}
+                            </span>
+                          ) : null}
+                        </p>
                         <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
                           {row.driver || "—"}
                         </p>
@@ -4027,7 +4090,9 @@ export function EventEditor({ event: initial }: Props) {
                                   ? updateEntryTimingValues(
                                       x,
                                       e.target.value.trim(),
-                                      getTimingValuesForEntry(x).finishValue,
+                                      getTimingValuesForEntry(x, passIndex)
+                                        .finishValue,
+                                      passIndex,
                                     )
                                   : x,
                               ),
@@ -4051,8 +4116,10 @@ export function EventEditor({ event: initial }: Props) {
                                 x.id === row.id
                                   ? updateEntryTimingValues(
                                       x,
-                                      getTimingValuesForEntry(x).startValue,
+                                      getTimingValuesForEntry(x, passIndex)
+                                        .startValue,
                                       e.target.value.trim(),
+                                      passIndex,
                                     )
                                   : x,
                               ),
@@ -4067,14 +4134,21 @@ export function EventEditor({ event: initial }: Props) {
                       {computeTotalTime(
                         startValue,
                         finishValue,
-                        penaltyValue,
+                        isShakedownTiming ? "" : penaltyValue,
                         timingFractionDigits,
                       )}
                     </p>
                     <div className="mt-2 flex gap-2">
                       <button
                         type="button"
-                        onClick={() => setTimingOutcomeForEntry(row.id, "dnf", outcome)}
+                        onClick={() =>
+                          setTimingOutcomeForEntry(
+                            row.id,
+                            "dnf",
+                            outcome,
+                            passIndex,
+                          )
+                        }
                         className={`rounded border px-3 py-2 text-sm font-medium ${
                           outcome === "dnf"
                             ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
@@ -4085,7 +4159,14 @@ export function EventEditor({ event: initial }: Props) {
                       </button>
                       <button
                         type="button"
-                        onClick={() => setTimingOutcomeForEntry(row.id, "ret", outcome)}
+                        onClick={() =>
+                          setTimingOutcomeForEntry(
+                            row.id,
+                            "ret",
+                            outcome,
+                            passIndex,
+                          )
+                        }
                         className={`rounded border px-3 py-2 text-sm font-medium ${
                           outcome === "ret"
                             ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
@@ -4095,7 +4176,7 @@ export function EventEditor({ event: initial }: Props) {
                         RET
                       </button>
                     </div>
-                    {meta.type === "rally" ? (
+                    {meta.type === "rally" && !isShakedownTiming ? (
                       <div className="mt-2 grid grid-cols-1 gap-2">
                         <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
                           Penalty
@@ -4114,7 +4195,8 @@ export function EventEditor({ event: initial }: Props) {
                                     ? updateEntryTimingPenaltyValues(
                                         x,
                                         normalizePenaltyInput(e.target.value),
-                                        getTimingValuesForEntry(x).penaltyNoteValue,
+                                        getTimingValuesForEntry(x)
+                                          .penaltyNoteValue,
                                       )
                                     : x,
                                 ),
@@ -4126,7 +4208,8 @@ export function EventEditor({ event: initial }: Props) {
                     ) : null}
                   </div>
                 );
-              })}
+              });
+            })}
           </div>
           <div className="mt-4 hidden overflow-x-auto sm:block">
             <table className="w-full min-w-[560px] text-left text-sm">
@@ -4136,11 +4219,14 @@ export function EventEditor({ event: initial }: Props) {
                   <th className="pb-2 pr-2">
                     {meta.type === "rally" ? "Crew" : "Driver"}
                   </th>
+                  {isShakedownTiming ? (
+                    <th className="pb-2 pr-2 w-16">Pass</th>
+                  ) : null}
                   <th className="pb-2 pr-2 w-28">Start</th>
                   <th className="pb-2 pr-2 w-44">Finish</th>
                   <th className="pb-2 pr-2 w-36">Total time</th>
                   <th className="pb-2 pr-2 w-28">Status</th>
-                  {meta.type === "rally" ? (
+                  {meta.type === "rally" && !isShakedownTiming ? (
                     <th className="pb-2 pr-2 w-24">Penalty</th>
                   ) : null}
                 </tr>
@@ -4156,139 +4242,169 @@ export function EventEditor({ event: initial }: Props) {
                     </td>
                   </tr>
                 ) : null}
-                {timingEntries.map((row) => {
+                {timingEntries.flatMap((row) => {
+                  const passIndexes: Array<ShakedownPassIndex | undefined> =
+                    isShakedownTiming
+                      ? ([1, 2, 3] as ShakedownPassIndex[])
+                      : [undefined];
+                  return passIndexes.map((passIndex) => {
                     const { startValue, finishValue, penaltyValue } =
-                      getTimingValuesForEntry(row);
+                      getTimingValuesForEntry(row, passIndex);
                     const outcome = parseTimingOutcome(startValue, finishValue);
                     return (
                       <tr
-                        key={`${timingRun}-${row.id}`}
+                        key={`${timingRun}-${row.id}-p${passIndex ?? 0}`}
                         className="border-b border-zinc-100 dark:border-zinc-800"
                       >
-                      <td className="py-2 pr-2 font-mono text-zinc-600 dark:text-zinc-300">
-                        {row.startNumber}
-                      </td>
-                      <td className="py-2 pr-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
-                            {row.driver || "—"}
-                          </p>
-                          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
-                            {row.coDriver || "—"}
-                          </p>
-                        </div>
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
-                          placeholder={timingClockPlaceholder}
-                          className="w-28 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          value={startValue}
-                          onChange={(e) =>
-                            applyTimingEntryUpdate((prev) =>
-                              prev.map((x) =>
-                                x.id === row.id
-                                  ? updateEntryTimingValues(
-                                      x,
-                                      e.target.value.trim(),
-                                      getTimingValuesForEntry(x).finishValue,
-                                    )
-                                  : x,
-                              ),
-                            )
-                          }
-                          title={timingClockTitle}
-                        />
-                      </td>
-                      <td className="py-2 pr-2">
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
-                          placeholder={timingClockPlaceholder}
-                          className="w-44 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                          value={finishValue}
-                          onChange={(e) =>
-                            applyTimingEntryUpdate((prev) =>
-                              prev.map((x) =>
-                                x.id === row.id
-                                  ? updateEntryTimingValues(
-                                      x,
-                                      getTimingValuesForEntry(x).startValue,
-                                      e.target.value.trim(),
-                                    )
-                                  : x,
-                              ),
-                            )
-                          }
-                          title={timingClockTitle}
-                        />
-                      </td>
-                      <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
-                        {computeTotalTime(
-                          startValue,
-                          finishValue,
-                          penaltyValue,
-                          timingFractionDigits,
-                        )}
-                      </td>
-                      <td className="py-2 pr-2">
-                        <div className="flex flex-wrap gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setTimingOutcomeForEntry(row.id, "dnf", outcome)}
-                            className={`rounded border px-2 py-1 text-xs font-medium ${
-                              outcome === "dnf"
-                                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
-                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                            }`}
-                          >
-                            DNF
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setTimingOutcomeForEntry(row.id, "ret", outcome)}
-                            className={`rounded border px-2 py-1 text-xs font-medium ${
-                              outcome === "ret"
-                                ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
-                                : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
-                            }`}
-                          >
-                            RET
-                          </button>
-                        </div>
-                      </td>
-                      {meta.type === "rally" ? (
+                        <td className="py-2 pr-2 font-mono text-zinc-600 dark:text-zinc-300">
+                          {row.startNumber}
+                        </td>
+                        <td className="py-2 pr-2">
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-100">
+                              {row.driver || "—"}
+                            </p>
+                            <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+                              {row.coDriver || "—"}
+                            </p>
+                          </div>
+                        </td>
+                        {isShakedownTiming ? (
+                          <td className="py-2 pr-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                            Pass {passIndex}
+                          </td>
+                        ) : null}
                         <td className="py-2 pr-2">
                           <input
                             type="text"
                             inputMode="numeric"
-                            pattern="^\\d{1,3}:[0-5]\\d$"
-                            placeholder="mm:ss"
-                            title="Penalty format: mm:ss"
-                            className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-                            value={penaltyValue}
+                            pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
+                            placeholder={timingClockPlaceholder}
+                            className="w-28 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={startValue}
                             onChange={(e) =>
                               applyTimingEntryUpdate((prev) =>
                                 prev.map((x) =>
                                   x.id === row.id
-                                    ? updateEntryTimingPenaltyValues(
+                                    ? updateEntryTimingValues(
                                         x,
-                                        normalizePenaltyInput(e.target.value),
-                                        getTimingValuesForEntry(x).penaltyNoteValue,
+                                        e.target.value.trim(),
+                                        getTimingValuesForEntry(x, passIndex)
+                                          .finishValue,
+                                        passIndex,
                                       )
                                     : x,
                                 ),
                               )
                             }
+                            title={timingClockTitle}
                           />
                         </td>
-                      ) : null}
-                    </tr>
+                        <td className="py-2 pr-2">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?([.,]\d{1,3})?$"
+                            placeholder={timingClockPlaceholder}
+                            className="w-44 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                            value={finishValue}
+                            onChange={(e) =>
+                              applyTimingEntryUpdate((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? updateEntryTimingValues(
+                                        x,
+                                        getTimingValuesForEntry(x, passIndex)
+                                          .startValue,
+                                        e.target.value.trim(),
+                                        passIndex,
+                                      )
+                                    : x,
+                                ),
+                              )
+                            }
+                            title={timingClockTitle}
+                          />
+                        </td>
+                        <td className="py-2 pr-2 font-mono text-zinc-700 dark:text-zinc-200">
+                          {computeTotalTime(
+                            startValue,
+                            finishValue,
+                            isShakedownTiming ? "" : penaltyValue,
+                            timingFractionDigits,
+                          )}
+                        </td>
+                        <td className="py-2 pr-2">
+                          <div className="flex flex-wrap gap-1">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTimingOutcomeForEntry(
+                                  row.id,
+                                  "dnf",
+                                  outcome,
+                                  passIndex,
+                                )
+                              }
+                              className={`rounded border px-2 py-1 text-xs font-medium ${
+                                outcome === "dnf"
+                                  ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                              }`}
+                            >
+                              DNF
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setTimingOutcomeForEntry(
+                                  row.id,
+                                  "ret",
+                                  outcome,
+                                  passIndex,
+                                )
+                              }
+                              className={`rounded border px-2 py-1 text-xs font-medium ${
+                                outcome === "ret"
+                                  ? "border-green-600 bg-green-600 text-white dark:border-green-500 dark:bg-green-500"
+                                  : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                              }`}
+                            >
+                              RET
+                            </button>
+                          </div>
+                        </td>
+                        {meta.type === "rally" && !isShakedownTiming ? (
+                          <td className="py-2 pr-2">
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="^\\d{1,3}:[0-5]\\d$"
+                              placeholder="mm:ss"
+                              title="Penalty format: mm:ss"
+                              className="w-full rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                              value={penaltyValue}
+                              onChange={(e) =>
+                                applyTimingEntryUpdate((prev) =>
+                                  prev.map((x) =>
+                                    x.id === row.id
+                                      ? updateEntryTimingPenaltyValues(
+                                          x,
+                                          normalizePenaltyInput(e.target.value),
+                                          getTimingValuesForEntry(x)
+                                            .penaltyNoteValue,
+                                        )
+                                      : x,
+                                  ),
+                                )
+                              }
+                            />
+                          </td>
+                        ) : null}
+                      </tr>
                     );
-                  })}
+                  });
+                })}
               </tbody>
             </table>
           </div>

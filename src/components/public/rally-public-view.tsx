@@ -18,6 +18,16 @@ import {
   isPreEventStage,
   sortStagesByKindThenOrder,
 } from "@/lib/rally/stage-kind";
+import {
+  SHAKEDOWN_PASS_COUNT,
+  findShakedownBestDurationMs,
+  findShakedownBestPassIndex,
+  getShakedownPassDurationsMs,
+  getShakedownPasses,
+  isShakedownStage,
+  parseStageTimingBlobEntry,
+  type StageTimingBlobEntry,
+} from "@/lib/rally/shakedown-passes";
 
 function stageChipLabel(stage: Stage, allStages: Stage[]): string {
   if (stage.kind === "shakedown") return "Shakedown";
@@ -376,7 +386,49 @@ function buildLandscapeResultsPdfHtml(input: {
     .join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
 }
 
+function buildRallyShakedownPdfRows(entries: Entry[], stage: Stage): string[][] {
+  const stageId = stage.id;
+  const timeDigits: 2 | 3 = 3;
+  const ranked = [...entries]
+    .map((row) => {
+      const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+      const passes = getShakedownPasses(blob[stageId]);
+      const durations = getShakedownPassDurationsMs(passes, parseClockToDayMs);
+      const bestMs = findShakedownBestDurationMs(durations);
+      return { row, durations, bestMs };
+    })
+    .filter((x) => x.bestMs != null)
+    .sort((a, b) =>
+      (a.bestMs ?? 0) !== (b.bestMs ?? 0)
+        ? (a.bestMs ?? 0) - (b.bestMs ?? 0)
+        : a.row.startNumber - b.row.startNumber,
+    );
+  const leaderMs = ranked[0]?.bestMs ?? null;
+  return ranked.map(({ row, durations, bestMs }, i) => {
+    const passCells = Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, pi) => {
+      const d = durations[pi];
+      return d != null ? formatDurationMs(d, timeDigits) : "—";
+    });
+    return [
+      String(i + 1),
+      String(row.startNumber),
+      row.driver || "—",
+      row.coDriver || "—",
+      row.car || "—",
+      row.class || "—",
+      ...passCells,
+      bestMs != null ? formatDurationMs(bestMs, timeDigits) : "—",
+      bestMs == null || leaderMs == null || bestMs <= leaderMs
+        ? "—"
+        : `+${formatDiffDurationMs(bestMs - leaderMs, timeDigits)}`,
+    ];
+  });
+}
+
 function buildRallyStagePdfRows(entries: Entry[], stage: Stage): string[][] {
+  if (isShakedownStage(stage)) {
+    return buildRallyShakedownPdfRows(entries, stage);
+  }
   const stageId = stage.id;
   const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
   const ranked = [...entries]
@@ -1122,22 +1174,37 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         return;
       }
       const tableRows = buildRallyStagePdfRows(rows, stage);
+      const shakedown = isShakedownStage(stage);
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
         subtitle: `${stageHeadingLabel(stage, event.stages)}`,
         modeLabel: "Stage results",
-        columns: [
-          "Pos",
-          "#",
-          "Driver",
-          "Co-driver",
-          "Car",
-          "Class",
-          isPreEventStage(stage) ? "Time" : "SS Time",
-          "Penalty",
-          "Total time",
-          "Diff",
-        ],
+        columns: shakedown
+          ? [
+              "Pos",
+              "#",
+              "Driver",
+              "Co-driver",
+              "Car",
+              "Class",
+              "1",
+              "2",
+              "3",
+              "Best",
+              "Diff",
+            ]
+          : [
+              "Pos",
+              "#",
+              "Driver",
+              "Co-driver",
+              "Car",
+              "Class",
+              isPreEventStage(stage) ? "Time" : "SS Time",
+              "Penalty",
+              "Total time",
+              "Diff",
+            ],
         tableRows,
         logoUrl,
         rallyClassificationLayout: true,
@@ -1630,14 +1697,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                     {resultsStripRows.map((row) => (
                       <div
                         key={row.key}
-                        className="flex min-w-min items-center gap-2"
+                        className="flex min-w-min items-center"
                         role="list"
                         aria-label={row.label}
                       >
-                        <span className="w-[7.5rem] shrink-0 truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ewrc-muted-3)] sm:w-36 sm:text-[11px]">
-                          {row.label}
-                        </span>
-                        <div className="flex min-w-0 items-center">
                           {row.items.map((item, i) => {
                             const isSelected = selectedStripItem?.id === item.id;
                             return (
@@ -1731,7 +1794,6 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                               </div>
                             );
                           })}
-                        </div>
                       </div>
                     ))}
                   </div>
@@ -2720,58 +2782,153 @@ function StageTimesTable({
   stage?: Stage;
 }) {
   const stageId = stage?.id;
+  const shakedown = !!stage && isShakedownStage(stage);
   const timeDigits: 2 | 3 =
     stage && isPreEventStage(stage) ? 3 : 2;
+
+  const shakedownSorted = useMemo(() => {
+    if (!shakedown || !stageId) return [];
+    return [...entries]
+      .map((row) => {
+        const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+        const passes = getShakedownPasses(blob[stageId]);
+        const durations = getShakedownPassDurationsMs(passes, parseClockToDayMs);
+        const bestMs = findShakedownBestDurationMs(durations);
+        const bestIdx = findShakedownBestPassIndex(durations);
+        return { row, durations, bestMs, bestIdx };
+      })
+      .filter(
+        (x): x is {
+          row: Entry;
+          durations: Array<number | null>;
+          bestMs: number;
+          bestIdx: number | null;
+        } => x.bestMs != null,
+      )
+      .sort((a, b) =>
+        a.bestMs !== b.bestMs
+          ? a.bestMs - b.bestMs
+          : a.row.startNumber - b.row.startNumber,
+      );
+  }, [entries, stageId, shakedown]);
+
   const sorted = useMemo(
     () =>
-      [...entries]
-        .map((row) => {
-          if (!stageId) {
-            return {
-              row,
-              durationMs: null as number | null,
-              penaltyMs: null as number | null,
-              penaltyRaw: "",
-            };
-          }
-          const values = getRallyStageTimingValues(row, stageId);
-          const startMs = parseClockToDayMs(values.startValue);
-          const finishMs = parseClockToDayMs(values.finishValue);
-          const penaltyMs = parsePenaltyDurationMs(values.penaltyValue);
-          const pen = penaltyMs ?? 0;
-          if (startMs == null || finishMs == null) {
-            return {
-              row,
-              durationMs: null as number | null,
-              penaltyMs,
-              penaltyRaw: values.penaltyValue,
-            };
-          }
-          const raw = finishMs - startMs;
-          // Jump-start penalties are added into the published stage time.
-          return {
-            row,
-            durationMs: raw >= 0 ? raw + pen : null,
-            penaltyMs,
-            penaltyRaw: values.penaltyValue,
-          };
-        })
-        .filter(
-          (x): x is {
-            row: Entry;
-            durationMs: number;
-            penaltyMs: number | null;
-            penaltyRaw: string;
-          } => x.durationMs != null,
-        )
-        .sort((a, b) =>
-          a.durationMs !== b.durationMs
-            ? a.durationMs - b.durationMs
-            : a.row.startNumber - b.row.startNumber,
-        ),
-    [entries, stageId],
+      shakedown
+        ? []
+        : [...entries]
+            .map((row) => {
+              if (!stageId) {
+                return {
+                  row,
+                  durationMs: null as number | null,
+                  penaltyMs: null as number | null,
+                  penaltyRaw: "",
+                };
+              }
+              const values = getRallyStageTimingValues(row, stageId);
+              const startMs = parseClockToDayMs(values.startValue);
+              const finishMs = parseClockToDayMs(values.finishValue);
+              const penaltyMs = parsePenaltyDurationMs(values.penaltyValue);
+              const pen = penaltyMs ?? 0;
+              if (startMs == null || finishMs == null) {
+                return {
+                  row,
+                  durationMs: null as number | null,
+                  penaltyMs,
+                  penaltyRaw: values.penaltyValue,
+                };
+              }
+              const raw = finishMs - startMs;
+              // Jump-start penalties are added into the published stage time.
+              return {
+                row,
+                durationMs: raw >= 0 ? raw + pen : null,
+                penaltyMs,
+                penaltyRaw: values.penaltyValue,
+              };
+            })
+            .filter(
+              (x): x is {
+                row: Entry;
+                durationMs: number;
+                penaltyMs: number | null;
+                penaltyRaw: string;
+              } => x.durationMs != null,
+            )
+            .sort((a, b) =>
+              a.durationMs !== b.durationMs
+                ? a.durationMs - b.durationMs
+                : a.row.startNumber - b.row.startNumber,
+            ),
+    [entries, stageId, shakedown],
   );
-  const leaderMs = sorted[0]?.durationMs ?? null;
+  const leaderMs = shakedown
+    ? (shakedownSorted[0]?.bestMs ?? null)
+    : (sorted[0]?.durationMs ?? null);
+
+  if (shakedown) {
+    if (shakedownSorted.length === 0) {
+      return (
+        <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
+          No timed entries for this stage yet.
+        </p>
+      );
+    }
+    return (
+      <table className="ewrc-table ewrc-table-speed-run min-w-[560px] w-full text-sm">
+        <thead>
+          <tr>
+            <th className="w-12 text-right">Pos</th>
+            <th className="w-12 text-right">#</th>
+            <th className="min-w-[10rem]">Crew</th>
+            <th className="w-24 !text-center">1</th>
+            <th className="w-24 !text-center">2</th>
+            <th className="w-24 !text-center">3</th>
+            <th className="w-28 !text-center">Best</th>
+            <th className="w-24 !text-center">Diff</th>
+          </tr>
+        </thead>
+        <tbody>
+          {shakedownSorted.map(({ row, durations, bestMs, bestIdx }, i) => (
+            <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+              <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
+                {i + 1}
+              </td>
+              <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
+                {row.startNumber}
+              </td>
+              <CrewStackCell row={row} />
+              {Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, pi) => {
+                const d = durations[pi];
+                const isBest = bestIdx === pi && d != null;
+                return (
+                  <td
+                    key={pi}
+                    className={`align-middle text-center font-mono ${
+                      isBest
+                        ? "font-bold text-[var(--ewrc-strong)]"
+                        : "text-[var(--ewrc-heading)]"
+                    }`}
+                  >
+                    {d != null ? formatDurationMs(d, timeDigits) : "—"}
+                  </td>
+                );
+              })}
+              <td className="align-middle text-center font-mono font-bold text-[var(--ewrc-strong)]">
+                {formatDurationMs(bestMs, timeDigits)}
+              </td>
+              <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+                {leaderMs == null || bestMs <= leaderMs
+                  ? "—"
+                  : `+${formatDiffDurationMs(bestMs - leaderMs, timeDigits)}`}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
 
   if (sorted.length === 0) {
     return (
@@ -3253,28 +3410,16 @@ function parseClockToDayMs(value: string): number | null {
   return ((h * 60 + min) * 60 + sec) * 1000 + ms;
 }
 
-function parseRallyStageTimingBlob(raw: string): Record<
-  string,
-  { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
-> {
+function parseRallyStageTimingBlob(raw: string): Record<string, StageTimingBlobEntry> {
   const trimmed = raw.trim();
   if (!trimmed || !trimmed.startsWith("{")) return {};
   try {
     const parsed = JSON.parse(trimmed) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
-    const out: Record<
-      string,
-      { startTime?: string; finishTime?: string; penalty?: string; penaltyNote?: string }
-    > = {};
+    const out: Record<string, StageTimingBlobEntry> = {};
     for (const [stageId, value] of Object.entries(parsed as Record<string, unknown>)) {
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
-      const item = value as Record<string, unknown>;
-      out[stageId] = {
-        startTime: typeof item.startTime === "string" ? item.startTime : "",
-        finishTime: typeof item.finishTime === "string" ? item.finishTime : "",
-        penalty: typeof item.penalty === "string" ? item.penalty : "",
-        penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
-      };
+      out[stageId] = parseStageTimingBlobEntry(value as Record<string, unknown>);
     }
     return out;
   } catch {
