@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { SiteSettings } from "@/lib/rally/types";
+import { OfficialTime } from "./official-time";
 import { ThemeToggle } from "./theme-toggle";
 
 /** Set true when sponsors should show again in the public footer. */
@@ -24,15 +25,18 @@ export function EwrcChrome({
               Results
             </span>
           </Link>
-          <nav className="flex w-full items-center justify-end gap-3 text-sm sm:w-auto sm:gap-4">
-            <ThemeToggle />
-            <Link
-              href="/"
-              className="text-[var(--ewrc-nav)] transition-colors hover:text-[var(--ewrc-brand)]"
-            >
-              Home
-            </Link>
-          </nav>
+          <div className="flex flex-col items-end gap-1">
+            <nav className="flex items-center justify-end gap-3 text-sm sm:gap-4">
+              <ThemeToggle />
+              <Link
+                href="/"
+                className="text-[var(--ewrc-nav)] transition-colors hover:text-[var(--ewrc-brand)]"
+              >
+                Home
+              </Link>
+            </nav>
+            <OfficialTime />
+          </div>
         </div>
       </header>
       {children}
