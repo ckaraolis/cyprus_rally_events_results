@@ -1,5 +1,8 @@
 import type { Entry } from "./types";
-import { resolveStartingOrderTime } from "./leg-starting-order";
+import {
+  resolveStartingOrderTime,
+  startingOrderScopeLabel,
+} from "./leg-starting-order";
 
 function escapeHtml(raw: string): string {
   return raw
@@ -165,7 +168,7 @@ export function buildStartingOrderPdfHtml(input: {
 
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
 
-  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - LEG${input.leg} Starting Order</title><style>
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(startingOrderScopeLabel(input.leg))} Starting Order</title><style>
   @page { size: A4 landscape; margin: 8mm; }
   html, body { margin: 0; padding: 0; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; }
   .page { width: 281mm; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
@@ -190,7 +193,7 @@ export function buildStartingOrderPdfHtml(input: {
     logoUrl
       ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />`
       : ""
-  }<h1>${escapeHtml(input.eventName)}</h1><h2>LEG${input.leg} Starting Order</h2><h3>Start list</h3></div><table><colgroup>
+  }<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(startingOrderScopeLabel(input.leg))} Starting Order</h2><h3>Start list</h3></div><table><colgroup>
       <col class="c-pos" /><col class="c-num" />
       <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
       <col class="c-time" />

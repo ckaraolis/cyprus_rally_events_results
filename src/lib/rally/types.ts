@@ -70,7 +70,7 @@ export interface Entry {
 
 /** Admin starting order for one rally leg (TC / ceremonial start list). */
 export interface LegStartingOrder {
-  /** 1-based leg number. */
+  /** 1-based leg number, or `0` for Qualify. */
   leg: number;
   /** Entry IDs in start order (index 0 = first car away). */
   entryIds: string[];

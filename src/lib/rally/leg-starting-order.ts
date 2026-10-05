@@ -22,6 +22,13 @@ function normalizeStartTimeByEntryId(raw: unknown): Record<string, string> {
   return out;
 }
 
+/** Sentinel leg number for Qualify starting order (not a competitive LEG). */
+export const QUALIFY_STARTING_ORDER_LEG = 0;
+
+export function startingOrderScopeLabel(leg: number): string {
+  return leg === QUALIFY_STARTING_ORDER_LEG ? "Qualify" : `LEG ${leg}`;
+}
+
 export function normalizeLegStartingOrders(
   raw: unknown,
 ): RallyEvent["legStartingOrders"] {
@@ -30,12 +37,24 @@ export function normalizeLegStartingOrders(
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!value || typeof value !== "object" || Array.isArray(value)) continue;
     const o = value as Record<string, unknown>;
-    const legFromKey = Number.parseInt(key, 10);
-    const leg =
+    const keyNorm = key.trim().toLowerCase();
+    const legFromKey =
+      keyNorm === "qualify" || keyNorm === "0"
+        ? QUALIFY_STARTING_ORDER_LEG
+        : Number.parseInt(key, 10);
+    const legFromValue =
       typeof o.leg === "number" && Number.isFinite(o.leg)
-        ? Math.max(1, Math.floor(o.leg))
-        : Number.isFinite(legFromKey) && legFromKey >= 1
-          ? Math.floor(legFromKey)
+        ? Math.floor(o.leg)
+        : null;
+    const leg =
+      legFromValue != null && legFromValue >= 0
+        ? legFromValue === QUALIFY_STARTING_ORDER_LEG
+          ? QUALIFY_STARTING_ORDER_LEG
+          : Math.max(1, legFromValue)
+        : Number.isFinite(legFromKey) && legFromKey >= 0
+          ? legFromKey === QUALIFY_STARTING_ORDER_LEG
+            ? QUALIFY_STARTING_ORDER_LEG
+            : Math.max(1, Math.floor(legFromKey))
           : 1;
     const entryIds = Array.isArray(o.entryIds)
       ? o.entryIds

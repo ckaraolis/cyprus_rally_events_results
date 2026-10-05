@@ -1,7 +1,7 @@
 import type { Entry, Stage } from "@/lib/rally/types";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
-import { resolveStartingOrderTime } from "@/lib/rally/leg-starting-order";
-import { isPreEventStage } from "@/lib/rally/stage-kind";
+import { resolveStartingOrderTime, startingOrderScopeLabel } from "@/lib/rally/leg-starting-order";
+import { isPreEventStage, stageControlLabel } from "@/lib/rally/stage-kind";
 
 type TimingBlob = Record<
   string,
@@ -167,8 +167,15 @@ export async function exportRallyStageExcel(
   eventName: string,
   entries: Entry[],
   stage: Stage,
+  allStages: Stage[] = [stage],
 ): Promise<void> {
   const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
+  const chip = stageControlLabel(stage, allStages).replace(/\s+/g, "");
+  const fileTag = isPreEventStage(stage)
+    ? stage.kind === "qualify"
+      ? "Qualify"
+      : "Shakedown"
+    : chip || `SS${stage.order}`;
   const ranked = started(entries)
     .map((row) => {
       const v = stageValues(row, stage.id);
@@ -207,8 +214,8 @@ export async function exportRallyStageExcel(
       : `+${formatDiffMs(totalMs - leader, timeDigits)}`,
   ]);
   await downloadExcelTable({
-    fileName: `${eventName}-SS${stage.order}`,
-    sheetName: `SS${stage.order}`,
+    fileName: `${eventName}-${fileTag}`,
+    sheetName: fileTag.slice(0, 31),
     columns: [
       "Pos",
       "#",
@@ -216,7 +223,7 @@ export async function exportRallyStageExcel(
       "Co-driver",
       "Car",
       "Class",
-      "SS Time",
+      isPreEventStage(stage) ? "Time" : "SS Time",
       "Penalty",
       "Total time",
       "Diff",
@@ -271,6 +278,9 @@ export async function exportRallyAfterSsExcel(
     );
   const leader = ranked[0]?.totalMs ?? null;
   const last = stages[stages.length - 1];
+  const lastLabel = last
+    ? stageControlLabel(last, stages).replace(/\s+/g, "")
+    : "";
   const rows = ranked.map(({ row, ssTimesMs, totalMs, penaltyMs }, i) => [
     String(i + 1),
     String(row.startNumber),
@@ -284,8 +294,8 @@ export async function exportRallyAfterSsExcel(
     leader == null || totalMs <= leader ? "—" : `+${formatDiffMs(totalMs - leader)}`,
   ]);
   await downloadExcelTable({
-    fileName: `${eventName}-After-SS${last?.order ?? ""}`,
-    sheetName: `After SS${last?.order ?? ""}`,
+    fileName: `${eventName}-After-${lastLabel || "SS"}`,
+    sheetName: `After ${lastLabel || "SS"}`.slice(0, 31),
     columns: [
       "Pos",
       "#",
@@ -307,6 +317,7 @@ export async function exportRallyLegExcel(
   entries: Entry[],
   stagesInLeg: Stage[],
   leg: number,
+  allStages: Stage[] = stagesInLeg,
 ): Promise<void> {
   const allCompleted =
     stagesInLeg.length > 0 &&
@@ -395,7 +406,9 @@ export async function exportRallyLegExcel(
       "Co-driver",
       "Car",
       "Class",
-      ...stagesInLeg.map((st) => `SS${st.order}`),
+      ...stagesInLeg.map((st) =>
+        stageControlLabel(st, allStages).replace(/\s+/g, ""),
+      ),
       "SS Times",
       "Penalty",
       "Total",
@@ -557,8 +570,8 @@ export async function exportRallyStartingOrderExcel(input: {
     resolveStartingOrderTime(order, row.id, i),
   ]);
   await downloadExcelTable({
-    fileName: `${input.eventName}-LEG${input.leg}-Starting-Order`,
-    sheetName: `LEG${input.leg} Start`,
+    fileName: `${input.eventName}-${startingOrderScopeLabel(input.leg).replace(/\s+/g, "")}-Starting-Order`,
+    sheetName: `${startingOrderScopeLabel(input.leg)} Start`.slice(0, 31),
     columns: ["Pos", "#", "Driver", "Co-driver", "Car", "Class", "Start time"],
     rows,
   });

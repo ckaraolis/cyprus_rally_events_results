@@ -21,7 +21,9 @@ import type {
 } from "@/lib/rally/types";
 import {
   emptyLegStartingOrder,
+  QUALIFY_STARTING_ORDER_LEG,
   resolveStartingOrderTime,
+  startingOrderScopeLabel,
 } from "@/lib/rally/leg-starting-order";
 import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
 import {
@@ -438,6 +440,13 @@ export function EventEditor({ event: initial }: Props) {
     [stages],
   );
 
+  /** 1-based SS index among competitive stages only (Shakedown/Qualify excluded). */
+  const competitiveSsNumberById = useMemo(() => {
+    const map = new Map<string, number>();
+    competitiveStages(sortedStages).forEach((s, i) => map.set(s.id, i + 1));
+    return map;
+  }, [sortedStages]);
+
   /** Timing control only lists crews marked Start = Yes. */
   const timingEntries = useMemo(
     () =>
@@ -461,6 +470,12 @@ export function EventEditor({ event: initial }: Props) {
   const hasShakedown = stageHasKind(stages, "shakedown");
   const hasQualify = stageHasKind(stages, "qualify");
 
+  /** Starting Order scopes: Qualify (when enabled) then competitive LEGs. */
+  const startingOrderScopes = useMemo(() => {
+    const legs = availableLegs;
+    return hasQualify ? [QUALIFY_STARTING_ORDER_LEG, ...legs] : legs;
+  }, [availableLegs, hasQualify]);
+
   function setPreEventStageEnabled(
     kind: "shakedown" | "qualify",
     enabled: boolean,
@@ -476,10 +491,10 @@ export function EventEditor({ event: initial }: Props) {
   }
 
   useEffect(() => {
-    if (!availableLegs.includes(startingOrderLeg)) {
-      setStartingOrderLeg(availableLegs[0] ?? 1);
+    if (!startingOrderScopes.includes(startingOrderLeg)) {
+      setStartingOrderLeg(startingOrderScopes[0] ?? 1);
     }
-  }, [availableLegs, startingOrderLeg]);
+  }, [startingOrderScopes, startingOrderLeg]);
 
   const currentLegStartingOrder: LegStartingOrder = useMemo(() => {
     const key = String(startingOrderLeg);
@@ -554,7 +569,7 @@ export function EventEditor({ event: initial }: Props) {
       startTimeByEntryId,
     });
     setFlash(
-      `Loaded ${entryIds.length} starter(s) for LEG ${startingOrderLeg} (Start = Yes).`,
+      `Loaded ${entryIds.length} starter(s) for ${startingOrderScopeLabel(startingOrderLeg)} (Start = Yes).`,
     );
   }
 
@@ -625,7 +640,7 @@ export function EventEditor({ event: initial }: Props) {
         return;
       }
       if (removedInlineDocs > 0) setMeta(payload);
-      setFlash(`Starting order for LEG ${startingOrderLeg} saved.`);
+      setFlash(`Starting order for ${startingOrderScopeLabel(startingOrderLeg)} saved.`);
       router.refresh();
     });
   }
@@ -1976,7 +1991,7 @@ export function EventEditor({ event: initial }: Props) {
     if (meta.type !== "rally" || !selectedRallyTimingStage) return row;
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
     const current = blob[selectedRallyTimingStage.id] ?? {};
-    const jumpStartReason = `Jump Start SS${selectedRallyTimingStage.order}`;
+    const jumpStartReason = `Jump Start ${stageControlLabel(selectedRallyTimingStage, sortedStages).replace(/\s+/g, "")}`;
     const trimmedNote = penaltyNoteValue.trim();
     const isDefaultJumpStart =
       !trimmedNote ||
@@ -2811,12 +2826,16 @@ export function EventEditor({ event: initial }: Props) {
               </tr>
             </thead>
             <tbody>
-              {sortedStages.map((s, idx) => (
+              {sortedStages.map((s) => {
+                const competitiveNo = competitiveSsNumberById.get(s.id) ?? null;
+                return (
                 <tr
                   key={s.id}
                   className="border-b border-zinc-100 dark:border-zinc-800"
                 >
-                  <td className="py-2 pr-2 text-zinc-500">{idx + 1}</td>
+                  <td className="py-2 pr-2 text-zinc-500">
+                    {competitiveNo != null ? competitiveNo : "—"}
+                  </td>
                   <td className="py-2 pr-2">
                     <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
                       {s.kind === "shakedown"
@@ -2944,7 +2963,9 @@ export function EventEditor({ event: initial }: Props) {
                       </select>
                     </td>
                   ) : null}
-                  <td className="py-2 text-zinc-500">{s.order}</td>
+                  <td className="py-2 text-zinc-500">
+                    {competitiveNo != null ? competitiveNo : "—"}
+                  </td>
                   <td className="py-2">
                     <div className="flex gap-1">
                       <button
@@ -2992,7 +3013,8 @@ export function EventEditor({ event: initial }: Props) {
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
           {sortedStages.length === 0 ? (
@@ -3292,7 +3314,7 @@ export function EventEditor({ event: initial }: Props) {
           </p>
 
           <div className="mt-4 flex flex-wrap gap-2">
-            {availableLegs.map((leg) => (
+            {startingOrderScopes.map((leg) => (
               <button
                 key={leg}
                 type="button"
@@ -3303,7 +3325,7 @@ export function EventEditor({ event: initial }: Props) {
                     : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
                 }`}
               >
-                LEG {leg}
+                {startingOrderScopeLabel(leg)}
               </button>
             ))}
           </div>
@@ -4401,6 +4423,7 @@ export function EventEditor({ event: initial }: Props) {
                       meta.name || "event",
                       entries,
                       selectedRallyTimingStage,
+                      sortedStages,
                     );
                   }}
                   className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
@@ -4444,6 +4467,7 @@ export function EventEditor({ event: initial }: Props) {
                             entries,
                             stagesInLeg,
                             leg,
+                            sortedStages,
                           )
                         }
                         className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"

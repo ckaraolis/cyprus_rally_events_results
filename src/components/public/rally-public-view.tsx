@@ -12,11 +12,26 @@ import type {
   StageProgressStatus,
 } from "@/lib/rally/types";
 import {
+  competitiveStageNumber,
   competitiveStages,
   isCompetitiveStage,
   isPreEventStage,
   sortStagesByKindThenOrder,
 } from "@/lib/rally/stage-kind";
+
+function stageChipLabel(stage: Stage, allStages: Stage[]): string {
+  if (stage.kind === "shakedown") return "Shakedown";
+  if (stage.kind === "qualify") return "Qualify";
+  const n = competitiveStageNumber(stage, allStages);
+  return n != null ? `SS${n}` : `SS${stage.order}`;
+}
+
+function stageHeadingLabel(stage: Stage, allStages: Stage[]): string {
+  if (isPreEventStage(stage)) return stage.name || stageChipLabel(stage, allStages);
+  const n = competitiveStageNumber(stage, allStages);
+  const ss = n != null ? `SS${n}` : `SS${stage.order}`;
+  return `${ss} ${stage.name}`;
+}
 
 const RALLY_TABS = [
   { id: "overview", label: "Overview" },
@@ -64,6 +79,12 @@ type ResultsStripItem =
       label: string;
       progressStatus: StageProgressStatus;
     };
+
+type ResultsStripRow = {
+  key: string;
+  label: string;
+  items: ResultsStripItem[];
+};
 
 type Props = {
   site: SiteSettings;
@@ -507,6 +528,7 @@ function buildRallyFinalPdfRows(entries: Entry[], stages: Stage[]): string[][] {
 function buildRallyLegPdfSheet(
   entries: Entry[],
   stagesInLeg: Stage[],
+  allStages: Stage[],
 ): { columns: string[]; tableRows: string[][] } {
   const allLegStagesCompleted =
     stagesInLeg.length > 0 &&
@@ -613,7 +635,7 @@ function buildRallyLegPdfSheet(
     "Co-driver",
     "Car",
     "Class",
-    ...stagesInLeg.map((st) => `SS${st.order}`),
+    ...stagesInLeg.map((st) => stageChipLabel(st, allStages)),
     "SS Times",
     "Penalty",
     "Total",
@@ -805,72 +827,134 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
 
   const totalKm = useMemo(
     () =>
-      stagesSorted.reduce(
+      competitiveStagesSorted.reduce(
         (acc, s) => acc + (typeof s.distanceKm === "number" ? s.distanceKm : 0),
         0,
       ),
-    [stagesSorted],
+    [competitiveStagesSorted],
   );
 
-  /** Leg groups in stage order (first time a leg appears defines section order). */
-  const itineraryByLeg = useMemo(() => {
-    const ordered = [...event.stages].sort((a, b) => a.order - b.order);
+  /** Itinerary: pre-event block, then each competitive LEG (never “Leg 0”). */
+  const itinerarySections = useMemo(() => {
+    const preEvent = stagesSorted.filter(isPreEventStage);
+    const byLeg = new Map<number, Stage[]>();
     const legOrder: number[] = [];
-    const seen = new Set<number>();
-    for (const s of ordered) {
-      if (!seen.has(s.leg)) {
-        seen.add(s.leg);
-        legOrder.push(s.leg);
+    for (const s of competitiveStagesSorted) {
+      const leg = typeof s.leg === "number" && s.leg >= 1 ? Math.floor(s.leg) : 1;
+      if (!byLeg.has(leg)) {
+        byLeg.set(leg, []);
+        legOrder.push(leg);
       }
+      byLeg.get(leg)!.push(s);
     }
-    const map = new Map<number, Stage[]>();
-    for (const s of ordered) {
-      const list = map.get(s.leg);
-      if (list) list.push(s);
-      else map.set(s.leg, [s]);
+    const sections: Array<{
+      key: string;
+      title: string;
+      stages: Stage[];
+      showNumbers: boolean;
+    }> = [];
+    if (preEvent.length > 0) {
+      sections.push({
+        key: "pre-event",
+        title: "Shakedown & Qualify",
+        stages: preEvent,
+        showNumbers: false,
+      });
     }
-    return legOrder.map((leg) => ({ leg, stages: map.get(leg)! }));
-  }, [event.stages]);
+    for (const leg of legOrder) {
+      sections.push({
+        key: `leg-${leg}`,
+        title: `Leg ${leg}`,
+        stages: byLeg.get(leg)!,
+        showNumbers: true,
+      });
+    }
+    return sections;
+  }, [competitiveStagesSorted, stagesSorted]);
 
-  /** Stage strip + “End of leg N” after each leg’s last stage (running order). */
-  const resultsStripItems = useMemo((): ResultsStripItem[] => {
+  /**
+   * Stage strip rows: Shakedown/Qualify together, then each LEG’s SS + LEG results.
+   * Compact multi-line layout — no LEG 0.
+   */
+  const resultsStripRows = useMemo((): ResultsStripRow[] => {
     if (event.type === "speed") {
-      return SPEED_RUNS.map((r) => ({
-        id: `sp-${r.id}`,
-        type: "speedRun",
-        runId: r.id,
-        label: r.label,
-        progressStatus:
-          r.id === "best"
-            ? "completed"
-            : event.speedRunImportStatus?.[r.id] === "live"
-              ? "live"
-              : event.speedRunImportStatus?.[r.id] === "completed"
-                ? "completed"
-                : "pending",
-      }));
+      return [
+        {
+          key: "speed",
+          label: "Runs",
+          items: SPEED_RUNS.map((r) => ({
+            id: `sp-${r.id}`,
+            type: "speedRun" as const,
+            runId: r.id,
+            label: r.label,
+            progressStatus:
+              r.id === "best"
+                ? ("completed" as const)
+                : event.speedRunImportStatus?.[r.id] === "live"
+                  ? ("live" as const)
+                  : event.speedRunImportStatus?.[r.id] === "completed"
+                    ? ("completed" as const)
+                    : ("pending" as const),
+          })),
+        },
+      ];
     }
-    const sorted = stagesSorted;
-    const out: ResultsStripItem[] = [];
-    for (let i = 0; i < sorted.length; i++) {
-      const s = sorted[i];
-      out.push({ id: `st-${s.id}`, type: "stage", stage: s });
-      const next = sorted[i + 1];
-      if (!next || next.leg !== s.leg) {
-        let runStart = i;
-        while (runStart > 0 && sorted[runStart - 1].leg === s.leg) {
-          runStart--;
-        }
-        out.push({
-          id: `le-${s.id}`,
-          type: "legEnd",
-          leg: s.leg,
-          stagesInLeg: sorted.slice(runStart, i + 1),
-        });
+
+    const rows: ResultsStripRow[] = [];
+    const preEvent = stagesSorted.filter(isPreEventStage);
+    if (preEvent.length > 0) {
+      rows.push({
+        key: "pre-event",
+        label: "Shakedown & Qualify",
+        items: preEvent.map((s) => ({
+          id: `st-${s.id}`,
+          type: "stage" as const,
+          stage: s,
+        })),
+      });
+    }
+
+    const byLeg = new Map<number, Stage[]>();
+    const legOrder: number[] = [];
+    for (const s of competitiveStagesSorted) {
+      const leg = typeof s.leg === "number" && s.leg >= 1 ? Math.floor(s.leg) : 1;
+      if (!byLeg.has(leg)) {
+        byLeg.set(leg, []);
+        legOrder.push(leg);
       }
+      byLeg.get(leg)!.push(s);
     }
-    return out;
-  }, [event.speedRunImportStatus, event.type, stagesSorted]);
+    for (const leg of legOrder) {
+      const stagesInLeg = byLeg.get(leg)!;
+      const items: ResultsStripItem[] = stagesInLeg.map((s) => ({
+        id: `st-${s.id}`,
+        type: "stage" as const,
+        stage: s,
+      }));
+      items.push({
+        id: `le-leg-${leg}`,
+        type: "legEnd",
+        leg,
+        stagesInLeg,
+      });
+      rows.push({
+        key: `leg-${leg}`,
+        label: `Leg ${leg}`,
+        items,
+      });
+    }
+    return rows;
+  }, [
+    competitiveStagesSorted,
+    event.speedRunImportStatus,
+    event.type,
+    stagesSorted,
+  ]);
+
+  const resultsStripItems = useMemo(
+    () => resultsStripRows.flatMap((row) => row.items),
+    [resultsStripRows],
+  );
 
   useEffect(() => {
     if (resultsStripItems.length === 0) {
@@ -1011,7 +1095,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         );
         const html = buildLandscapeResultsPdfHtml({
           eventName: event.name,
-          subtitle: `After SS${stage.order} Results (SS1–SS${stage.order})`,
+          subtitle: (() => {
+            const n = competitiveStageNumber(stage, event.stages);
+            const ss = n != null ? `SS${n}` : stageChipLabel(stage, event.stages);
+            return `After ${ss} Results (SS1–${ss})`;
+          })(),
           modeLabel: "Overall classification",
           columns: [
             "Pos",
@@ -1036,7 +1124,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       const tableRows = buildRallyStagePdfRows(rows, stage);
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
-        subtitle: `SS${stage.order} ${stage.name}`,
+        subtitle: `${stageHeadingLabel(stage, event.stages)}`,
         modeLabel: "Stage results",
         columns: [
           "Pos",
@@ -1045,7 +1133,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           "Co-driver",
           "Car",
           "Class",
-          "SS Time",
+          isPreEventStage(stage) ? "Time" : "SS Time",
           "Penalty",
           "Total time",
           "Diff",
@@ -1062,7 +1150,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     // Rally leg end: per-SS columns for every crew (landscape, one-page fit).
     if (event.type === "rally" && selectedStripItem.type === "legEnd") {
       const stagesInLeg = selectedStripItem.stagesInLeg;
-      const { columns, tableRows } = buildRallyLegPdfSheet(rows, stagesInLeg);
+      const { columns, tableRows } = buildRallyLegPdfSheet(
+        rows,
+        stagesInLeg,
+        event.stages,
+      );
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
         subtitle: `LEG${selectedStripItem.leg} Results`,
@@ -1080,7 +1172,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
 
     const headingStage =
       selectedStripItem.type === "stage"
-        ? `SS${selectedStripItem.stage.order} ${selectedStripItem.stage.name}`
+        ? stageHeadingLabel(selectedStripItem.stage, event.stages)
         : selectedStripItem.type === "legEnd"
           ? `LEG${selectedStripItem.leg} Results`
           : selectedStripItem.label;
@@ -1414,7 +1506,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                 {event.status}
               </span>
               <span className="text-right text-xs text-[var(--ewrc-muted-3)]">
-                {entriesSorted.length} crews · {stagesSorted.length} stages
+                {entriesSorted.length} crews · {competitiveStagesSorted.length} stages
                 {totalKm > 0 ? ` · ${totalKm.toFixed(1)} km` : null}
               </span>
             </div>
@@ -1534,97 +1626,114 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                 </p>
               ) : (
                 <>
-                  <div className="overflow-x-auto overflow-y-hidden">
-                    <div
-                      className="flex min-w-min items-center px-3 py-4 sm:px-5"
-                      role="list"
-                      aria-label="Select a stage or end of leg"
-                    >
-                      {resultsStripItems.map((item, i) => {
-                        const isSelected = selectedStripItem?.id === item.id;
-                        return (
-                          <div
-                            key={item.id}
-                            className="flex items-center"
-                            role="listitem"
-                          >
-                            {i > 0 ? (
-                              <span
-                                className="select-none px-2.5 text-xl font-extralight leading-none text-[var(--ewrc-strip-sep)] sm:px-3"
-                                aria-hidden
+                  <div className="space-y-1.5 overflow-x-auto px-3 py-2.5 sm:px-4">
+                    {resultsStripRows.map((row) => (
+                      <div
+                        key={row.key}
+                        className="flex min-w-min items-center gap-2"
+                        role="list"
+                        aria-label={row.label}
+                      >
+                        <span className="w-[7.5rem] shrink-0 truncate text-[10px] font-semibold uppercase tracking-[0.14em] text-[var(--ewrc-muted-3)] sm:w-36 sm:text-[11px]">
+                          {row.label}
+                        </span>
+                        <div className="flex min-w-0 items-center">
+                          {row.items.map((item, i) => {
+                            const isSelected = selectedStripItem?.id === item.id;
+                            return (
+                              <div
+                                key={item.id}
+                                className="flex items-center"
+                                role="listitem"
                               >
-                                |
-                              </span>
-                            ) : null}
-                            {item.type === "stage" ? (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedStripId(item.id)}
-                                aria-pressed={isSelected}
-                                title={
-                                  item.stage.distanceKm != null
-                                    ? `${item.stage.name} — ${item.stage.distanceKm} km`
-                                    : item.stage.name
-                                }
-                                className={
-                                  "flex items-center gap-2 rounded border px-3 py-2.5 text-left transition-colors " +
-                                  (isSelected
-                                    ? "border-[var(--ewrc-brand)] bg-[var(--ewrc-chip-on-bg)] ring-1 ring-[var(--ewrc-chip-on-ring)]"
-                                    : "border-[var(--ewrc-border-ui)] bg-[var(--ewrc-chip-bg)] hover:border-[var(--ewrc-border-ui-hover)] hover:bg-[var(--ewrc-chip-hover-bg)]")
-                                }
-                              >
-                                <span className="shrink-0 font-mono text-xs font-bold text-[var(--ewrc-ss)] sm:text-sm">
-                                  SS{item.stage.order}
-                                </span>
-                                <StageProgressDot
-                                  status={item.stage.progressStatus ?? "pending"}
-                                />
-                              </button>
-                            ) : item.type === "legEnd" ? (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedStripId(item.id)}
-                                aria-pressed={isSelected}
-                                title={`LEG${item.leg} results`}
-                                className={
-                                  "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border px-3 py-2.5 text-left text-sm transition-colors " +
-                                  (isSelected
-                                    ? "border-[var(--ewrc-leg-on-border)] bg-[var(--ewrc-leg-on-bg)] ring-1 ring-[var(--ewrc-leg-on-ring)]"
-                                    : "border-[var(--ewrc-leg-card-border)] bg-[var(--ewrc-leg-card-bg)] hover:border-[var(--ewrc-leg-card-hover-border)] hover:bg-[var(--ewrc-leg-card-hover-bg)]")
-                                }
-                              >
-                                <span className="font-bold uppercase tracking-wide text-[var(--ewrc-leg-amber)]">
-                                  LEG{item.leg}
-                                </span>
-                                <span className="font-semibold text-[var(--ewrc-leg-cream)]">
-                                  Results
-                                </span>
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => setSelectedStripId(item.id)}
-                                aria-pressed={isSelected}
-                                title={item.label}
-                                className={
-                                  "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border px-3 py-2.5 text-left text-sm transition-colors " +
-                                  (isSelected
-                                    ? "border-[var(--ewrc-brand)] bg-[var(--ewrc-chip-on-bg)] ring-1 ring-[var(--ewrc-chip-on-ring)]"
-                                    : "border-[var(--ewrc-border-ui)] bg-[var(--ewrc-chip-bg)] hover:border-[var(--ewrc-border-ui-hover)] hover:bg-[var(--ewrc-chip-hover-bg)]")
-                                }
-                              >
-                                <span className="font-bold uppercase tracking-wide text-[var(--ewrc-ss)]">
-                                  {item.label}
-                                </span>
-                                {item.runId !== "best" ? (
-                                  <StageProgressDot status={item.progressStatus} />
+                                {i > 0 ? (
+                                  <span
+                                    className="select-none px-1.5 text-sm font-extralight leading-none text-[var(--ewrc-strip-sep)] sm:px-2"
+                                    aria-hidden
+                                  >
+                                    |
+                                  </span>
                                 ) : null}
-                              </button>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                                {item.type === "stage" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedStripId(item.id)}
+                                    aria-pressed={isSelected}
+                                    title={
+                                      item.stage.distanceKm != null
+                                        ? `${item.stage.name} — ${item.stage.distanceKm} km`
+                                        : item.stage.name
+                                    }
+                                    className={
+                                      "flex items-center gap-1.5 rounded border px-2 py-1 text-left transition-colors " +
+                                      (isSelected
+                                        ? "border-[var(--ewrc-brand)] bg-[var(--ewrc-chip-on-bg)] ring-1 ring-[var(--ewrc-chip-on-ring)]"
+                                        : "border-[var(--ewrc-border-ui)] bg-[var(--ewrc-chip-bg)] hover:border-[var(--ewrc-border-ui-hover)] hover:bg-[var(--ewrc-chip-hover-bg)]")
+                                    }
+                                  >
+                                    <span
+                                      className={
+                                        "shrink-0 font-mono text-[11px] font-bold sm:text-xs " +
+                                        (isPreEventStage(item.stage)
+                                          ? "text-[var(--ewrc-muted)]"
+                                          : "text-[var(--ewrc-ss)]")
+                                      }
+                                    >
+                                      {stageChipLabel(item.stage, event.stages)}
+                                    </span>
+                                    <StageProgressDot
+                                      status={item.stage.progressStatus ?? "pending"}
+                                    />
+                                  </button>
+                                ) : item.type === "legEnd" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedStripId(item.id)}
+                                    aria-pressed={isSelected}
+                                    title={`LEG${item.leg} results`}
+                                    className={
+                                      "flex shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 py-1 text-left text-[11px] transition-colors sm:text-xs " +
+                                      (isSelected
+                                        ? "border-[var(--ewrc-leg-on-border)] bg-[var(--ewrc-leg-on-bg)] ring-1 ring-[var(--ewrc-leg-on-ring)]"
+                                        : "border-[var(--ewrc-leg-card-border)] bg-[var(--ewrc-leg-card-bg)] hover:border-[var(--ewrc-leg-card-hover-border)] hover:bg-[var(--ewrc-leg-card-hover-bg)]")
+                                    }
+                                  >
+                                    <span className="font-bold uppercase tracking-wide text-[var(--ewrc-leg-amber)]">
+                                      LEG{item.leg}
+                                    </span>
+                                    <span className="font-semibold text-[var(--ewrc-leg-cream)]">
+                                      Results
+                                    </span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedStripId(item.id)}
+                                    aria-pressed={isSelected}
+                                    title={item.label}
+                                    className={
+                                      "flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded border px-2 py-1 text-left text-[11px] transition-colors sm:text-xs " +
+                                      (isSelected
+                                        ? "border-[var(--ewrc-brand)] bg-[var(--ewrc-chip-on-bg)] ring-1 ring-[var(--ewrc-chip-on-ring)]"
+                                        : "border-[var(--ewrc-border-ui)] bg-[var(--ewrc-chip-bg)] hover:border-[var(--ewrc-border-ui-hover)] hover:bg-[var(--ewrc-chip-hover-bg)]")
+                                    }
+                                  >
+                                    <span className="font-bold uppercase tracking-wide text-[var(--ewrc-ss)]">
+                                      {item.label}
+                                    </span>
+                                    {item.runId !== "best" ? (
+                                      <StageProgressDot
+                                        status={item.progressStatus}
+                                      />
+                                    ) : null}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </>
               )}
@@ -1639,10 +1748,18 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                         Live results
                       </h2>
                       <p className="mt-1 text-sm font-semibold text-[var(--ewrc-heading)]">
-                        SS{selectedStripItem.stage.order}{" "}
-                        <span className="font-normal text-[var(--ewrc-strong)]">
-                          {selectedStripItem.stage.name}
-                        </span>
+                        {isPreEventStage(selectedStripItem.stage) ? (
+                          <span className="font-normal text-[var(--ewrc-strong)]">
+                            {selectedStripItem.stage.name}
+                          </span>
+                        ) : (
+                          <>
+                            {stageChipLabel(selectedStripItem.stage, event.stages)}{" "}
+                            <span className="font-normal text-[var(--ewrc-strong)]">
+                              {selectedStripItem.stage.name}
+                            </span>
+                          </>
+                        )}
                       </p>
                       {selectedStripItem.stage.distanceKm != null ? (
                         <p className="mt-0.5 text-xs text-[var(--ewrc-muted-3)]">
@@ -1667,7 +1784,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                                 : "text-[var(--ewrc-muted)] hover:text-[var(--ewrc-strong)]")
                             }
                           >
-                            SS{selectedStripItem.stage.order} Stage Results
+                            {stageChipLabel(selectedStripItem.stage, event.stages)}{" "}
+                            Stage Results
                           </button>
                           <button
                             type="button"
@@ -1681,7 +1799,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                                 : "text-[var(--ewrc-muted)] hover:text-[var(--ewrc-strong)]")
                             }
                           >
-                            After SS{selectedStripItem.stage.order} Results
+                            After {stageChipLabel(selectedStripItem.stage, event.stages)}{" "}
+                            Results
                           </button>
                         </div>
                       ) : null}
@@ -1784,6 +1903,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                     <LegResultsTable
                       entries={entriesForStageResults}
                       stagesInLeg={selectedStripItem.stagesInLeg}
+                      allStages={event.stages}
                     />
                   )}
                 </div>
@@ -1798,28 +1918,30 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
               Itinerary
             </h2>
             <div className="mt-6 space-y-0">
-              {itineraryByLeg.map(({ leg, stages: legStages }, groupIdx) => (
+              {itinerarySections.map((section, groupIdx) => (
                 <div
-                  key={leg}
+                  key={section.key}
                   className={
                     groupIdx > 0
-                      ? "mt-10 border-t border-[var(--ewrc-border)] pt-8"
+                      ? "mt-8 border-t border-[var(--ewrc-border)] pt-6"
                       : ""
                   }
                 >
-                  {itineraryByLeg.length > 1 ? (
-                    <h3 className="mb-4 font-ewrc-heading text-xs font-bold uppercase tracking-widest text-[var(--ewrc-leg-heading)]">
-                      Leg {leg}
+                  {itinerarySections.length > 1 || section.key === "pre-event" ? (
+                    <h3 className="mb-3 font-ewrc-heading text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--ewrc-leg-heading)]">
+                      {section.title}
                     </h3>
                   ) : null}
                   <ol className="space-y-0">
-                    {legStages.map((s, i) => (
+                    {section.stages.map((s, i) => {
+                      const ssNo = competitiveStageNumber(s, event.stages);
+                      return (
                       <li key={s.id} className="flex gap-4">
                         <div className="flex w-8 flex-col items-center">
                           <span className="font-mono text-sm font-bold text-[var(--ewrc-brand)]">
-                            {s.order}
+                            {section.showNumbers && ssNo != null ? ssNo : "·"}
                           </span>
-                          {i < legStages.length - 1 ? (
+                          {i < section.stages.length - 1 ? (
                             <span className="mt-1 h-full min-h-[1.5rem] w-px bg-[var(--ewrc-line)]" />
                           ) : null}
                         </div>
@@ -1842,12 +1964,13 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                           </p>
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ol>
                 </div>
               ))}
             </div>
-            {stagesSorted.length > 0 ? (
+            {competitiveStagesSorted.length > 0 ? (
               <p className="mt-6 border-t border-[var(--ewrc-border)] pt-4 text-sm text-[var(--ewrc-muted)]">
                 Total competitive distance:{" "}
                 <span className="font-mono text-[var(--ewrc-strong)]">
@@ -2265,9 +2388,11 @@ function DriverOnlyCell({ row }: { row: Entry }) {
 function LegResultsTable({
   entries,
   stagesInLeg,
+  allStages,
 }: {
   entries: Entry[];
   stagesInLeg: Stage[];
+  allStages: Stage[];
 }) {
   type LegRow = {
     row: Entry;
@@ -2395,7 +2520,7 @@ function LegResultsTable({
           <th className="w-14 !text-center">Class</th>
           {stagesInLeg.map((st) => (
             <th key={st.id} className="w-16 whitespace-nowrap !text-center">
-              SS{st.order}
+              {stageChipLabel(st, allStages)}
             </th>
           ))}
           <th className="w-20 !text-center">SS Times</th>
