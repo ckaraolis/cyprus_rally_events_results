@@ -21,8 +21,8 @@ function formatOfficialHms(ms: number): string {
  */
 export function OfficialTime() {
   const [clock, setClock] = useState("--:--:--");
-  /** officialMs ≈ Date.now() + correctionRef */
-  const correctionRef = useRef(-21_000);
+  /** officialMs ≈ Date.now() + correctionRef (server sync + optional ALGE offset). */
+  const correctionRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,7 +46,7 @@ export function OfficialTime() {
         const algeOffset =
           typeof data.algeOffsetMs === "number" && Number.isFinite(data.algeOffsetMs)
             ? data.algeOffsetMs
-            : -21_000;
+            : 0;
         if (serverNow == null || cancelled) return;
         // Assume response midpoint ≈ server sample time.
         const clientMid = clientBefore + rtt / 2;
