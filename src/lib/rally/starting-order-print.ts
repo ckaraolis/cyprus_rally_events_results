@@ -187,10 +187,10 @@ export function buildStartingOrderPdfHtml(input: {
 
   return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(sheetTitle)}</title><style>
   @page { size: A4 landscape; margin: 8mm; }
-  html, body { margin: 0; padding: 0; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; }
+  html, body { margin: 0; padding: 0; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .page { width: 281mm; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
   .header { display: flex; flex-direction: column; align-items: center; gap: 2px; margin: 0 0 5mm; text-align: center; }
-  .logo { max-height: ${logoH}px; width: auto; }
+  .logo { max-height: ${logoH}px; width: auto; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.15; }
   h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
   h3 { margin: 1px 0 0; font-size: ${Math.max(7, subPt - 1)}pt; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; }

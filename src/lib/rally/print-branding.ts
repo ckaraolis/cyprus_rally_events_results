@@ -78,13 +78,14 @@ export function buildCyprusRallyPrintHeaderHtml(input: {
 /** CSS shared by branded landscape result / starting-order sheets. */
 export function cyprusRallyPrintHeaderCss(logoMaxHeightPx = 56): string {
   return `
-  .brand-header { display: grid; grid-template-columns: 1fr 2.4fr 1fr; align-items: center; gap: 3mm; margin: 0 0 2mm; width: 100%; }
+  .brand-header { display: grid; grid-template-columns: 1fr 2.6fr 1fr; align-items: center; gap: 3mm; margin: 0 0 2mm; width: 100%; }
   .brand-slot { display: flex; align-items: center; }
   .brand-left { justify-content: flex-start; }
   .brand-center { justify-content: center; }
   .brand-right { justify-content: flex-end; }
+  .brand-main, .brand-side { -webkit-print-color-adjust: exact; print-color-adjust: exact; color-adjust: exact; }
   .brand-main { max-height: ${logoMaxHeightPx}px; width: auto; max-width: 100%; object-fit: contain; }
-  .brand-side { max-height: ${Math.round(logoMaxHeightPx * 0.82)}px; width: auto; max-width: 100%; object-fit: contain; }
+  .brand-side { max-height: ${Math.round(logoMaxHeightPx * 0.9)}px; width: auto; max-width: 100%; object-fit: contain; }
   .sheet-title { margin: 3mm 0 3mm; font-size: 14pt; font-weight: 700; line-height: 1.2; text-align: center; }
   .sheet-mode { margin: 0 0 3mm; font-size: 8pt; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; text-align: center; }
 `;
