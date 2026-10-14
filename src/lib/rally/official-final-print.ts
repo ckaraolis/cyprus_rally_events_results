@@ -93,7 +93,9 @@ export function printOfficialFinalResultsPdf(input: {
   th { background: #f0f0f0; font-weight: 700; }
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
-  col.c-pos, col.c-num { width: 2.2%; }
+  col.c-pos { width: 3.6%; }
+  col.c-num { width: 2.8%; }
+  th:nth-child(1), th:nth-child(2), td:nth-child(1), td:nth-child(2) { white-space: nowrap; word-wrap: normal; overflow: visible; }
   col.c-driver, col.c-codriver { width: 14.5%; }
   col.c-car { width: 12.5%; }
   col.c-class { width: 4.8%; }

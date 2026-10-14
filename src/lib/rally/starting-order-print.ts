@@ -1,7 +1,7 @@
 import type { Entry } from "./types";
 import {
   resolveStartingOrderTime,
-  startingOrderScopeLabel,
+  startingOrderPrintTitle,
 } from "./leg-starting-order";
 import {
   buildCyprusRallyPrintHeaderHtml,
@@ -172,7 +172,7 @@ export function buildStartingOrderPdfHtml(input: {
       : `<tr><td colspan="${columns.length}" class="c" style="color:#666;">No starters in starting order.</td></tr>`;
 
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
-  const sheetTitle = `${startingOrderScopeLabel(input.leg)} Starting Order`;
+  const sheetTitle = startingOrderPrintTitle(input.leg);
   const branded = usesCyprusRallyPrintBrand(input.eventName);
   const headerHtml = branded
     ? buildCyprusRallyPrintHeaderHtml({
@@ -183,7 +183,7 @@ export function buildStartingOrderPdfHtml(input: {
         logoUrl
           ? `<img src="${escapeHtml(logoUrl)}" alt="Event logo" class="logo" />`
           : ""
-      }<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(sheetTitle)}</h2><h3>Start list</h3></div>`;
+      }<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(sheetTitle)}</h2></div>`;
 
   return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(sheetTitle)}</title><style>
   @page { size: A4 landscape; margin: 8mm; }
@@ -200,7 +200,9 @@ export function buildStartingOrderPdfHtml(input: {
   th { background: #f0f0f0; font-weight: 700; }
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
-  col.c-pos, col.c-num { width: 4%; }
+  col.c-pos { width: 5%; }
+  col.c-num { width: 4%; }
+  th:nth-child(1), th:nth-child(2), td:nth-child(1), td:nth-child(2) { white-space: nowrap; word-wrap: normal; overflow: visible; }
   col.c-driver, col.c-codriver { width: 18%; }
   col.c-car { width: 16%; }
   col.c-class { width: 8%; }

@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { normalizeLegStartingOrders } from "./leg-starting-order";
+import { normalizeShakedownPassCount } from "./shakedown-passes";
 import { parseStageKindMeta, serializeStageKindMeta } from "./stage-kind";
 import type { Entry, RallyEvent, RallySiteConfig, SiteSettings, Stage } from "./types";
 
@@ -171,6 +172,12 @@ function toEvent(row: {
     !Array.isArray(algeMap.__stageKinds)
       ? (algeMap.__stageKinds as Record<string, unknown>)
       : {};
+  const shakedownPassCountsRaw =
+    algeMap.__shakedownPassCounts &&
+    typeof algeMap.__shakedownPassCounts === "object" &&
+    !Array.isArray(algeMap.__shakedownPassCounts)
+      ? (algeMap.__shakedownPassCounts as Record<string, unknown>)
+      : {};
   return {
     id: row.id,
     name: row.name,
@@ -202,6 +209,7 @@ function toEvent(row: {
             k !== "__rallyStageAlgeConfig" &&
             k !== "__legStartingOrders" &&
             k !== "__stageKinds" &&
+            k !== "__shakedownPassCounts" &&
             k !== "__finalResultsPublished" &&
             k !== "__configUpdatedAt",
         )
@@ -212,7 +220,18 @@ function toEvent(row: {
     officialNoticeDocuments: officialDocs,
     legStartingOrders: normalizeLegStartingOrders(legStartingOrdersRaw),
     finalResultsPublished: algeMap.__finalResultsPublished === true,
-    stages: row.stages.map((s) => toStage(s, stageKindsRaw[s.id])),
+    stages: row.stages.map((s) => {
+      const stage = toStage(s, stageKindsRaw[s.id]);
+      if (stage.kind !== "shakedown") return stage;
+      const fromDedicated = shakedownPassCountsRaw[s.id];
+      if (fromDedicated != null) {
+        return {
+          ...stage,
+          shakedownPassCount: normalizeShakedownPassCount(fromDedicated),
+        };
+      }
+      return stage;
+    }),
     entries: row.entries.map(toEntry),
   };
 }
@@ -391,6 +410,14 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
             __stageKinds: Object.fromEntries(
               e.stages.map((s) => [s.id, serializeStageKindMeta(s)]),
             ),
+            __shakedownPassCounts: Object.fromEntries(
+              e.stages
+                .filter((s) => (s.kind ?? "ss") === "shakedown")
+                .map((s) => [
+                  s.id,
+                  normalizeShakedownPassCount(s.shakedownPassCount),
+                ]),
+            ),
             __finalResultsPublished: e.finalResultsPublished === true,
             /** Bumps on every save so public poll `updatedAt` always moves with timing edits. */
             __configUpdatedAt: config.updatedAt,
@@ -417,6 +444,14 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
             __legStartingOrders: e.legStartingOrders ?? {},
             __stageKinds: Object.fromEntries(
               e.stages.map((s) => [s.id, serializeStageKindMeta(s)]),
+            ),
+            __shakedownPassCounts: Object.fromEntries(
+              e.stages
+                .filter((s) => (s.kind ?? "ss") === "shakedown")
+                .map((s) => [
+                  s.id,
+                  normalizeShakedownPassCount(s.shakedownPassCount),
+                ]),
             ),
             __finalResultsPublished: e.finalResultsPublished === true,
             __configUpdatedAt: config.updatedAt,

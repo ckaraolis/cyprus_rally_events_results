@@ -3707,33 +3707,31 @@ export function EventEditor({ event: initial }: Props) {
                 Allowed passes
                 <select
                   className="ml-2 rounded border border-zinc-300 bg-white px-2 py-1 text-sm font-medium normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
-                  value={shakedownTimingPassCount}
+                  value={String(shakedownTimingPassCount)}
                   onChange={(e) => {
                     const next = normalizeShakedownPassCount(e.target.value);
                     const stageId = selectedRallyTimingStage?.id;
                     if (!stageId) return;
+                    const nextStages = stages.map((s) =>
+                      s.id === stageId
+                        ? { ...s, kind: "shakedown" as const, shakedownPassCount: next }
+                        : s,
+                    );
                     setFlash(null);
-                    setStages((prev) => {
-                      const nextStages = prev.map((s) =>
-                        s.id === stageId
-                          ? { ...s, shakedownPassCount: next }
-                          : s,
-                      );
-                      startTransition(async () => {
-                        const res = await replaceStages(eventId, nextStages);
-                        if (!res.ok) {
-                          setFlash(`Save failed: ${res.error}`);
-                          return;
-                        }
-                        setFlash(`Shakedown set to ${next} passes.`);
-                        router.refresh();
-                      });
-                      return nextStages;
+                    setStages(nextStages);
+                    startTransition(async () => {
+                      const res = await replaceStages(eventId, nextStages);
+                      if (!res.ok) {
+                        setFlash(`Save failed: ${res.error}`);
+                        return;
+                      }
+                      setFlash(`Shakedown set to ${next} passes.`);
+                      router.refresh();
                     });
                   }}
                 >
-                  <option value={2}>2 passes</option>
-                  <option value={3}>3 passes</option>
+                  <option value="2">2 passes</option>
+                  <option value="3">3 passes</option>
                 </select>
               </label>
               <span className="text-xs text-zinc-500 dark:text-zinc-400">

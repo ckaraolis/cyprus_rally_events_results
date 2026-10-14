@@ -29,6 +29,14 @@ export function startingOrderScopeLabel(leg: number): string {
   return leg === QUALIFY_STARTING_ORDER_LEG ? "Qualify" : `LEG ${leg}`;
 }
 
+/** Print sheet title for starting-order PDFs. */
+export function startingOrderPrintTitle(leg: number): string {
+  if (leg === QUALIFY_STARTING_ORDER_LEG) {
+    return "Qualify Stage Starting LIST";
+  }
+  return `LEG ${leg} STARTING LIST`;
+}
+
 export function normalizeLegStartingOrders(
   raw: unknown,
 ): RallyEvent["legStartingOrders"] {

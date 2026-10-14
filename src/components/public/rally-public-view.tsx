@@ -425,7 +425,9 @@ function buildLandscapeResultsPdfHtml(input: {
   th { background: #f0f0f0; font-weight: 700; }
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
-  col.c-pos, col.c-num { width: ${legLayout ? "1.8%" : "2.2%"}; }
+  col.c-pos { width: ${legLayout ? "3.2%" : "3.6%"}; }
+  col.c-num { width: ${legLayout ? "2.4%" : "2.8%"}; }
+  th:nth-child(1), th:nth-child(2), td:nth-child(1), td:nth-child(2) { white-space: nowrap; word-wrap: normal; overflow: visible; }
   col.c-driver, col.c-codriver { width: ${driverWidthPct}; }
   col.c-car { width: ${carWidthPct}; }
   col.c-class { width: ${classWidthPct}; }
