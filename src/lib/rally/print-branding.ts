@@ -12,7 +12,10 @@ export function usesCyprusRallyPrintBrand(eventName: string): boolean {
   return (
     n.includes("cyprus rally") ||
     n.includes("petrolina") ||
-    n.includes("test event")
+    n === "test" ||
+    n.startsWith("test ") ||
+    n.includes("test event") ||
+    n.includes("test rally")
   );
 }
 
