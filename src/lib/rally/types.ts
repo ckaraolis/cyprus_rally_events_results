@@ -34,6 +34,8 @@ export interface Stage {
    * `shakedown` / `qualify` = pre-event only (itinerary + timing; not in results).
    */
   kind: StageKind;
+  /** Shakedown only: how many timed passes are allowed (2 or 3). Default 3. */
+  shakedownPassCount?: 2 | 3;
   distanceKm: number | null;
   /** Local time when car 1 starts the stage (HH:mm from admin). Null = TBA. */
   firstCarStartTime: string | null;
@@ -129,6 +131,11 @@ export interface RallyEvent {
   }>;
   /** Per-leg starting order + first-car time / interval (admin Starting Order tab). */
   legStartingOrders: Record<string, LegStartingOrder>;
+  /**
+   * When false (default), the public Official Final Results tab is hidden.
+   * Stewards publish via Admin → Official Final Results.
+   */
+  finalResultsPublished: boolean;
   stages: Stage[];
   entries: Entry[];
 }

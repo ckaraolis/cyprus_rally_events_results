@@ -23,6 +23,7 @@ import type {
 } from "./types";
 import { normalizeLegStartingOrders } from "./leg-starting-order";
 import { normalizeStageKind } from "./stage-kind";
+import { normalizeShakedownPassCount } from "./shakedown-passes";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
@@ -203,12 +204,16 @@ function normalizeStage(raw: unknown): Stage {
   const o =
     raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const km = o.distanceKm;
+  const kind = normalizeStageKind(o.kind);
   return {
     id: typeof o.id === "string" ? o.id : crypto.randomUUID(),
     name: typeof o.name === "string" ? o.name : "Stage",
     order: typeof o.order === "number" ? o.order : 0,
     leg: normalizeLeg(o.leg),
-    kind: normalizeStageKind(o.kind),
+    kind,
+    ...(kind === "shakedown"
+      ? { shakedownPassCount: normalizeShakedownPassCount(o.shakedownPassCount) }
+      : {}),
     distanceKm: typeof km === "number" ? km : null,
     firstCarStartTime: normalizeFirstCarStartTime(o.firstCarStartTime),
     progressStatus: normalizeProgressStatus(o.progressStatus),
@@ -270,6 +275,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
       officialNoticeCustomCategories: [],
       officialNoticeDocuments: [],
       legStartingOrders: {},
+      finalResultsPublished: false,
       stages: [],
       entries: [],
     };
@@ -325,6 +331,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
       o.officialNoticeDocuments,
     ),
     legStartingOrders: normalizeLegStartingOrders(o.legStartingOrders),
+    finalResultsPublished: o.finalResultsPublished === true,
     stages,
     entries,
   };

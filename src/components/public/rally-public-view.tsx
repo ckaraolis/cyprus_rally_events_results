@@ -19,9 +19,9 @@ import {
   sortStagesByKindThenOrder,
 } from "@/lib/rally/stage-kind";
 import {
-  SHAKEDOWN_PASS_COUNT,
   findShakedownBestDurationMs,
   findShakedownBestPassIndex,
+  getShakedownPassCount,
   getShakedownPassDurationsMs,
   getShakedownPasses,
   isShakedownStage,
@@ -41,11 +41,17 @@ function stageChipLabel(stage: Stage, allStages: Stage[]): string {
   return n != null ? `SS${n}` : `SS${stage.order}`;
 }
 
+/** Strip a leading "SS1" / "SS 1" from a stage name so titles don't double the number. */
+function stageNameWithoutSsPrefix(name: string): string {
+  return name.trim().replace(/^SS\s*\d+\s*[-–:]?\s*/i, "").trim();
+}
+
 function stageHeadingLabel(stage: Stage, allStages: Stage[]): string {
   if (isPreEventStage(stage)) return stage.name || stageChipLabel(stage, allStages);
   const n = competitiveStageNumber(stage, allStages);
   const ss = n != null ? `SS${n}` : `SS${stage.order}`;
-  return `${ss} ${stage.name}`;
+  const name = stageNameWithoutSsPrefix(stage.name ?? "");
+  return name ? `${ss} ${name}` : ss;
 }
 
 const RALLY_TABS = [
@@ -55,7 +61,7 @@ const RALLY_TABS = [
   { id: "entries", label: "Entry List" },
   { id: "retirements", label: "Retirements" },
   { id: "penalty", label: "Penalty" },
-  { id: "final-results", label: "Final Results" },
+  { id: "final-results", label: "Official Final Results" },
   { id: "official-notice-board", label: "Official Notice Board" },
 ] as const;
 
@@ -63,7 +69,7 @@ const SPEED_TABS = [
   { id: "overview", label: "Overview" },
   { id: "stage-results", label: "Live results" },
   { id: "entries", label: "Entry List" },
-  { id: "final-results", label: "Final Results" },
+  { id: "final-results", label: "Official Final Results" },
   { id: "official-notice-board", label: "Official Notice Board" },
 ] as const;
 
@@ -268,8 +274,10 @@ function buildLandscapeResultsPdfHtml(input: {
   rallyClassificationLayout?: boolean;
   /** LEG sheet: Pos/#, Driver, Co-driver, Car, Class, SS1..SSn, SS Times, Penalty, Total, Diff. */
   rallyLegLayout?: boolean;
-  /** Shakedown: Pos/#, Driver, Co-driver, Car, Class, 1, 2, 3, Best, Diff. */
+  /** Shakedown: Pos/#, Driver, Co-driver, Car, Class, 1..N, Best, Diff. */
   shakedownLayout?: boolean;
+  /** Active shakedown pass count (2 or 3) when shakedownLayout is set. */
+  shakedownPassCount?: 2 | 3;
   /** Number of per-stage columns (SS1..) when rallyLegLayout is set. */
   legStageCount?: number;
   /** Shrink Pos/# columns to leave room for names and times. */
@@ -282,6 +290,8 @@ function buildLandscapeResultsPdfHtml(input: {
   const rallyLayout = input.rallyClassificationLayout === true;
   const legLayout = input.rallyLegLayout === true;
   const shakedownLayout = input.shakedownLayout === true;
+  const shakedownPassCount =
+    input.shakedownPassCount === 2 ? 2 : shakedownLayout ? 3 : 0;
   const legStageCount = Math.max(0, input.legStageCount ?? 0);
   const branded = usesCyprusRallyPrintBrand(input.eventName);
   const centerFrom =
@@ -333,11 +343,15 @@ function buildLandscapeResultsPdfHtml(input: {
 
   let colgroup = "";
   if (shakedownLayout) {
-    // Pos, #, Driver, Co-driver, Car, Class, 1, 2, 3, Best, Diff
+    // Pos, #, Driver, Co-driver, Car, Class, 1..N, Best, Diff
+    const passCols = Array.from(
+      { length: shakedownPassCount + 2 },
+      () => '<col class="c-pass" />',
+    ).join("");
     colgroup = `<colgroup>
       <col class="c-pos" /><col class="c-num" />
       <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
-      <col class="c-pass" /><col class="c-pass" /><col class="c-pass" /><col class="c-pass" /><col class="c-pass" />
+      ${passCols}
     </colgroup>`;
   } else if (legLayout && legStageCount > 0) {
     // Reserve four trailing time cols (SS Times, Penalty, Total, Diff).
@@ -432,11 +446,16 @@ function buildLandscapeResultsPdfHtml(input: {
 function buildRallyShakedownPdfRows(entries: Entry[], stage: Stage): string[][] {
   const stageId = stage.id;
   const timeDigits: 2 | 3 = 3;
+  const passCount = getShakedownPassCount(stage);
   const ranked = [...entries]
     .map((row) => {
       const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
-      const passes = getShakedownPasses(blob[stageId]);
-      const durations = getShakedownPassDurationsMs(passes, parseClockToDayMs);
+      const passes = getShakedownPasses(blob[stageId], passCount);
+      const durations = getShakedownPassDurationsMs(
+        passes,
+        parseClockToDayMs,
+        passCount,
+      );
       const bestMs = findShakedownBestDurationMs(durations);
       return { row, durations, bestMs };
     })
@@ -448,7 +467,7 @@ function buildRallyShakedownPdfRows(entries: Entry[], stage: Stage): string[][] 
     );
   const leaderMs = ranked[0]?.bestMs ?? null;
   return ranked.map(({ row, durations, bestMs }, i) => {
-    const passCells = Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, pi) => {
+    const passCells = Array.from({ length: passCount }, (_, pi) => {
       const d = durations[pi];
       return d != null ? formatDurationMs(d, timeDigits) : "—";
     });
@@ -834,7 +853,17 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     "stage",
   );
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const tabs = event.type === "speed" ? SPEED_TABS : RALLY_TABS;
+  const tabs = useMemo(() => {
+    const all = event.type === "speed" ? SPEED_TABS : RALLY_TABS;
+    if (event.finalResultsPublished === true) return all;
+    return all.filter((t) => t.id !== "final-results");
+  }, [event.type, event.finalResultsPublished]);
+
+  useEffect(() => {
+    if (tab === "final-results" && event.finalResultsPublished !== true) {
+      setTab("overview");
+    }
+  }, [tab, event.finalResultsPublished]);
 
   /** Entry List tab: empty string = all classes; "__EMPTY__" = crews with no class set. */
   const [entryListClassFilter, setEntryListClassFilter] = useState("");
@@ -1184,21 +1213,14 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       const wantOverall =
         mode === "overall" ||
         (mode === "auto" && effectiveRallyStageView === "afterStage");
-      if (wantOverall && cumulativeStagesUpToSelected.length >= 2) {
+      if (wantOverall && cumulativeStagesUpToSelected.length >= 1) {
         const tableRows = buildRallyOverallPdfRows(
           rows,
           cumulativeStagesUpToSelected,
         );
         const html = buildLandscapeResultsPdfHtml({
           eventName: event.name,
-          subtitle: (() => {
-            const n = competitiveStageNumber(stage, event.stages);
-            const ss = n != null ? `SS${n}` : stageChipLabel(stage, event.stages);
-            const name = (stage.name ?? "").trim();
-            return name
-              ? `Overall Classification after ${ss} ${name}`
-              : `Overall Classification after ${ss}`;
-          })(),
+          subtitle: `Overall Classification after ${stageHeadingLabel(stage, event.stages)}`,
           modeLabel: "Overall classification",
           columns: [
             "Pos",
@@ -1222,11 +1244,17 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       }
       const tableRows = buildRallyStagePdfRows(rows, stage);
       const shakedown = isShakedownStage(stage);
+      const qualify = stage.kind === "qualify";
+      const shakedownPasses = shakedown ? getShakedownPassCount(stage) : 3;
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
-        subtitle: isPreEventStage(stage)
-          ? stageHeadingLabel(stage, event.stages)
-          : `Stage Classification ${stageHeadingLabel(stage, event.stages)}`,
+        subtitle: shakedown
+          ? "Shakedown Results"
+          : qualify
+            ? "Overall Classification Qualifying Stage"
+            : isPreEventStage(stage)
+              ? stageHeadingLabel(stage, event.stages)
+              : `Stage Classification ${stageHeadingLabel(stage, event.stages)}`,
         modeLabel: "Stage results",
         columns: shakedown
           ? [
@@ -1236,9 +1264,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
               "Co-driver",
               "Car",
               "Class",
-              "1",
-              "2",
-              "3",
+              ...Array.from({ length: shakedownPasses }, (_, i) => String(i + 1)),
               "Best",
               "Diff",
             ]
@@ -1258,6 +1284,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         logoUrl,
         rallyClassificationLayout: !shakedown,
         shakedownLayout: shakedown,
+        shakedownPassCount: shakedown ? shakedownPasses : undefined,
         centerFromCol: 5,
       });
       printHtmlDocument(html, { landscape: true });
@@ -1274,7 +1301,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       );
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
-        subtitle: `LEG${selectedStripItem.leg} Classification`,
+        subtitle: `LEG ${selectedStripItem.leg} Overall Classification`,
         modeLabel: "Leg classification",
         columns,
         tableRows,
@@ -1444,7 +1471,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     );
     const html = buildLandscapeResultsPdfHtml({
       eventName: event.name,
-      subtitle: "Final Classification",
+      subtitle: "Official Final Results",
       modeLabel: "Ordered by Best Time",
       columns,
       tableRows,
@@ -1461,7 +1488,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     );
     const html = buildLandscapeResultsPdfHtml({
       eventName: event.name,
-      subtitle: "Final Classification",
+      subtitle: "Official Final Results",
       modeLabel: "Overall classification",
       columns: [
         "Pos",
@@ -2844,16 +2871,22 @@ function StageTimesTable({
 }) {
   const stageId = stage?.id;
   const shakedown = !!stage && isShakedownStage(stage);
+  const shakedownPasses = shakedown && stage ? getShakedownPassCount(stage) : 3;
   const timeDigits: 2 | 3 =
     stage && isPreEventStage(stage) ? 3 : 2;
 
   const shakedownSorted = useMemo(() => {
-    if (!shakedown || !stageId) return [];
+    if (!shakedown || !stageId || !stage) return [];
+    const passCount = getShakedownPassCount(stage);
     return [...entries]
       .map((row) => {
         const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
-        const passes = getShakedownPasses(blob[stageId]);
-        const durations = getShakedownPassDurationsMs(passes, parseClockToDayMs);
+        const passes = getShakedownPasses(blob[stageId], passCount);
+        const durations = getShakedownPassDurationsMs(
+          passes,
+          parseClockToDayMs,
+          passCount,
+        );
         const bestMs = findShakedownBestDurationMs(durations);
         const bestIdx = findShakedownBestPassIndex(durations);
         return { row, durations, bestMs, bestIdx };
@@ -2871,7 +2904,7 @@ function StageTimesTable({
           ? a.bestMs - b.bestMs
           : a.row.startNumber - b.row.startNumber,
       );
-  }, [entries, stageId, shakedown]);
+  }, [entries, stageId, shakedown, stage]);
 
   const sorted = useMemo(
     () =>
@@ -2943,9 +2976,11 @@ function StageTimesTable({
             <th className="w-12 text-right">Pos</th>
             <th className="w-12 text-right">#</th>
             <th className="min-w-[10rem]">Crew</th>
-            <th className="w-24 !text-center">1</th>
-            <th className="w-24 !text-center">2</th>
-            <th className="w-24 !text-center">3</th>
+            {Array.from({ length: shakedownPasses }, (_, pi) => (
+              <th key={pi} className="w-24 !text-center">
+                {pi + 1}
+              </th>
+            ))}
             <th className="w-28 !text-center">Best</th>
             <th className="w-24 !text-center">Diff</th>
           </tr>
@@ -2960,7 +2995,7 @@ function StageTimesTable({
                 {row.startNumber}
               </td>
               <CrewStackCell row={row} />
-              {Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, pi) => {
+              {Array.from({ length: shakedownPasses }, (_, pi) => {
                 const d = durations[pi];
                 const isBest = bestIdx === pi && d != null;
                 return (

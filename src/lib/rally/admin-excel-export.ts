@@ -3,8 +3,8 @@ import { downloadExcelTable } from "@/lib/rally/download-excel";
 import { resolveStartingOrderTime, startingOrderScopeLabel } from "@/lib/rally/leg-starting-order";
 import { isPreEventStage, stageControlLabel } from "@/lib/rally/stage-kind";
 import {
-  SHAKEDOWN_PASS_COUNT,
   findShakedownBestDurationMs,
+  getShakedownPassCount,
   getShakedownPassDurationsMs,
   getShakedownPasses,
   isShakedownStage,
@@ -178,11 +178,16 @@ export async function exportRallyStageExcel(
     : chip || `SS${stage.order}`;
 
   if (isShakedownStage(stage)) {
+    const passCount = getShakedownPassCount(stage);
     const ranked = started(entries)
       .map((row) => {
         const blob = parseBlob(row.trialStartTime ?? "");
-        const passes = getShakedownPasses(blob[stage.id]);
-        const durations = getShakedownPassDurationsMs(passes, parseClockToDayMs);
+        const passes = getShakedownPasses(blob[stage.id], passCount);
+        const durations = getShakedownPassDurationsMs(
+          passes,
+          parseClockToDayMs,
+          passCount,
+        );
         const bestMs = findShakedownBestDurationMs(durations);
         return { row, durations, bestMs };
       })
@@ -200,7 +205,7 @@ export async function exportRallyStageExcel(
       row.coDriver || "—",
       row.car || "—",
       row.class || "—",
-      ...Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, pi) => {
+      ...Array.from({ length: passCount }, (_, pi) => {
         const d = durations[pi];
         return d != null ? formatDurationMs(d, timeDigits) : "—";
       }),
@@ -219,9 +224,7 @@ export async function exportRallyStageExcel(
         "Co-driver",
         "Car",
         "Class",
-        "1",
-        "2",
-        "3",
+        ...Array.from({ length: passCount }, (_, i) => String(i + 1)),
         "Best",
         "Diff",
       ],
@@ -472,11 +475,11 @@ export async function exportRallyLegExcel(
   });
 }
 
-export async function exportRallyFinalExcel(
-  eventName: string,
+/** Table rows for Official Final Results (PDF / Excel). */
+export function buildOfficialFinalResultRows(
   entries: Entry[],
   stages: Stage[],
-): Promise<void> {
+): string[][] {
   type FinalExcelRow = {
     row: Entry;
     timeMs: number | null;
@@ -563,7 +566,7 @@ export async function exportRallyFinalExcel(
 
   const leader = ranked.find((x) => x.tier === 0)?.totalMs ?? null;
   let classifiedPos = 0;
-  const rows = ranked.map(
+  return ranked.map(
     ({ row, timeMs, penaltyMs, totalMs, tier, statusLabel }) => [
       tier === 0 ? String(++classifiedPos) : "—",
       String(row.startNumber),
@@ -582,6 +585,14 @@ export async function exportRallyFinalExcel(
         : "—",
     ],
   );
+}
+
+export async function exportRallyFinalExcel(
+  eventName: string,
+  entries: Entry[],
+  stages: Stage[],
+): Promise<void> {
+  const rows = buildOfficialFinalResultRows(entries, stages);
   await downloadExcelTable({
     fileName: `${eventName}-Final-Results`,
     sheetName: "Final Results",

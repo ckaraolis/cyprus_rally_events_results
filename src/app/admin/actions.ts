@@ -100,6 +100,7 @@ export async function createEvent(input: {
     officialNoticeCustomCategories: [],
     officialNoticeDocuments: [],
     legStartingOrders: {},
+    finalResultsPublished: false,
     stages: defaultStages,
     entries: [],
   };
@@ -130,6 +131,7 @@ export async function updateEventMeta(
     officialNoticeCustomCategories: string[];
     officialNoticeDocuments: RallyEvent["officialNoticeDocuments"];
     legStartingOrders: RallyEvent["legStartingOrders"];
+    finalResultsPublished?: boolean;
   },
 ) {
   const config = await loadRallyConfig();
@@ -149,6 +151,7 @@ export async function updateEventMeta(
   e.officialNoticeCustomCategories = input.officialNoticeCustomCategories;
   e.officialNoticeDocuments = input.officialNoticeDocuments;
   e.legStartingOrders = input.legStartingOrders ?? {};
+  e.finalResultsPublished = input.finalResultsPublished === true;
   await saveRallyConfig(config);
   revalidatePath("/admin/events");
   revalidatePath(`/admin/events/${eventId}`);

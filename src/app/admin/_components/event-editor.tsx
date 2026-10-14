@@ -26,6 +26,7 @@ import {
   startingOrderScopeLabel,
 } from "@/lib/rally/leg-starting-order";
 import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
+import { printOfficialFinalResultsPdf } from "@/lib/rally/official-final-print";
 import {
   createPreEventStage,
   isCompetitiveStage,
@@ -38,10 +39,14 @@ import {
 } from "@/lib/rally/stage-kind";
 import {
   findShakedownPassForTrigger,
+  getShakedownPassCount,
   getShakedownPasses,
   isShakedownStage,
+  normalizeShakedownPassCount,
   parseStageTimingBlobEntry,
   setShakedownPass,
+  shakedownPassIndexes,
+  type ShakedownPassCount,
   type ShakedownPassIndex,
   type StageTimingBlobEntry,
 } from "@/lib/rally/shakedown-passes";
@@ -62,7 +67,8 @@ type AdminTab =
   | "starting-order"
   | "timing"
   | "penalties"
-  | "notice-board";
+  | "notice-board"
+  | "official-final";
 type SpeedTimingRun = "trial" | "run1" | "run2";
 type SpeedTimingOutcome = "ret" | "dnf" | null;
 type AssignStartTimeRule = {
@@ -332,6 +338,7 @@ export function EventEditor({ event: initial }: Props) {
     officialNoticeCustomCategories: initial.officialNoticeCustomCategories ?? [],
     officialNoticeDocuments: initial.officialNoticeDocuments ?? [],
     legStartingOrders: initial.legStartingOrders ?? {},
+    finalResultsPublished: initial.finalResultsPublished === true,
   });
   const [stages, setStages] = useState<Stage[]>(() =>
     sortStagesByKindThenOrder(
@@ -339,6 +346,13 @@ export function EventEditor({ event: initial }: Props) {
         ...s,
         kind:
           s.kind === "shakedown" || s.kind === "qualify" ? s.kind : "ss",
+        ...(s.kind === "shakedown"
+          ? {
+              shakedownPassCount: normalizeShakedownPassCount(
+                s.shakedownPassCount,
+              ),
+            }
+          : {}),
         progressStatus: s.progressStatus ?? "pending",
         firstCarStartTime: s.firstCarStartTime ?? null,
         leg:
@@ -1027,8 +1041,13 @@ export function EventEditor({ event: initial }: Props) {
       const current = blob[stageId] ?? {};
       const stage = stagesRef.current.find((s) => s.id === stageId);
       if (stage && isShakedownStage(stage)) {
-        const passes = getShakedownPasses(current);
-        const passIndex = findShakedownPassForTrigger(passes, trigger);
+        const passCount = getShakedownPassCount(stage);
+        const passes = getShakedownPasses(current, passCount);
+        const passIndex = findShakedownPassForTrigger(
+          passes,
+          trigger,
+          passCount,
+        );
         if (passIndex == null) return row;
         blob[stageId] = setShakedownPass(
           current,
@@ -1036,6 +1055,7 @@ export function EventEditor({ event: initial }: Props) {
           trigger === "start"
             ? { start: triggerTime }
             : { finish: triggerTime },
+          passCount,
         );
       } else {
         blob[stageId] =
@@ -1933,6 +1953,12 @@ export function EventEditor({ event: initial }: Props) {
       : DEFAULT_RALLY_STAGE_ALGE_CONFIG;
   const isShakedownTiming =
     !!selectedRallyTimingStage && isShakedownStage(selectedRallyTimingStage);
+  const shakedownTimingPassCount: ShakedownPassCount = isShakedownTiming
+    ? getShakedownPassCount(selectedRallyTimingStage)
+    : 3;
+  const shakedownTimingPassIndexes = shakedownPassIndexes(
+    shakedownTimingPassCount,
+  );
   const timingStartField: keyof Entry =
     timingRun === "trial"
       ? "trialStartTime"
@@ -1974,7 +2000,8 @@ export function EventEditor({ event: initial }: Props) {
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
     const current = blob[selectedRallyTimingStage.id] ?? {};
     if (passIndex != null && isShakedownStage(selectedRallyTimingStage)) {
-      const pass = getShakedownPasses(current)[passIndex - 1] ?? {
+      const passCount = getShakedownPassCount(selectedRallyTimingStage);
+      const pass = getShakedownPasses(current, passCount)[passIndex - 1] ?? {
         startTime: "",
         finishTime: "",
       };
@@ -2009,10 +2036,15 @@ export function EventEditor({ event: initial }: Props) {
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
     const current = blob[selectedRallyTimingStage.id] ?? {};
     if (passIndex != null && isShakedownStage(selectedRallyTimingStage)) {
-      blob[selectedRallyTimingStage.id] = setShakedownPass(current, passIndex, {
-        start: startValue,
-        finish: finishValue,
-      });
+      blob[selectedRallyTimingStage.id] = setShakedownPass(
+        current,
+        passIndex,
+        {
+          start: startValue,
+          finish: finishValue,
+        },
+        getShakedownPassCount(selectedRallyTimingStage),
+      );
     } else {
       blob[selectedRallyTimingStage.id] = {
         startTime: startValue,
@@ -2399,6 +2431,17 @@ export function EventEditor({ event: initial }: Props) {
             }`}
           >
             Official Notice Board
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("official-final")}
+            className={`rounded-lg px-3 py-1.5 text-sm ${
+              activeTab === "official-final"
+                ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+            }`}
+          >
+            Official Final Results
           </button>
         </div>
       </section>
@@ -3658,6 +3701,46 @@ export function EventEditor({ event: initial }: Props) {
               </span>
             )}
           </div>
+          {isShakedownTiming ? (
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-950">
+              <label className="text-xs font-semibold uppercase tracking-wide text-zinc-600 dark:text-zinc-300">
+                Allowed passes
+                <select
+                  className="ml-2 rounded border border-zinc-300 bg-white px-2 py-1 text-sm font-medium normal-case tracking-normal text-zinc-900 dark:border-zinc-600 dark:bg-zinc-900 dark:text-zinc-100"
+                  value={shakedownTimingPassCount}
+                  onChange={(e) => {
+                    const next = normalizeShakedownPassCount(e.target.value);
+                    const stageId = selectedRallyTimingStage?.id;
+                    if (!stageId) return;
+                    setFlash(null);
+                    setStages((prev) => {
+                      const nextStages = prev.map((s) =>
+                        s.id === stageId
+                          ? { ...s, shakedownPassCount: next }
+                          : s,
+                      );
+                      startTransition(async () => {
+                        const res = await replaceStages(eventId, nextStages);
+                        if (!res.ok) {
+                          setFlash(`Save failed: ${res.error}`);
+                          return;
+                        }
+                        setFlash(`Shakedown set to ${next} passes.`);
+                        router.refresh();
+                      });
+                      return nextStages;
+                    });
+                  }}
+                >
+                  <option value={2}>2 passes</option>
+                  <option value={3}>3 passes</option>
+                </select>
+              </label>
+              <span className="text-xs text-zinc-500 dark:text-zinc-400">
+                Timing grid and public/print results use this count.
+              </span>
+            </div>
+          ) : null}
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
             Enter start and finish times for each starter on{" "}
             {meta.type === "speed"
@@ -4069,9 +4152,7 @@ export function EventEditor({ event: initial }: Props) {
             ) : null}
             {timingEntries.flatMap((row) => {
               const passIndexes: Array<ShakedownPassIndex | undefined> =
-                isShakedownTiming
-                  ? ([1, 2, 3] as ShakedownPassIndex[])
-                  : [undefined];
+                isShakedownTiming ? shakedownTimingPassIndexes : [undefined];
               return passIndexes.map((passIndex) => {
                 const { startValue, finishValue, penaltyValue } =
                   getTimingValuesForEntry(row, passIndex);
@@ -4271,7 +4352,7 @@ export function EventEditor({ event: initial }: Props) {
                 {timingEntries.flatMap((row) => {
                   const passIndexes: Array<ShakedownPassIndex | undefined> =
                     isShakedownTiming
-                      ? ([1, 2, 3] as ShakedownPassIndex[])
+                      ? shakedownTimingPassIndexes
                       : [undefined];
                   return passIndexes.map((passIndex) => {
                     const { startValue, finishValue, penaltyValue } =
@@ -4840,6 +4921,115 @@ export function EventEditor({ event: initial }: Props) {
             >
               Add penalty
             </button>
+          </div>
+        </section>
+      ) : null}
+
+      {activeTab === "official-final" ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Official Final Results
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+            Hidden from the public website until stewards publish. Use Print
+            PDF here anytime; the public Official Final Results tab only
+            appears when published.
+          </p>
+          <div className="mt-5 flex flex-wrap items-center gap-3">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${
+                meta.finalResultsPublished
+                  ? "bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300"
+                  : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+              }`}
+            >
+              {meta.finalResultsPublished
+                ? "Published on website"
+                : "Hidden from website"}
+            </span>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => {
+                const next = !meta.finalResultsPublished;
+                setMeta((m) => ({ ...m, finalResultsPublished: next }));
+                setFlash(null);
+                startTransition(async () => {
+                  const { payload, removedInlineDocs } = sanitizeMetaForSave({
+                    ...meta,
+                    finalResultsPublished: next,
+                  });
+                  const res = await updateEventMeta(eventId, payload);
+                  if (!res.ok) {
+                    setMeta((m) => ({
+                      ...m,
+                      finalResultsPublished: !next,
+                    }));
+                    setFlash(`Save failed: ${res.error}`);
+                    return;
+                  }
+                  if (removedInlineDocs > 0) setMeta(payload);
+                  setFlash(
+                    next
+                      ? "Official Final Results published on the website."
+                      : "Official Final Results hidden from the website.",
+                  );
+                  router.refresh();
+                });
+              }}
+              className={`rounded-lg px-4 py-2 text-sm font-semibold text-white ${
+                meta.finalResultsPublished
+                  ? "bg-zinc-700 hover:bg-zinc-800 dark:bg-zinc-600 dark:hover:bg-zinc-500"
+                  : "bg-green-700 hover:bg-green-800 dark:bg-green-600 dark:hover:bg-green-500"
+              }`}
+            >
+              {meta.finalResultsPublished
+                ? "Hide from website"
+                : "Publish on website"}
+            </button>
+            {meta.type === "rally" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const competitive = competitiveStages(stages);
+                    if (competitive.length === 0) {
+                      setFlash(
+                        "Add competitive stages before printing final results.",
+                      );
+                      return;
+                    }
+                    printOfficialFinalResultsPdf({
+                      eventName: meta.name || "Event",
+                      logoUrl: meta.logoUrl ?? "",
+                      entries: entries.filter((e) => e.start !== false),
+                      stages: competitive,
+                    });
+                  }}
+                  className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Print PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void exportRallyFinalExcel(
+                      meta.name || "Event",
+                      entries.filter((e) => e.start !== false),
+                      competitiveStages(stages),
+                    );
+                  }}
+                  className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Export Excel
+                </button>
+              </>
+            ) : (
+              <p className="w-full text-sm text-zinc-500 dark:text-zinc-400">
+                Speed events: publish to show Official Final Results on the
+                public site, then print from that tab.
+              </p>
+            )}
           </div>
         </section>
       ) : null}

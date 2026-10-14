@@ -1,6 +1,11 @@
 import type { Stage } from "@/lib/rally/types";
 
-export const SHAKEDOWN_PASS_COUNT = 3;
+/** Maximum passes we store / support in the UI. */
+export const SHAKEDOWN_PASS_COUNT_MAX = 3;
+/** Default when unset (backwards compatible). */
+export const SHAKEDOWN_PASS_COUNT_DEFAULT = 3 as const;
+/** @deprecated Use getShakedownPassCount(stage) — kept for callers that still import the old name. */
+export const SHAKEDOWN_PASS_COUNT = SHAKEDOWN_PASS_COUNT_DEFAULT;
 
 export type ShakedownPass = {
   startTime?: string;
@@ -16,6 +21,24 @@ export type StageTimingBlobEntry = {
 };
 
 export type ShakedownPassIndex = 1 | 2 | 3;
+export type ShakedownPassCount = 2 | 3;
+
+export function normalizeShakedownPassCount(raw: unknown): ShakedownPassCount {
+  const n =
+    typeof raw === "number"
+      ? raw
+      : typeof raw === "string"
+        ? Number.parseInt(raw, 10)
+        : Number.NaN;
+  return n === 2 ? 2 : 3;
+}
+
+export function getShakedownPassCount(
+  stage?: Pick<Stage, "kind" | "shakedownPassCount"> | null,
+): ShakedownPassCount {
+  if (!stage || stage.kind !== "shakedown") return SHAKEDOWN_PASS_COUNT_DEFAULT;
+  return normalizeShakedownPassCount(stage.shakedownPassCount);
+}
 
 export function isShakedownStage(
   stage: Pick<Stage, "kind"> | null | undefined,
@@ -34,7 +57,7 @@ export function parseStageTimingBlobEntry(
     penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
   };
   if (Array.isArray(item.passes)) {
-    entry.passes = item.passes.slice(0, SHAKEDOWN_PASS_COUNT).map((p) => {
+    entry.passes = item.passes.slice(0, SHAKEDOWN_PASS_COUNT_MAX).map((p) => {
       if (!p || typeof p !== "object" || Array.isArray(p)) {
         return { startTime: "", finishTime: "" };
       }
@@ -49,14 +72,16 @@ export function parseStageTimingBlobEntry(
 }
 
 /**
- * Always returns exactly 3 passes.
+ * Returns `passCount` passes (default 3).
  * If `passes` is missing but top-level start/finish exist, treat those as pass 1.
  */
 export function getShakedownPasses(
   blobEntry: StageTimingBlobEntry | null | undefined,
+  passCount: ShakedownPassCount = SHAKEDOWN_PASS_COUNT_DEFAULT,
 ): Array<{ startTime: string; finishTime: string }> {
+  const count = normalizeShakedownPassCount(passCount);
   const empty = (): Array<{ startTime: string; finishTime: string }> =>
-    Array.from({ length: SHAKEDOWN_PASS_COUNT }, () => ({
+    Array.from({ length: count }, () => ({
       startTime: "",
       finishTime: "",
     }));
@@ -65,7 +90,7 @@ export function getShakedownPasses(
 
   const out = empty();
   if (Array.isArray(blobEntry.passes)) {
-    for (let i = 0; i < SHAKEDOWN_PASS_COUNT; i += 1) {
+    for (let i = 0; i < count; i += 1) {
       const p = blobEntry.passes[i];
       out[i] = {
         startTime: typeof p?.startTime === "string" ? p.startTime : "",
@@ -87,23 +112,48 @@ export function setShakedownPass(
   blobEntry: StageTimingBlobEntry | null | undefined,
   passIndex: ShakedownPassIndex,
   values: { start?: string; finish?: string },
+  passCount: ShakedownPassCount = SHAKEDOWN_PASS_COUNT_DEFAULT,
 ): StageTimingBlobEntry {
   const base = blobEntry ?? {};
-  const passes = getShakedownPasses(base).map((p) => ({ ...p }));
+  const count = normalizeShakedownPassCount(passCount);
+  // Preserve any stored passes beyond the active count (e.g. switching 3→2→3).
+  const stored = Array.isArray(base.passes)
+    ? base.passes.slice(0, SHAKEDOWN_PASS_COUNT_MAX).map((p) => ({
+        startTime: typeof p?.startTime === "string" ? p.startTime : "",
+        finishTime: typeof p?.finishTime === "string" ? p.finishTime : "",
+      }))
+    : [];
+  while (stored.length < SHAKEDOWN_PASS_COUNT_MAX) {
+    stored.push({ startTime: "", finishTime: "" });
+  }
+  const active = getShakedownPasses(base, count);
+  for (let i = 0; i < count; i += 1) {
+    stored[i] = { ...active[i]! };
+  }
   const idx = passIndex - 1;
-  const current = passes[idx] ?? { startTime: "", finishTime: "" };
-  passes[idx] = {
+  if (idx < 0 || idx >= count) {
+    const pass1 = stored[0] ?? { startTime: "", finishTime: "" };
+    return {
+      startTime: pass1.startTime,
+      finishTime: pass1.finishTime,
+      penalty: base.penalty ?? "",
+      penaltyNote: base.penaltyNote ?? "",
+      passes: stored,
+    };
+  }
+  const current = stored[idx] ?? { startTime: "", finishTime: "" };
+  stored[idx] = {
     startTime: values.start !== undefined ? values.start : current.startTime,
     finishTime:
       values.finish !== undefined ? values.finish : current.finishTime,
   };
-  const pass1 = passes[0] ?? { startTime: "", finishTime: "" };
+  const pass1 = stored[0] ?? { startTime: "", finishTime: "" };
   return {
     startTime: pass1.startTime,
     finishTime: pass1.finishTime,
     penalty: base.penalty ?? "",
     penaltyNote: base.penaltyNote ?? "",
-    passes,
+    passes: stored,
   };
 }
 
@@ -136,8 +186,13 @@ export function getShakedownPassDurationMs(
 export function getShakedownPassDurationsMs(
   passes: Array<{ startTime?: string; finishTime?: string }>,
   parseClock: (value: string) => number | null,
+  passCount?: ShakedownPassCount,
 ): Array<number | null> {
-  return Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, i) =>
+  const count =
+    passCount != null
+      ? normalizeShakedownPassCount(passCount)
+      : Math.min(Math.max(passes.length, 1), SHAKEDOWN_PASS_COUNT_MAX);
+  return Array.from({ length: count }, (_, i) =>
     getShakedownPassDurationMs(passes[i] ?? {}, parseClock),
   );
 }
@@ -178,14 +233,16 @@ export function findShakedownBestPassIndex(
 export function findShakedownPassForTrigger(
   passes: Array<{ startTime?: string; finishTime?: string }>,
   trigger: "start" | "finish",
+  passCount: ShakedownPassCount = SHAKEDOWN_PASS_COUNT_DEFAULT,
 ): ShakedownPassIndex | null {
-  const list = Array.from({ length: SHAKEDOWN_PASS_COUNT }, (_, i) => ({
+  const count = normalizeShakedownPassCount(passCount);
+  const list = Array.from({ length: count }, (_, i) => ({
     startTime: passes[i]?.startTime ?? "",
     finishTime: passes[i]?.finishTime ?? "",
   }));
 
   if (trigger === "start") {
-    for (let i = 0; i < SHAKEDOWN_PASS_COUNT; i += 1) {
+    for (let i = 0; i < count; i += 1) {
       if (!(list[i]?.startTime ?? "").trim()) {
         return (i + 1) as ShakedownPassIndex;
       }
@@ -193,10 +250,18 @@ export function findShakedownPassForTrigger(
     return null;
   }
 
-  for (let i = 0; i < SHAKEDOWN_PASS_COUNT; i += 1) {
+  for (let i = 0; i < count; i += 1) {
     const start = (list[i]?.startTime ?? "").trim();
     const finish = (list[i]?.finishTime ?? "").trim();
     if (start && !finish) return (i + 1) as ShakedownPassIndex;
   }
   return null;
+}
+
+/** 1-based pass indexes for the active shakedown pass count. */
+export function shakedownPassIndexes(
+  passCount: ShakedownPassCount = SHAKEDOWN_PASS_COUNT_DEFAULT,
+): ShakedownPassIndex[] {
+  const count = normalizeShakedownPassCount(passCount);
+  return Array.from({ length: count }, (_, i) => (i + 1) as ShakedownPassIndex);
 }

@@ -1,9 +1,48 @@
 import type { Stage, StageKind } from "./types";
+import {
+  normalizeShakedownPassCount,
+  type ShakedownPassCount,
+} from "./shakedown-passes";
 
 export function normalizeStageKind(raw: unknown): StageKind {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    return normalizeStageKind((raw as Record<string, unknown>).kind);
+  }
   const v = typeof raw === "string" ? raw.trim().toLowerCase() : "";
   if (v === "shakedown" || v === "qualify") return v;
   return "ss";
+}
+
+/** Parse `__stageKinds` value (plain kind string or `{ kind, shakedownPassCount }`). */
+export function parseStageKindMeta(raw: unknown): {
+  kind: StageKind;
+  shakedownPassCount: ShakedownPassCount;
+} {
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    return {
+      kind: normalizeStageKind(o.kind),
+      shakedownPassCount: normalizeShakedownPassCount(o.shakedownPassCount),
+    };
+  }
+  return {
+    kind: normalizeStageKind(raw),
+    shakedownPassCount: 3,
+  };
+}
+
+export function serializeStageKindMeta(stage: Stage): string | {
+  kind: StageKind;
+  shakedownPassCount: ShakedownPassCount;
+} {
+  const kind = stage.kind ?? "ss";
+  if (kind === "shakedown") {
+    return {
+      kind: "shakedown",
+      shakedownPassCount: normalizeShakedownPassCount(stage.shakedownPassCount),
+    };
+  }
+  return kind;
 }
 
 export function isCompetitiveStage(stage: Pick<Stage, "kind">): boolean {
@@ -68,6 +107,7 @@ export function createPreEventStage(kind: "shakedown" | "qualify"): Stage {
     order: kind === "shakedown" ? 0 : 1,
     leg: 0,
     kind,
+    ...(kind === "shakedown" ? { shakedownPassCount: 3 as const } : {}),
     distanceKm: null,
     firstCarStartTime: null,
     progressStatus: "pending",
