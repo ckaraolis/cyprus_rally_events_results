@@ -268,6 +268,8 @@ function buildLandscapeResultsPdfHtml(input: {
   rallyClassificationLayout?: boolean;
   /** LEG sheet: Pos/#, Driver, Co-driver, Car, Class, SS1..SSn, SS Times, Penalty, Total, Diff. */
   rallyLegLayout?: boolean;
+  /** Shakedown: Pos/#, Driver, Co-driver, Car, Class, 1, 2, 3, Best, Diff. */
+  shakedownLayout?: boolean;
   /** Number of per-stage columns (SS1..) when rallyLegLayout is set. */
   legStageCount?: number;
   /** Shrink Pos/# columns to leave room for names and times. */
@@ -279,6 +281,7 @@ function buildLandscapeResultsPdfHtml(input: {
   const colCount = Math.max(input.columns.length, 1);
   const rallyLayout = input.rallyClassificationLayout === true;
   const legLayout = input.rallyLegLayout === true;
+  const shakedownLayout = input.shakedownLayout === true;
   const legStageCount = Math.max(0, input.legStageCount ?? 0);
   const branded = usesCyprusRallyPrintBrand(input.eventName);
   const centerFrom =
@@ -329,7 +332,14 @@ function buildLandscapeResultsPdfHtml(input: {
       : `<tr><td colspan="${input.columns.length}" class="c" style="color:#666;">No timed entries.</td></tr>`;
 
   let colgroup = "";
-  if (legLayout && legStageCount > 0) {
+  if (shakedownLayout) {
+    // Pos, #, Driver, Co-driver, Car, Class, 1, 2, 3, Best, Diff
+    colgroup = `<colgroup>
+      <col class="c-pos" /><col class="c-num" />
+      <col class="c-driver" /><col class="c-codriver" /><col class="c-car" /><col class="c-class" />
+      <col class="c-pass" /><col class="c-pass" /><col class="c-pass" /><col class="c-pass" /><col class="c-pass" />
+    </colgroup>`;
+  } else if (legLayout && legStageCount > 0) {
     // Reserve four trailing time cols (SS Times, Penalty, Total, Diff).
     const ssCols = Array.from(
       { length: legStageCount },
@@ -361,6 +371,19 @@ function buildLandscapeResultsPdfHtml(input: {
   const legDriverWidthPct = legStageCount >= 6 ? 11.0 : legStageCount >= 4 ? 12.0 : 13.2;
   const legCarWidthPct = legStageCount >= 6 ? 9.0 : 11;
   const legTimeWidthPct = legStageCount >= 6 ? 5.6 : legStageCount >= 4 ? 6.0 : 6.4;
+  const driverWidthPct = shakedownLayout
+    ? "16%"
+    : legLayout
+      ? `${legDriverWidthPct}%`
+      : "14.5%";
+  const carWidthPct = shakedownLayout
+    ? "14%"
+    : legLayout
+      ? `${legCarWidthPct}%`
+      : "12.5%";
+  const classWidthPct = legLayout ? "4.2%" : "4.8%";
+  const passWidthPct = "7.2%";
+  const timeWidthPct = legLayout ? `${legTimeWidthPct}%` : "7.2%";
 
   const headerHtml = branded
     ? buildCyprusRallyPrintHeaderHtml({
@@ -389,12 +412,13 @@ function buildLandscapeResultsPdfHtml(input: {
   th.c, td.c { text-align: center; }
   th.l, td.l { text-align: left; }
   col.c-pos, col.c-num { width: ${legLayout ? "1.8%" : "2.2%"}; }
-  col.c-driver, col.c-codriver { width: ${legLayout ? `${legDriverWidthPct}%` : "13%"}; }
-  col.c-car { width: ${legLayout ? `${legCarWidthPct}%` : "11%"}; }
-  col.c-class { width: ${legLayout ? "4.2%" : "4.8%"}; }
+  col.c-driver, col.c-codriver { width: ${driverWidthPct}; }
+  col.c-car { width: ${carWidthPct}; }
+  col.c-class { width: ${classWidthPct}; }
   col.c-ss { width: ${legSsWidthPct}%; }
-  col.c-time { width: ${legLayout ? `${legTimeWidthPct}%` : "7.2%"}; }
-  col.c-diff { width: ${legLayout ? `${legTimeWidthPct}%` : "7.2%"}; }
+  col.c-pass { width: ${passWidthPct}; }
+  col.c-time { width: ${timeWidthPct}; }
+  col.c-diff { width: ${timeWidthPct}; }
   @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; overflow: visible; } table { width: 100% !important; } }
   @media screen { body { padding: 12px; background: #e8e8e8; } .page { background: #fff; padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); } }
   </style></head><body><div class="page">${headerHtml}<table>${colgroup}<thead><tr>${input.columns
@@ -1232,7 +1256,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             ],
         tableRows,
         logoUrl,
-        rallyClassificationLayout: true,
+        rallyClassificationLayout: !shakedown,
+        shakedownLayout: shakedown,
         centerFromCol: 5,
       });
       printHtmlDocument(html, { landscape: true });
