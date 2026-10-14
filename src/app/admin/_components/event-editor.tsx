@@ -195,6 +195,7 @@ const NOTICE_BOARD_DEFAULT_CATEGORIES = [
   "Supplementary Regulations",
   "Bulletins",
   "Steward Decisions",
+  "Sportity",
   "Other",
 ] as const;
 const MAX_INLINE_NOTICE_URL_LENGTH = 100_000;
@@ -308,6 +309,7 @@ export function EventEditor({ event: initial }: Props) {
     NOTICE_BOARD_DEFAULT_CATEGORIES[0],
   );
   const [newDocUrl, setNewDocUrl] = useState("");
+  const [newDocPassword, setNewDocPassword] = useState("");
   const [editingNoticeDocId, setEditingNoticeDocId] = useState<string | null>(null);
   const [newCustomCategory, setNewCustomCategory] = useState("");
   const [meta, setMeta] = useState({
@@ -1725,6 +1727,7 @@ export function EventEditor({ event: initial }: Props) {
     setEditingNoticeDocId(null);
     setNewDocTitle("");
     setNewDocUrl("");
+    setNewDocPassword("");
     setNewDocCategory(NOTICE_BOARD_DEFAULT_CATEGORIES[0]);
     setDocUploadError(null);
   }
@@ -1737,6 +1740,7 @@ export function EventEditor({ event: initial }: Props) {
     setNewDocTitle(doc.title);
     setNewDocCategory(doc.category || NOTICE_BOARD_DEFAULT_CATEGORIES[0]);
     setNewDocUrl(doc.url);
+    setNewDocPassword(doc.password ?? "");
   }
 
   function parseOfficialNoticeHttpUrl(rawUrl: string): URL | null {
@@ -1782,6 +1786,7 @@ export function EventEditor({ event: initial }: Props) {
     const category = newDocCategory.trim() || "Other";
     const fromPath = decodeURIComponent(parsed.pathname.split("/").pop() || "").trim();
     const fileName = fromPath || parsed.hostname;
+    const password = newDocPassword.trim().slice(0, 120);
     setMeta((m) => ({
       ...m,
       officialNoticeDocuments: [
@@ -1792,6 +1797,7 @@ export function EventEditor({ event: initial }: Props) {
           url: parsed.toString(),
           fileName,
           uploadedAt: new Date().toISOString(),
+          password,
         },
         ...m.officialNoticeDocuments,
       ],
@@ -1799,6 +1805,7 @@ export function EventEditor({ event: initial }: Props) {
     }));
     setNewDocTitle("");
     setNewDocUrl("");
+    setNewDocPassword("");
     setFlash("Link added. Click Save notice board to publish it.");
   }
 
@@ -1811,6 +1818,7 @@ export function EventEditor({ event: initial }: Props) {
     const category = newDocCategory.trim() || "Other";
     const fromPath = decodeURIComponent(parsed.pathname.split("/").pop() || "").trim();
     const fileName = fromPath || parsed.hostname;
+    const password = newDocPassword.trim().slice(0, 120);
     const id = editingNoticeDocId;
     setMeta((m) => ({
       ...m,
@@ -1822,6 +1830,7 @@ export function EventEditor({ event: initial }: Props) {
               category,
               url: parsed.toString(),
               fileName,
+              password,
             }
           : doc,
       ),
@@ -1861,6 +1870,7 @@ export function EventEditor({ event: initial }: Props) {
         url: data.url,
         fileName: data.fileName?.trim() || file.name,
         uploadedAt: new Date().toISOString(),
+        password: newDocPassword.trim().slice(0, 120),
       };
       let nextMeta = meta;
       setMeta((m) => {
@@ -1872,6 +1882,7 @@ export function EventEditor({ event: initial }: Props) {
         return nextMeta;
       });
       setNewDocTitle("");
+      setNewDocPassword("");
       const { payload, removedInlineDocs } = sanitizeMetaForSave(nextMeta);
       if (removedInlineDocs > 0) {
         setMeta(payload);
@@ -2581,8 +2592,10 @@ export function EventEditor({ event: initial }: Props) {
           </div>
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
             Upload PDF/DOC files or add links (Supplementary Regulations, Bulletins,
-            Steward Decisions, custom categories). Use <strong>Edit</strong> on a row to
-            change title, category, or link.
+            Steward Decisions, Sportity, custom categories). For Sportity, paste the
+            event URL and optional event password — the password is shown under the link
+            on the public board. Use <strong>Edit</strong> on a row to change title,
+            category, link, or password.
           </p>
 
           <div className="mt-5 grid gap-4 md:grid-cols-[1fr_auto]">
@@ -2631,7 +2644,7 @@ export function EventEditor({ event: initial }: Props) {
             </div>
           ) : null}
 
-          <div className="mt-5 grid gap-3 md:grid-cols-4">
+          <div className="mt-5 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
             <input
               className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
               placeholder="Document title (optional)"
@@ -2652,9 +2665,18 @@ export function EventEditor({ event: initial }: Props) {
             <input
               type="url"
               className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
-              placeholder="https://... (link)"
+              placeholder="https://... (Sportity / link)"
               value={newDocUrl}
               onChange={(e) => setNewDocUrl(e.target.value)}
+            />
+            <input
+              type="text"
+              className="rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+              placeholder="Event password (optional)"
+              value={newDocPassword}
+              onChange={(e) => setNewDocPassword(e.target.value)}
+              autoComplete="off"
+              title="Shown under the link on the public Official Notice Board"
             />
             <label
               className={`inline-flex items-center justify-center rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium dark:border-zinc-600 ${
@@ -2725,6 +2747,7 @@ export function EventEditor({ event: initial }: Props) {
                   <th className="pb-2 pr-2">Category</th>
                   <th className="pb-2 pr-2">Title</th>
                   <th className="pb-2 pr-2">File / Link</th>
+                  <th className="pb-2 pr-2">Password</th>
                   <th className="pb-2 pr-2">Uploaded</th>
                   <th className="pb-2 text-right">Actions</th>
                 </tr>
@@ -2733,7 +2756,7 @@ export function EventEditor({ event: initial }: Props) {
                 {meta.officialNoticeDocuments.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={5}
+                      colSpan={6}
                       className="py-8 text-center text-sm text-zinc-500 dark:text-zinc-400"
                     >
                       No documents uploaded yet.
@@ -2762,6 +2785,9 @@ export function EventEditor({ event: initial }: Props) {
                           >
                             {doc.fileName || doc.url}
                           </a>
+                        </td>
+                        <td className="py-2 pr-2 font-mono text-xs text-zinc-700 dark:text-zinc-200">
+                          {(doc.password ?? "").trim() || "—"}
                         </td>
                         <td className="py-2 pr-2 text-xs text-zinc-500 dark:text-zinc-400">
                           {new Date(doc.uploadedAt).toLocaleString()}

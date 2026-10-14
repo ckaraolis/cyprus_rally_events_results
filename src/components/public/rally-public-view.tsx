@@ -70,6 +70,7 @@ const OFFICIAL_NOTICE_DEFAULT_CATEGORIES = [
   "Supplementary Regulations",
   "Bulletins",
   "Steward Decisions",
+  "Sportity",
   "Other",
 ] as const;
 const SPEED_RUNS: ReadonlyArray<{ id: SpeedRunId; label: string }> = [
@@ -765,6 +766,7 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
       url: d.url,
       fileName: d.fileName,
       uploadedAt: d.uploadedAt,
+      password: d.password ?? "",
     })),
   });
 }
@@ -2277,8 +2279,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
               Official Notice Board
             </h2>
             <p className="mt-3 text-sm text-[var(--ewrc-muted-2)]">
-              Supplementary Regulations, Bulletins, Steward Decisions, and additional
-              official documents published by the event admin.
+              Supplementary Regulations, Bulletins, Steward Decisions, Sportity, and
+              additional official documents published by the event admin.
             </p>
             {officialNoticeDocumentsSorted.length === 0 ? (
               <div className="mt-5 rounded-lg border border-[var(--ewrc-border)] bg-[var(--ewrc-input-bg)] px-4 py-5">
@@ -2312,7 +2314,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                             </tr>
                           </thead>
                           <tbody>
-                            {rows.map((doc, idx) => (
+                            {rows.map((doc, idx) => {
+                              const password = (doc.password ?? "").trim();
+                              return (
                               <tr key={doc.id} className={idx % 2 === 1 ? "ewrc-row-alt" : ""}>
                                 <td className="py-2.5">
                                   <p className="font-medium text-[var(--ewrc-heading)]">
@@ -2326,12 +2330,21 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                                   >
                                     {doc.fileName}
                                   </a>
+                                  {password ? (
+                                    <p className="mt-1 text-xs text-[var(--ewrc-muted-2)]">
+                                      Password:{" "}
+                                      <span className="font-mono font-semibold text-[var(--ewrc-heading)]">
+                                        {password}
+                                      </span>
+                                    </p>
+                                  ) : null}
                                 </td>
                                 <td className="text-center text-xs text-[var(--ewrc-muted-2)]">
                                   {new Date(doc.uploadedAt).toLocaleString()}
                                 </td>
                               </tr>
-                            ))}
+                              );
+                            })}
                           </tbody>
                         </table>
                       </div>

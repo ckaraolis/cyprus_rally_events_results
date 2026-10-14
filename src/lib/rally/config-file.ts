@@ -40,6 +40,7 @@ const OFFICIAL_NOTICE_DEFAULT_CATEGORIES: OfficialNoticeCategory[] = [
   "Supplementary Regulations",
   "Bulletins",
   "Steward Decisions",
+  "Sportity",
   "Other",
 ];
 
@@ -87,6 +88,8 @@ function normalizeOfficialNoticeDocuments(
         typeof o.fileName === "string" && o.fileName.trim()
           ? o.fileName.trim().slice(0, 220)
           : "document";
+      const password =
+        typeof o.password === "string" ? o.password.trim().slice(0, 120) : "";
       return {
         id,
         title,
@@ -97,6 +100,7 @@ function normalizeOfficialNoticeDocuments(
           typeof o.uploadedAt === "string" && o.uploadedAt.trim()
             ? o.uploadedAt
             : new Date().toISOString(),
+        password,
       };
     })
     .filter((x): x is RallyEvent["officialNoticeDocuments"][number] => Boolean(x));

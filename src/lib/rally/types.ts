@@ -5,6 +5,7 @@ export type OfficialNoticeCategory =
   | "Supplementary Regulations"
   | "Bulletins"
   | "Steward Decisions"
+  | "Sportity"
   | "Other";
 
 /** Public “Stage results” bar: dot colour (yellow / green / red). */
@@ -115,7 +116,7 @@ export interface RallyEvent {
   >;
   /** Custom category names for Official Notice Board. */
   officialNoticeCustomCategories: string[];
-  /** Uploaded documents for Speed Official Notice Board. */
+  /** Uploaded documents / links for Official Notice Board. */
   officialNoticeDocuments: Array<{
     id: string;
     title: string;
@@ -123,6 +124,8 @@ export interface RallyEvent {
     url: string;
     fileName: string;
     uploadedAt: string;
+    /** Optional access password (e.g. Sportity event code), shown under the link. */
+    password: string;
   }>;
   /** Per-leg starting order + first-car time / interval (admin Starting Order tab). */
   legStartingOrders: Record<string, LegStartingOrder>;

@@ -120,6 +120,8 @@ function toEvent(row: {
           const url = typeof o.url === "string" ? o.url.trim() : "";
           const fileName = typeof o.fileName === "string" ? o.fileName.trim() : "";
           const uploadedAt = typeof o.uploadedAt === "string" ? o.uploadedAt.trim() : "";
+          const password =
+            typeof o.password === "string" ? o.password.trim().slice(0, 120) : "";
           if (!id || !title || !url) return null;
           return {
             id,
@@ -128,6 +130,7 @@ function toEvent(row: {
             url,
             fileName: fileName || "document",
             uploadedAt: uploadedAt || new Date().toISOString(),
+            password,
           };
         })
         .filter((x): x is RallyEvent["officialNoticeDocuments"][number] => Boolean(x))
