@@ -28,6 +28,11 @@ import {
   parseStageTimingBlobEntry,
   type StageTimingBlobEntry,
 } from "@/lib/rally/shakedown-passes";
+import {
+  buildCyprusRallyPrintHeaderHtml,
+  cyprusRallyPrintHeaderCss,
+  usesCyprusRallyPrintBrand,
+} from "@/lib/rally/print-branding";
 
 function stageChipLabel(stage: Stage, allStages: Stage[]): string {
   if (stage.kind === "shakedown") return "Shakedown";
@@ -275,6 +280,7 @@ function buildLandscapeResultsPdfHtml(input: {
   const rallyLayout = input.rallyClassificationLayout === true;
   const legLayout = input.rallyLegLayout === true;
   const legStageCount = Math.max(0, input.legStageCount ?? 0);
+  const branded = usesCyprusRallyPrintBrand(input.eventName);
   const centerFrom =
     input.centerFromCol != null
       ? input.centerFromCol
@@ -300,7 +306,7 @@ function buildLandscapeResultsPdfHtml(input: {
         : n <= 24
           ? 2.2
           : 1.4;
-  const logoH = n <= 20 ? 48 : n <= 30 ? 36 : 28;
+  const logoH = n <= 20 ? 52 : n <= 30 ? 42 : 34;
   const titlePt = n <= 24 ? 15 : 12;
   const subPt = n <= 24 ? 10 : 8;
 
@@ -356,6 +362,17 @@ function buildLandscapeResultsPdfHtml(input: {
   const legCarWidthPct = legStageCount >= 6 ? 9.0 : 11;
   const legTimeWidthPct = legStageCount >= 6 ? 5.6 : legStageCount >= 4 ? 6.0 : 6.4;
 
+  const headerHtml = branded
+    ? buildCyprusRallyPrintHeaderHtml({
+        sheetTitle: input.subtitle,
+        logoMaxHeightPx: Math.max(logoH, 58),
+      })
+    : `<div class="header">${
+        input.logoUrl
+          ? `<img src="${escapeHtml(input.logoUrl)}" alt="Event logo" class="logo" />`
+          : ""
+      }<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(input.subtitle)}</h2><h3>${escapeHtml(input.modeLabel)}</h3></div>`;
+
   return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(input.subtitle)}</title><style>
   @page { size: A4 landscape; margin: 8mm; }
   html, body { margin: 0; padding: 0; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; }
@@ -365,6 +382,7 @@ function buildLandscapeResultsPdfHtml(input: {
   h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.15; }
   h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
   h3 { margin: 1px 0 0; font-size: ${Math.max(7, subPt - 1)}pt; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; }
+  ${branded ? cyprusRallyPrintHeaderCss(logoH) : ""}
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${fontPt}pt; }
   th, td { border: 1px solid #bdbdbd; padding: ${padY}mm ${legLayout && legStageCount >= 6 ? Math.min(padX, 0.7) : padX}mm; vertical-align: middle; line-height: 1.2; word-wrap: break-word; overflow: hidden; }
   th { background: #f0f0f0; font-weight: 700; }
@@ -379,7 +397,7 @@ function buildLandscapeResultsPdfHtml(input: {
   col.c-diff { width: ${legLayout ? `${legTimeWidthPct}%` : "7.2%"}; }
   @media print { @page { size: A4 landscape; margin: 8mm; } html, body { margin: 0; } .page { width: auto; overflow: visible; } table { width: 100% !important; } }
   @media screen { body { padding: 12px; background: #e8e8e8; } .page { background: #fff; padding: 8mm; box-shadow: 0 1px 6px rgba(0,0,0,.2); } }
-  </style></head><body><div class="page"><div class="header">${input.logoUrl ? `<img src="${escapeHtml(input.logoUrl)}" alt="Event logo" class="logo" />` : ""}<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(input.subtitle)}</h2><h3>${escapeHtml(input.modeLabel)}</h3></div><table>${colgroup}<thead><tr>${input.columns
+  </style></head><body><div class="page">${headerHtml}<table>${colgroup}<thead><tr>${input.columns
     .map((c, colIdx) => {
       const cls = shouldCenter(colIdx) ? "c" : "l";
       return `<th class="${cls}">${escapeHtml(c)}</th>`;
@@ -1152,7 +1170,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           subtitle: (() => {
             const n = competitiveStageNumber(stage, event.stages);
             const ss = n != null ? `SS${n}` : stageChipLabel(stage, event.stages);
-            return `After ${ss} Results (SS1–${ss})`;
+            const name = (stage.name ?? "").trim();
+            return name
+              ? `Overall Classification after ${ss} ${name}`
+              : `Overall Classification after ${ss}`;
           })(),
           modeLabel: "Overall classification",
           columns: [
@@ -1179,7 +1200,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       const shakedown = isShakedownStage(stage);
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
-        subtitle: `${stageHeadingLabel(stage, event.stages)}`,
+        subtitle: isPreEventStage(stage)
+          ? stageHeadingLabel(stage, event.stages)
+          : `Stage Classification ${stageHeadingLabel(stage, event.stages)}`,
         modeLabel: "Stage results",
         columns: shakedown
           ? [
@@ -1226,7 +1249,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       );
       const html = buildLandscapeResultsPdfHtml({
         eventName: event.name,
-        subtitle: `LEG${selectedStripItem.leg} Results`,
+        subtitle: `LEG${selectedStripItem.leg} Classification`,
         modeLabel: "Leg classification",
         columns,
         tableRows,
@@ -1396,7 +1419,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     );
     const html = buildLandscapeResultsPdfHtml({
       eventName: event.name,
-      subtitle: "Final Results",
+      subtitle: "Final Classification",
       modeLabel: "Ordered by Best Time",
       columns,
       tableRows,
@@ -1413,7 +1436,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     );
     const html = buildLandscapeResultsPdfHtml({
       eventName: event.name,
-      subtitle: "Final Results",
+      subtitle: "Final Classification",
       modeLabel: "Overall classification",
       columns: [
         "Pos",
