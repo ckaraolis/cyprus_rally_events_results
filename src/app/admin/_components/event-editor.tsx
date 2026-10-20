@@ -28,6 +28,14 @@ import {
 import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
 import { printOfficialFinalResultsPdf } from "@/lib/rally/official-final-print";
 import {
+  entryCyNational,
+  entrySeries,
+  filterEntriesCyNational,
+  normalizeCyNational,
+  normalizeRallySeries,
+  usesDualSeriesEvent,
+} from "@/lib/rally/dual-series";
+import {
   createPreEventStage,
   isCompetitiveStage,
   isPreEventStage,
@@ -52,6 +60,7 @@ import {
 } from "@/lib/rally/shakedown-passes";
 import { AdminCountrySelect } from "./admin-country-select";
 import {
+  buildOfficialFinalResultRows,
   exportRallyAfterSsExcel,
   exportRallyFinalExcel,
   exportRallyLegExcel,
@@ -68,7 +77,8 @@ type AdminTab =
   | "timing"
   | "penalties"
   | "notice-board"
-  | "official-final";
+  | "official-final"
+  | "cyprus-championship";
 type SpeedTimingRun = "trial" | "run1" | "run2";
 type SpeedTimingOutcome = "ret" | "dnf" | null;
 type AssignStartTimeRule = {
@@ -375,8 +385,48 @@ export function EventEditor({ event: initial }: Props) {
       run2FinishTime: e.run2FinishTime ?? "",
       driverCountryCode: e.driverCountryCode ?? "",
       coDriverCountryCode: e.coDriverCountryCode ?? "",
+      series: normalizeRallySeries(e.series),
+      cyNational: normalizeCyNational(e.cyNational),
     })),
   );
+  const dualSeriesEvent = usesDualSeriesEvent(meta.name);
+  const cyprusChampionshipPreview = useMemo(() => {
+    const columns = [
+      "Pos",
+      "#",
+      "Driver",
+      "Co-driver",
+      "Car",
+      "Class",
+      "Time",
+      "Penalty",
+      "Total time",
+      "Diff",
+    ];
+    const cyprusEntries = filterEntriesCyNational(
+      entries.filter((e) => e.start !== false),
+    );
+    const competitive = competitiveStages(stages);
+    if (cyprusEntries.length === 0) {
+      return {
+        columns,
+        rows: [] as string[][],
+        emptyMessage: "No CY NATIONAL = Yes crews yet.",
+      };
+    }
+    if (competitive.length === 0) {
+      return {
+        columns,
+        rows: [] as string[][],
+        emptyMessage: "Add competitive stages to build classification.",
+      };
+    }
+    return {
+      columns,
+      rows: buildOfficialFinalResultRows(cyprusEntries, competitive),
+      emptyMessage: "",
+    };
+  }, [entries, stages]);
   const [penaltyLines, setPenaltyLines] = useState<EventPenaltyLine[]>(() =>
     loadEventPenaltyLinesFromEntries(initial.entries),
   );
@@ -399,6 +449,14 @@ export function EventEditor({ event: initial }: Props) {
   const liveSaveInFlightRef = useRef(false);
   const liveSaveQueuedRef = useRef<Entry[] | null>(null);
   const [activeTab, setActiveTab] = useState<AdminTab>("details");
+  useEffect(() => {
+    if (
+      activeTab === "cyprus-championship" &&
+      (!dualSeriesEvent || meta.type !== "rally")
+    ) {
+      setActiveTab("details");
+    }
+  }, [dualSeriesEvent, meta.type, activeTab]);
   const [startingOrderLeg, setStartingOrderLeg] = useState<number>(1);
   const [timingRun, setTimingRun] = useState<SpeedTimingRun>("trial");
   const timingRunRef = useRef<SpeedTimingRun>("trial");
@@ -1489,6 +1547,8 @@ export function EventEditor({ event: initial }: Props) {
         class: "",
         driverCountryCode: "",
         coDriverCountryCode: "",
+        series: "merc",
+        cyNational: false,
       },
     ]);
   }
@@ -1599,6 +1659,17 @@ export function EventEditor({ event: initial }: Props) {
           ),
           coDriverCountryCode: toStringValue(
             readCell(row, ["Co", "Co-driver Country", "Co-driver Country Code"]),
+          ),
+          series: normalizeRallySeries(
+            readCell(row, ["Series", "MERC/NATIONAL", "Championship"]),
+          ),
+          cyNational: normalizeCyNational(
+            readCell(row, [
+              "CY NATIONAL",
+              "Cy National",
+              "Cyprus National",
+              "Cyprus Championship",
+            ]),
           ),
         };
       });
@@ -2443,6 +2514,19 @@ export function EventEditor({ event: initial }: Props) {
           >
             Official Final Results
           </button>
+          {dualSeriesEvent && meta.type === "rally" ? (
+            <button
+              type="button"
+              onClick={() => setActiveTab("cyprus-championship")}
+              className={`rounded-lg px-3 py-1.5 text-sm ${
+                activeTab === "cyprus-championship"
+                  ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                  : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+              }`}
+            >
+              Cyprus Championship
+            </button>
+          ) : null}
         </div>
       </section>
 
@@ -3194,6 +3278,14 @@ export function EventEditor({ event: initial }: Props) {
           (flag + name) from the list, or choose &quot;Other&quot; to type a
           2-letter ISO code. The public site shows the flag next to each name
           when set.
+          {dualSeriesEvent ? (
+            <>
+              {" "}
+              <strong>Series</strong> is MERC or NATIONAL (public results are
+              filtered by series). <strong>CY NATIONAL</strong> Yes includes the
+              crew in the admin-only Cyprus Championship final.
+            </>
+          ) : null}
         </p>
         <div className="mt-4 overflow-x-auto">
           <table className="w-full min-w-[900px] text-left text-sm">
@@ -3211,6 +3303,12 @@ export function EventEditor({ event: initial }: Props) {
                 <th className="pb-2 pr-2">Co-driver</th>
                 <th className="pb-2 pr-2">Car</th>
                 <th className="pb-2 pr-2">Class</th>
+                {dualSeriesEvent ? (
+                  <>
+                    <th className="pb-2 pr-2">Series</th>
+                    <th className="pb-2 pr-2">CY NATIONAL</th>
+                  </>
+                ) : null}
                 <th className="pb-2 pr-2">Start</th>
                 <th className="pb-2 w-12" />
               </tr>
@@ -3345,6 +3443,54 @@ export function EventEditor({ event: initial }: Props) {
                         }
                       />
                     </td>
+                    {dualSeriesEvent ? (
+                      <>
+                        <td className="py-2 pr-2">
+                          <select
+                            className="w-[6.5rem] rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                            value={entrySeries(row)}
+                            onChange={(e) =>
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? {
+                                        ...x,
+                                        series: normalizeRallySeries(
+                                          e.target.value,
+                                        ),
+                                      }
+                                    : x,
+                                ),
+                              )
+                            }
+                          >
+                            <option value="merc">MERC</option>
+                            <option value="national">NATIONAL</option>
+                          </select>
+                        </td>
+                        <td className="py-2 pr-2">
+                          <select
+                            className="w-16 rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
+                            value={entryCyNational(row) ? "yes" : "no"}
+                            onChange={(e) =>
+                              setEntries((prev) =>
+                                prev.map((x) =>
+                                  x.id === row.id
+                                    ? {
+                                        ...x,
+                                        cyNational: e.target.value === "yes",
+                                      }
+                                    : x,
+                                ),
+                              )
+                            }
+                          >
+                            <option value="yes">Yes</option>
+                            <option value="no">No</option>
+                          </select>
+                        </td>
+                      </>
+                    ) : null}
                     <td className="py-2 pr-2">
                       <select
                         className="w-16 rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-950"
@@ -5027,6 +5173,102 @@ export function EventEditor({ event: initial }: Props) {
                 Speed events: publish to show Official Final Results on the
                 public site, then print from that tab.
               </p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {dualSeriesEvent &&
+      meta.type === "rally" &&
+      activeTab === "cyprus-championship" ? (
+        <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+            Cyprus Championship Final Results
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
+            Admin-only check sheet. Includes only crews with{" "}
+            <strong>CY NATIONAL = Yes</strong> (and Start = Yes). Review
+            before printing — this is not shown on the public website.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const competitive = competitiveStages(stages);
+                const cyprusEntries = filterEntriesCyNational(
+                  entries.filter((e) => e.start !== false),
+                );
+                if (competitive.length === 0) {
+                  setFlash(
+                    "Add competitive stages before printing Cyprus Championship results.",
+                  );
+                  return;
+                }
+                if (cyprusEntries.length === 0) {
+                  setFlash(
+                    "No crews marked CY NATIONAL = Yes. Set the flag on Entries first.",
+                  );
+                  return;
+                }
+                printOfficialFinalResultsPdf({
+                  eventName: meta.name || "Event",
+                  logoUrl: meta.logoUrl ?? "",
+                  entries: cyprusEntries,
+                  stages: competitive,
+                  sheetTitle: "Cyprus Championship Final Results",
+                });
+              }}
+              className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            >
+              Print PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void exportRallyFinalExcel(
+                  `${meta.name || "Event"}-Cyprus-Championship`,
+                  filterEntriesCyNational(
+                    entries.filter((e) => e.start !== false),
+                  ),
+                  competitiveStages(stages),
+                );
+              }}
+              className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+            >
+              Export Excel
+            </button>
+          </div>
+          <div className="mt-5 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
+            {cyprusChampionshipPreview.rows.length === 0 ? (
+              <p className="p-6 text-center text-sm text-zinc-500">
+                {cyprusChampionshipPreview.emptyMessage}
+              </p>
+            ) : (
+              <table className="w-full min-w-[720px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950">
+                    {cyprusChampionshipPreview.columns.map((c) => (
+                      <th key={c} className="px-2 py-2">
+                        {c}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {cyprusChampionshipPreview.rows.map((r, i) => (
+                    <tr
+                      key={`${r[1]}-${i}`}
+                      className="border-b border-zinc-100 dark:border-zinc-800"
+                    >
+                      {r.map((cell, ci) => (
+                        <td key={ci} className="px-2 py-1.5 font-mono text-xs">
+                          {cell}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         </section>

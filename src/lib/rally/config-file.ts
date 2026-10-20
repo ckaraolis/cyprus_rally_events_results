@@ -24,6 +24,10 @@ import type {
 import { normalizeLegStartingOrders } from "./leg-starting-order";
 import { normalizeStageKind } from "./stage-kind";
 import { normalizeShakedownPassCount } from "./shakedown-passes";
+import {
+  normalizeCyNational,
+  normalizeRallySeries,
+} from "./dual-series";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
@@ -251,6 +255,8 @@ function normalizeEntry(raw: unknown): Entry {
     class: typeof o.class === "string" ? o.class : "",
     driverCountryCode: normalizeCountryCode(o.driverCountryCode),
     coDriverCountryCode: normalizeCountryCode(o.coDriverCountryCode),
+    series: normalizeRallySeries(o.series),
+    cyNational: normalizeCyNational(o.cyNational),
   };
 }
 

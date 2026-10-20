@@ -1,6 +1,11 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { normalizeLegStartingOrders } from "./leg-starting-order";
+import {
+  applyEntrySeriesFlags,
+  buildEntrySeriesFlagsMap,
+  normalizeEntrySeriesFlagsMap,
+} from "./dual-series";
 import { normalizeShakedownPassCount } from "./shakedown-passes";
 import { parseStageKindMeta, serializeStageKindMeta } from "./stage-kind";
 import type { Entry, RallyEvent, RallySiteConfig, SiteSettings, Stage } from "./types";
@@ -210,6 +215,7 @@ function toEvent(row: {
             k !== "__legStartingOrders" &&
             k !== "__stageKinds" &&
             k !== "__shakedownPassCounts" &&
+            k !== "__entrySeriesFlags" &&
             k !== "__finalResultsPublished" &&
             k !== "__configUpdatedAt",
         )
@@ -232,7 +238,13 @@ function toEvent(row: {
       }
       return stage;
     }),
-    entries: row.entries.map(toEntry),
+    entries: row.entries.map((en) => {
+      const entry = toEntry(en);
+      const flags = normalizeEntrySeriesFlagsMap(algeMap.__entrySeriesFlags)[
+        entry.id
+      ];
+      return applyEntrySeriesFlags(entry, flags);
+    }),
   };
 }
 
@@ -336,6 +348,7 @@ export async function patchEventEntriesInDb(
         ? { ...(existing.algeTriggerCountByKey as Record<string, unknown>) }
         : {};
     algeMap.__configUpdatedAt = configUpdatedAt;
+    algeMap.__entrySeriesFlags = buildEntrySeriesFlagsMap(entries);
 
     await tx.event.update({
       where: { id: eventId },
@@ -418,6 +431,7 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
                   normalizeShakedownPassCount(s.shakedownPassCount),
                 ]),
             ),
+            __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
             __finalResultsPublished: e.finalResultsPublished === true,
             /** Bumps on every save so public poll `updatedAt` always moves with timing edits. */
             __configUpdatedAt: config.updatedAt,
@@ -453,6 +467,7 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
                   normalizeShakedownPassCount(s.shakedownPassCount),
                 ]),
             ),
+            __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
             __finalResultsPublished: e.finalResultsPublished === true,
             __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,

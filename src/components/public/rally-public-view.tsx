@@ -33,6 +33,13 @@ import {
   cyprusRallyPrintHeaderCss,
   usesCyprusRallyPrintBrand,
 } from "@/lib/rally/print-branding";
+import {
+  filterEntriesBySeries,
+  RALLY_SERIES_OPTIONS,
+  seriesLabel,
+  usesDualSeriesEvent,
+  type RallySeries,
+} from "@/lib/rally/dual-series";
 
 function stageChipLabel(stage: Stage, allStages: Stage[]): string {
   if (stage.kind === "shakedown") return "Shakedown";
@@ -814,6 +821,8 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
       class: x.class,
       driverCountryCode: x.driverCountryCode,
       coDriverCountryCode: x.coDriverCountryCode,
+      series: x.series ?? "merc",
+      cyNational: x.cyNational === true,
       trialStartTime: x.trialStartTime,
       trialFinishTime: x.trialFinishTime,
       run1StartTime: x.run1StartTime,
@@ -873,6 +882,15 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   const [stageResultsClassFilter, setStageResultsClassFilter] = useState("");
   /** Final results tab: same filter semantics. */
   const [finalResultsClassFilter, setFinalResultsClassFilter] = useState("");
+  /** Dual-series (Cyprus/Test): public must pick MERC or NATIONAL. */
+  const dualSeries = usesDualSeriesEvent(event);
+  const [selectedSeries, setSelectedSeries] = useState<RallySeries | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setSelectedSeries(null);
+  }, [event.id]);
 
   const stagesSorted = useMemo(
     () => sortStagesByKindThenOrder(event.stages),
@@ -883,10 +901,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     [event.stages],
   );
 
-  const entriesSorted = useMemo(
-    () => [...event.entries].sort((a, b) => a.startNumber - b.startNumber),
-    [event.entries],
-  );
+  const entriesSorted = useMemo(() => {
+    const all = [...event.entries].sort((a, b) => a.startNumber - b.startNumber);
+    if (!dualSeries || !selectedSeries) return all;
+    return filterEntriesBySeries(all, selectedSeries);
+  }, [event.entries, dualSeries, selectedSeries]);
   const entriesStartedSorted = useMemo(
     () => entriesSorted.filter((e) => e.start !== false),
     [entriesSorted],
@@ -1596,6 +1615,58 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     }
   }, [tab, tabs]);
 
+  if (dualSeries && selectedSeries == null) {
+    return (
+      <>
+        <div className="border-b border-[var(--ewrc-border)] bg-gradient-to-b from-[var(--ewrc-gradient-top)] to-[var(--ewrc-gradient-bottom)]">
+          <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
+            {topCrumb ? (
+              <Link
+                href={topCrumb.href}
+                className="mb-3 inline-block text-xs font-medium text-[var(--ewrc-muted-3)] transition-colors hover:text-[var(--ewrc-brand)]"
+              >
+                {topCrumb.label}
+              </Link>
+            ) : null}
+            {normalizedLogoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={normalizedLogoUrl}
+                alt={`${event.name} logo`}
+                className="mb-4 h-auto w-full max-w-[300px] rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1 object-contain"
+                style={{ aspectRatio: "1333 / 537" }}
+                loading="lazy"
+              />
+            ) : null}
+            <h1 className="font-ewrc-heading text-2xl font-bold tracking-tight text-[var(--ewrc-heading)] sm:text-3xl">
+              {event.name}
+            </h1>
+            <p className="mt-3 max-w-xl text-sm text-[var(--ewrc-muted-2)]">
+              This event runs two classifications. Choose which results to view.
+            </p>
+            <div className="mt-8 grid gap-4 sm:grid-cols-2 sm:gap-6">
+              {RALLY_SERIES_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setSelectedSeries(opt.id)}
+                  className="rounded-xl border-2 border-[var(--ewrc-border-ui)] bg-[var(--ewrc-surface-raised)] px-6 py-10 text-center transition-colors hover:border-[var(--ewrc-brand)] hover:bg-[var(--ewrc-chip-on-bg)]"
+                >
+                  <span className="font-ewrc-heading block text-2xl font-bold tracking-wide text-[var(--ewrc-heading)]">
+                    {opt.label}
+                  </span>
+                  <span className="mt-2 block text-xs uppercase tracking-widest text-[var(--ewrc-muted-3)]">
+                    View results
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      </>
+    );
+  }
+
   return (
     <>
       <div className="border-b border-[var(--ewrc-border)] bg-gradient-to-b from-[var(--ewrc-gradient-top)] to-[var(--ewrc-gradient-bottom)]">
@@ -1612,6 +1683,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
               ) : null}
               <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--ewrc-brand)]">
                 {event.type === "speed" ? "SPEED" : "RALLY"}
+                {dualSeries && selectedSeries
+                  ? ` · ${seriesLabel(selectedSeries)}`
+                  : ""}
               </p>
               {normalizedLogoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
@@ -1655,6 +1729,15 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                 {entriesSorted.length} crews · {competitiveStagesSorted.length} stages
                 {totalKm > 0 ? ` · ${totalKm.toFixed(1)} km` : null}
               </span>
+              {dualSeries && selectedSeries ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedSeries(null)}
+                  className="rounded border border-[var(--ewrc-border-ui)] bg-[var(--ewrc-input-bg)] px-2.5 py-1 text-xs font-semibold text-[var(--ewrc-muted)] transition-colors hover:border-[var(--ewrc-brand)] hover:text-[var(--ewrc-brand)]"
+                >
+                  Switch series
+                </button>
+              ) : null}
             </div>
           </div>
 

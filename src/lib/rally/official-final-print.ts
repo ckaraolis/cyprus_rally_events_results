@@ -37,6 +37,8 @@ export function printOfficialFinalResultsPdf(input: {
   logoUrl: string;
   entries: Entry[];
   stages: Stage[];
+  /** Defaults to "Official Final Results". */
+  sheetTitle?: string;
 }): void {
   const tableRows = buildOfficialFinalResultRows(input.entries, input.stages);
   const n = Math.max(tableRows.length, 1);
@@ -49,7 +51,8 @@ export function printOfficialFinalResultsPdf(input: {
   const logoH = Math.max(n <= 20 ? 52 : n <= 30 ? 42 : 34, 58);
   const branded = usesCyprusRallyPrintBrand(input.eventName);
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
-  const subtitle = "Official Final Results";
+  const subtitle = (input.sheetTitle ?? "Official Final Results").trim() ||
+    "Official Final Results";
   const centerFrom = 5;
   const shouldCenter = (colIdx: number) => colIdx <= 1 || colIdx >= centerFrom;
 

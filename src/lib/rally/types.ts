@@ -14,6 +14,9 @@ export type StageProgressStatus = "pending" | "live" | "completed";
 /** Competitive SS vs optional pre-event stages (times only; not in rally results). */
 export type StageKind = "ss" | "shakedown" | "qualify";
 
+/** Dual-series Cyprus/Test events: MERC vs NATIONAL championship. */
+export type RallySeries = "merc" | "national";
+
 export interface SiteSettings {
   resultsPageTitle: string;
   resultsPageSubtitle: string;
@@ -69,6 +72,16 @@ export interface Entry {
   driverCountryCode: string;
   /** Optional — flag before co-driver when set */
   coDriverCountryCode: string;
+  /**
+   * Dual-series events (Cyprus Rally / Test): which series this crew runs.
+   * Default `merc` when unset.
+   */
+  series?: RallySeries;
+  /**
+   * Dual-series: Yes = counts in Cyprus Championship final (admin-only sheet).
+   * Default false when unset.
+   */
+  cyNational?: boolean;
 }
 
 /** Admin starting order for one rally leg (TC / ceremonial start list). */
