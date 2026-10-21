@@ -68,6 +68,7 @@ import {
   exportRallyStartingOrderExcel,
 } from "@/lib/rally/admin-excel-export";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
+import { normalizeCountryCode } from "@/lib/flags";
 
 type Props = { event: RallyEvent };
 type AdminTab =
@@ -1704,10 +1705,10 @@ export function EventEditor({ event: initial }: Props) {
           ),
           car: toStringValue(readCell(row, ["Car", "Vehicle"])),
           class: toStringValue(readCell(row, ["Class", "Category"])),
-          driverCountryCode: toStringValue(
+          driverCountryCode: normalizeCountryCode(
             readCell(row, ["Drv", "Driver Country", "Driver Country Code"]),
           ),
-          coDriverCountryCode: toStringValue(
+          coDriverCountryCode: normalizeCountryCode(
             readCell(row, ["Co", "Co-driver Country", "Co-driver Country Code"]),
           ),
           series: normalizeRallySeries(

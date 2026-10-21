@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { FlagImage } from "@/components/flag-image";
 import { COUNTRY_PRESETS } from "@/lib/country-presets";
+import { normalizeCountryCode } from "@/lib/flags";
 
 const CUSTOM = "__custom__";
 
 function normalizeCode(v: string): string {
-  return v.trim().toUpperCase().replace(/[^A-Z]/g, "").slice(0, 2);
+  return normalizeCountryCode(v);
 }
 
 type Props = {
