@@ -78,7 +78,7 @@ export interface Entry {
    */
   series?: RallySeries;
   /**
-   * Dual-series: Yes = counts in Cyprus Championship final (admin-only sheet).
+   * Dual-series: Yes = counts in Cyprus Rally Challenge final (admin-only sheet).
    * Default false when unset.
    */
   cyNational?: boolean;
