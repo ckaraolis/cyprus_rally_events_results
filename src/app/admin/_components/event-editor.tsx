@@ -67,6 +67,7 @@ import {
   exportRallyStageExcel,
   exportRallyStartingOrderExcel,
 } from "@/lib/rally/admin-excel-export";
+import { downloadExcelTable } from "@/lib/rally/download-excel";
 
 type Props = { event: RallyEvent };
 type AdminTab =
@@ -1555,6 +1556,55 @@ export function EventEditor({ event: initial }: Props) {
 
   function removeEntry(id: string) {
     setEntries((prev) => prev.filter((e) => e.id !== id));
+  }
+
+  async function downloadEntriesImportTemplate() {
+    setFlash(null);
+    const columns: string[] = [
+      "#",
+      "Entrance",
+      "Drv",
+      "Co",
+      "Driver",
+      "Co-driver",
+      "Car",
+      "Class",
+    ];
+    if (dualSeriesEvent) {
+      columns.push("Series", "CY NATIONAL");
+    }
+    columns.push("Start");
+    const exampleRow: string[] = [
+      "1",
+      "",
+      "CY",
+      "CY",
+      "Driver Name",
+      "Co-driver Name",
+      "Car / Make",
+      "RC2",
+    ];
+    if (dualSeriesEvent) {
+      exampleRow.push("MERC", "No");
+    }
+    exampleRow.push("Yes");
+    try {
+      await downloadExcelTable({
+        fileName: `${(meta.name || "event").trim() || "event"}-entries-import-template`,
+        sheetName: "Entries",
+        columns,
+        rows: [exampleRow],
+      });
+      setFlash(
+        dualSeriesEvent
+          ? "Template downloaded. Series = MERC or NATIONAL; CY NATIONAL = Yes or No; Start = Yes or No. Drv/Co = 2-letter country codes (e.g. CY)."
+          : "Template downloaded. Start = Yes or No. Drv/Co = 2-letter country codes (e.g. CY).",
+      );
+    } catch (e) {
+      setFlash(
+        `Template download failed: ${e instanceof Error ? e.message : "Unknown error"}`,
+      );
+    }
   }
 
   async function importEntriesFromExcel(file: File) {
@@ -3244,6 +3294,13 @@ export function EventEditor({ event: initial }: Props) {
             >
               Add crew
             </button>
+            <button
+              type="button"
+              onClick={() => void downloadEntriesImportTemplate()}
+              className="rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800"
+            >
+              Download template
+            </button>
             <label className="inline-flex cursor-pointer items-center rounded-lg border border-zinc-300 px-3 py-1.5 text-sm hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-800">
               Import Excel
               <input
@@ -3274,9 +3331,10 @@ export function EventEditor({ event: initial }: Props) {
           </div>
         </div>
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
-          <strong>Drv / Co nationality</strong> are optional. Pick a country
-          (flag + name) from the list, or choose &quot;Other&quot; to type a
-          2-letter ISO code. The public site shows the flag next to each name
+          Use <strong>Download template</strong> for the Excel import headers,
+          then fill rows and use <strong>Import Excel</strong>.{" "}
+          <strong>Drv / Co nationality</strong> are optional (2-letter ISO codes
+          in Excel, e.g. CY). The public site shows the flag next to each name
           when set.
           {dualSeriesEvent ? (
             <>
