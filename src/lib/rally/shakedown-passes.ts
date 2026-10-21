@@ -17,6 +17,8 @@ export type StageTimingBlobEntry = {
   finishTime?: string;
   penalty?: string;
   penaltyNote?: string;
+  /** Competitive SS only: crew runs under Rally2 rules (shown as * on results). */
+  rally2?: boolean;
   passes?: ShakedownPass[];
 };
 
@@ -56,6 +58,7 @@ export function parseStageTimingBlobEntry(
     penalty: typeof item.penalty === "string" ? item.penalty : "",
     penaltyNote: typeof item.penaltyNote === "string" ? item.penaltyNote : "",
   };
+  if (item.rally2 === true) entry.rally2 = true;
   if (Array.isArray(item.passes)) {
     entry.passes = item.passes.slice(0, SHAKEDOWN_PASS_COUNT_MAX).map((p) => {
       if (!p || typeof p !== "object" || Array.isArray(p)) {

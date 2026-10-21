@@ -1,7 +1,11 @@
 import type { Entry, Stage } from "@/lib/rally/types";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
 import { resolveStartingOrderTime, startingOrderScopeLabel } from "@/lib/rally/leg-starting-order";
-import { isPreEventStage, stageControlLabel } from "@/lib/rally/stage-kind";
+import {
+  isCompetitiveStage,
+  isPreEventStage,
+  stageControlLabel,
+} from "@/lib/rally/stage-kind";
 import {
   findShakedownBestDurationMs,
   getShakedownPassCount,
@@ -96,7 +100,12 @@ function stageValues(row: Entry, stageId: string) {
     start: values.startTime?.trim() ?? "",
     finish: values.finishTime?.trim() ?? "",
     penalty: values.penalty?.trim() ?? "",
+    rally2: values.rally2 === true,
   };
+}
+
+function formatCarNumber(startNumber: number, rally2: boolean): string {
+  return rally2 ? `*${startNumber}` : String(startNumber);
 }
 
 function classifyCell(startRaw: string, finishRaw: string): {
@@ -233,6 +242,7 @@ export async function exportRallyStageExcel(
     return;
   }
 
+  const showRally2 = isCompetitiveStage(stage);
   const ranked = started(entries)
     .map((row) => {
       const v = stageValues(row, stage.id);
@@ -241,7 +251,14 @@ export async function exportRallyStageExcel(
       const ssTimeMs = cell.durationMs;
       const totalMs =
         ssTimeMs != null ? ssTimeMs + penaltyMs : null;
-      return { row, cell, ssTimeMs, penaltyMs, totalMs };
+      return {
+        row,
+        cell,
+        ssTimeMs,
+        penaltyMs,
+        totalMs,
+        rally2: showRally2 && v.rally2,
+      };
     })
     .filter(
       (x) =>
@@ -256,20 +273,36 @@ export async function exportRallyStageExcel(
       return a.row.startNumber - b.row.startNumber;
     });
   const leader = ranked.find((x) => x.totalMs != null)?.totalMs ?? null;
-  const rows = ranked.map(({ row, cell, ssTimeMs, penaltyMs, totalMs }, i) => [
-    String(i + 1),
-    String(row.startNumber),
-    row.driver || "—",
-    row.coDriver || "—",
-    row.car || "—",
-    row.class || "—",
-    cell.outcome ?? formatDurationMs(ssTimeMs, timeDigits),
-    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    cell.outcome ?? formatDurationMs(totalMs, timeDigits),
-    totalMs == null || leader == null || totalMs <= leader
-      ? "—"
-      : `+${formatDiffMs(totalMs - leader, timeDigits)}`,
-  ]);
+  const rows = ranked.map(
+    ({ row, cell, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
+      String(i + 1),
+      formatCarNumber(row.startNumber, rally2),
+      row.driver || "—",
+      row.coDriver || "—",
+      row.car || "—",
+      row.class || "—",
+      cell.outcome ?? formatDurationMs(ssTimeMs, timeDigits),
+      penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+      cell.outcome ?? formatDurationMs(totalMs, timeDigits),
+      totalMs == null || leader == null || totalMs <= leader
+        ? "—"
+        : `+${formatDiffMs(totalMs - leader, timeDigits)}`,
+    ],
+  );
+  if (ranked.some((x) => x.rally2)) {
+    rows.push([
+      "",
+      "",
+      "* Cars under Rally2 rules.",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
+  }
   await downloadExcelTable({
     fileName: `${eventName}-${fileTag}`,
     sheetName: fileTag.slice(0, 31),

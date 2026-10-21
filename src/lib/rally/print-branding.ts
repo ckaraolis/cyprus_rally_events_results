@@ -1,11 +1,11 @@
-/** Print sheet branding for Petrolina Cyprus Rally / FIA MERC results. */
+/** Print sheet branding for Cyprus Rally / Test / FIA MERC results. */
 
 import { PRINT_LOGO_DATA_URLS } from "./print-logo-data";
 
 export const PRINT_BRAND_ASSETS = {
   leftLogo: "/prints/cyprus-aa.png",
-  /** Official Petrolina Cyprus Rally 2026 main logo (center). */
-  centerLogo: "/prints/petrolina-cyprus-rally-2026.png",
+  /** Official Cyprus Rally 2026 main logo (center; includes AA badge). */
+  centerLogo: "/prints/cyprus-rally-2026.png",
   rightLogo: "/prints/fia-merc.png",
 } as const;
 
@@ -50,9 +50,10 @@ export function escapePrintHtml(raw: string): string {
 }
 
 /**
- * Three-logo header matching official results sheets:
- * Cyprus AA | Petrolina Cyprus Rally | FIA Middle East Rally Championship
+ * Branded header for Cyprus Rally / Test sheets:
+ * Cyprus Rally 2026 logo (includes AA) | FIA Middle East Rally Championship
  * plus a centered classification title underneath.
+ * Left slot kept empty for balance (AA is already in the main logo).
  */
 export function buildCyprusRallyPrintHeaderHtml(input: {
   sheetTitle: string;
@@ -60,15 +61,14 @@ export function buildCyprusRallyPrintHeaderHtml(input: {
   logoMaxHeightPx?: number;
 }): string {
   // Prefer embedded color data URLs so print iframes never lose color / fail to load.
-  const left = PRINT_LOGO_DATA_URLS.left;
   const center = PRINT_LOGO_DATA_URLS.center;
   const right = PRINT_LOGO_DATA_URLS.right;
   const logoH = input.logoMaxHeightPx ?? 56;
   const title = escapePrintHtml(input.sheetTitle);
   const mode = (input.modeLabel ?? "").trim();
   return `<div class="brand-header">
-  <div class="brand-slot brand-left"><img src="${left}" alt="Cyprus AA" class="brand-side" /></div>
-  <div class="brand-slot brand-center"><img src="${center}" alt="Petrolina Cyprus Rally 2026" class="brand-main" /></div>
+  <div class="brand-slot brand-left" aria-hidden="true"></div>
+  <div class="brand-slot brand-center"><img src="${center}" alt="Cyprus Rally 2026" class="brand-main" /></div>
   <div class="brand-slot brand-right"><img src="${right}" alt="FIA Middle East Rally Championship" class="brand-side" /></div>
 </div>
 <h2 class="sheet-title">${title}</h2>${
@@ -81,7 +81,7 @@ export function buildCyprusRallyPrintHeaderHtml(input: {
 /** CSS shared by branded landscape result / starting-order sheets. */
 export function cyprusRallyPrintHeaderCss(logoMaxHeightPx = 56): string {
   return `
-  .brand-header { display: grid; grid-template-columns: 1fr 2.6fr 1fr; align-items: center; gap: 3mm; margin: 0 0 2mm; width: 100%; }
+  .brand-header { display: grid; grid-template-columns: 1fr 2.8fr 1fr; align-items: center; gap: 3mm; margin: 0 0 2mm; width: 100%; }
   .brand-slot { display: flex; align-items: center; }
   .brand-left { justify-content: flex-start; }
   .brand-center { justify-content: center; }

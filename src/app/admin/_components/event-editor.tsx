@@ -2075,6 +2075,9 @@ export function EventEditor({ event: initial }: Props) {
       : DEFAULT_RALLY_STAGE_ALGE_CONFIG;
   const isShakedownTiming =
     !!selectedRallyTimingStage && isShakedownStage(selectedRallyTimingStage);
+  /** Rally2 status flag only on competitive SS (not Shakedown / Qualify). */
+  const isRally2Timing =
+    !!selectedRallyTimingStage && isCompetitiveStage(selectedRallyTimingStage);
   const shakedownTimingPassCount: ShakedownPassCount = isShakedownTiming
     ? getShakedownPassCount(selectedRallyTimingStage)
     : 3;
@@ -2102,6 +2105,7 @@ export function EventEditor({ event: initial }: Props) {
     finishValue: string;
     penaltyValue: string;
     penaltyNoteValue: string;
+    rally2: boolean;
   } => {
     if (meta.type !== "rally") {
       return {
@@ -2109,6 +2113,7 @@ export function EventEditor({ event: initial }: Props) {
         finishValue: (row[timingFinishField] as string) ?? "",
         penaltyValue: "",
         penaltyNoteValue: "",
+        rally2: false,
       };
     }
     if (!selectedRallyTimingStage) {
@@ -2117,6 +2122,7 @@ export function EventEditor({ event: initial }: Props) {
         finishValue: "",
         penaltyValue: "",
         penaltyNoteValue: "",
+        rally2: false,
       };
     }
     const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
@@ -2132,6 +2138,7 @@ export function EventEditor({ event: initial }: Props) {
         finishValue: pass.finishTime?.trim() ?? "",
         penaltyValue: "",
         penaltyNoteValue: "",
+        rally2: false,
       };
     }
     return {
@@ -2139,6 +2146,7 @@ export function EventEditor({ event: initial }: Props) {
       finishValue: current.finishTime?.trim() ?? "",
       penaltyValue: current.penalty?.trim() ?? "",
       penaltyNoteValue: current.penaltyNote?.trim() ?? "",
+      rally2: current.rally2 === true,
     };
   };
   const updateEntryTimingValues = (
@@ -2173,6 +2181,7 @@ export function EventEditor({ event: initial }: Props) {
         finishTime: finishValue,
         penalty: current.penalty ?? "",
         penaltyNote: current.penaltyNote ?? "",
+        ...(current.rally2 ? { rally2: true } : {}),
         ...(current.passes ? { passes: current.passes } : {}),
       };
     }
@@ -2211,6 +2220,7 @@ export function EventEditor({ event: initial }: Props) {
       finishTime: current.finishTime ?? "",
       penalty: penaltyValue,
       penaltyNote: nextNote,
+      ...(current.rally2 ? { rally2: true } : {}),
       ...(current.passes ? { passes: current.passes } : {}),
     };
     return {
@@ -2222,6 +2232,33 @@ export function EventEditor({ event: initial }: Props) {
       run2StartTime: "",
       run2FinishTime: "",
     };
+  };
+  const setRally2ForEntry = (entryId: string, next: boolean) => {
+    if (!isRally2Timing || !selectedRallyTimingStage) return;
+    applyTimingEntryUpdate((prev) =>
+      prev.map((row) => {
+        if (row.id !== entryId) return row;
+        const blob = parseRallyStageTimingBlob(row.trialStartTime ?? "");
+        const current = blob[selectedRallyTimingStage.id] ?? {};
+        blob[selectedRallyTimingStage.id] = {
+          startTime: current.startTime ?? "",
+          finishTime: current.finishTime ?? "",
+          penalty: current.penalty ?? "",
+          penaltyNote: current.penaltyNote ?? "",
+          ...(next ? { rally2: true } : {}),
+          ...(current.passes ? { passes: current.passes } : {}),
+        };
+        return {
+          ...row,
+          trialStartTime: JSON.stringify(blob),
+          trialFinishTime: "",
+          run1StartTime: "",
+          run1FinishTime: "",
+          run2StartTime: "",
+          run2FinishTime: "",
+        };
+      }),
+    );
   };
   const parseTimeToMs = (value: string): number | null => {
     const raw = value.trim();
@@ -4357,7 +4394,7 @@ export function EventEditor({ event: initial }: Props) {
               const passIndexes: Array<ShakedownPassIndex | undefined> =
                 isShakedownTiming ? shakedownTimingPassIndexes : [undefined];
               return passIndexes.map((passIndex) => {
-                const { startValue, finishValue, penaltyValue } =
+                const { startValue, finishValue, penaltyValue, rally2 } =
                   getTimingValuesForEntry(row, passIndex);
                 const outcome = parseTimingOutcome(startValue, finishValue);
                 return (
@@ -4485,6 +4522,20 @@ export function EventEditor({ event: initial }: Props) {
                       >
                         RET
                       </button>
+                      {isRally2Timing ? (
+                        <button
+                          type="button"
+                          onClick={() => setRally2ForEntry(row.id, !rally2)}
+                          className={`rounded border px-3 py-2 text-sm font-medium ${
+                            rally2
+                              ? "border-amber-600 bg-amber-600 text-white dark:border-amber-500 dark:bg-amber-500"
+                              : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                          }`}
+                          title="Mark crew as Rally2 (* on stage results)"
+                        >
+                          Rally2
+                        </button>
+                      ) : null}
                     </div>
                     {meta.type === "rally" && !isShakedownTiming ? (
                       <div className="mt-2 grid grid-cols-1 gap-2">
@@ -4558,7 +4609,7 @@ export function EventEditor({ event: initial }: Props) {
                       ? shakedownTimingPassIndexes
                       : [undefined];
                   return passIndexes.map((passIndex) => {
-                    const { startValue, finishValue, penaltyValue } =
+                    const { startValue, finishValue, penaltyValue, rally2 } =
                       getTimingValuesForEntry(row, passIndex);
                     const outcome = parseTimingOutcome(startValue, finishValue);
                     return (
@@ -4682,6 +4733,22 @@ export function EventEditor({ event: initial }: Props) {
                             >
                               RET
                             </button>
+                            {isRally2Timing ? (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setRally2ForEntry(row.id, !rally2)
+                                }
+                                className={`rounded border px-2 py-1 text-xs font-medium ${
+                                  rally2
+                                    ? "border-amber-600 bg-amber-600 text-white dark:border-amber-500 dark:bg-amber-500"
+                                    : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
+                                }`}
+                                title="Mark crew as Rally2 (* on stage results)"
+                              >
+                                Rally2
+                              </button>
+                            ) : null}
                           </div>
                         </td>
                         {meta.type === "rally" && !isShakedownTiming ? (
