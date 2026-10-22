@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { FlagImage } from "@/components/flag-image";
-import { isIso3166Alpha2 } from "@/lib/flags";
+import { formatNameWithNationality, isIso3166Alpha2 } from "@/lib/flags";
 import type {
   Entry,
   RallyEvent,
@@ -490,8 +490,8 @@ function buildRallyShakedownPdfRows(entries: Entry[], stage: Stage): string[][] 
     return [
       String(i + 1),
       String(row.startNumber),
-      row.driver || "—",
-      row.coDriver || "—",
+      formatNameWithNationality(row.driver, row.driverCountryCode),
+      formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
       ...passCells,
@@ -552,8 +552,8 @@ function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
     ({ row, cell, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
       String(i + 1),
       rally2 ? `*${row.startNumber}` : String(row.startNumber),
-      row.driver || "—",
-      row.coDriver || "—",
+      formatNameWithNationality(row.driver, row.driverCountryCode),
+      formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
       cell.outcome != null ? cell.outcome : formatDurationMs(ssTimeMs, timeDigits),
@@ -622,8 +622,8 @@ function buildRallyOverallPdfRows(
   return ranked.map(({ row, totalMs, penaltyMs, ssTimesMs }, i) => [
     String(i + 1),
     String(row.startNumber),
-    row.driver || "—",
-    row.coDriver || "—",
+    formatNameWithNationality(row.driver, row.driverCountryCode),
+    formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
     row.car || "—",
     row.class || "—",
     formatDurationMs(ssTimesMs),
@@ -646,8 +646,8 @@ function buildRallyFinalPdfRows(entries: Entry[], stages: Stage[]): string[][] {
     return [
       pos,
       String(row.startNumber),
-      row.driver || "—",
-      row.coDriver || "—",
+      formatNameWithNationality(row.driver, row.driverCountryCode),
+      formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
       tier === 0 ? formatDurationMs(timeMs) : "—",
@@ -785,8 +785,14 @@ function buildRallyLegPdfSheet(
   const tableRows = ranked.map((legRow, i) => [
     String(i + 1),
     String(legRow.row.startNumber),
-    legRow.row.driver || "—",
-    legRow.row.coDriver || "—",
+    formatNameWithNationality(
+      legRow.row.driver,
+      legRow.row.driverCountryCode,
+    ),
+    formatNameWithNationality(
+      legRow.row.coDriver,
+      legRow.row.coDriverCountryCode,
+    ),
     legRow.row.car || "—",
     legRow.row.class || "—",
     ...legRow.cells,
@@ -1385,7 +1391,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
           String(i + 1),
           String(row.startNumber),
-          row.driver || "—",
+          formatNameWithNationality(row.driver, row.driverCountryCode),
           row.car || "—",
           row.class || "—",
           nonStarter
@@ -1438,7 +1444,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       tableRows = ranked.map(({ r, t }, i) => [
         String(i + 1),
         String(r.startNumber),
-        r.driver || "—",
+        formatNameWithNationality(r.driver, r.driverCountryCode),
         formatDurationMs(t),
         leader == null || t <= leader ? "—" : `+${formatDiffDurationMs(t - leader)}`,
       ]);
@@ -1458,8 +1464,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     tableRows = rows.map((r, i) => [
       String(i + 1),
       String(r.startNumber),
-      r.driver || "—",
-      r.coDriver || "—",
+      formatNameWithNationality(r.driver, r.driverCountryCode),
+      formatNameWithNationality(r.coDriver, r.coDriverCountryCode),
       r.car || "—",
       "—",
       "—",
@@ -1484,7 +1490,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
         String(i + 1),
         String(row.startNumber),
-        row.driver || "—",
+        formatNameWithNationality(row.driver, row.driverCountryCode),
         row.car || "—",
         row.class || "—",
         nonStarter

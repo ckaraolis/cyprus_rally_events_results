@@ -27,3 +27,13 @@ export function normalizeCountryCode(raw: unknown): string {
 export function isIso3166Alpha2(code: string): boolean {
   return normalizeCountryCode(code).length === 2;
 }
+
+/** Print / export: "CY Driver Name" when nationality is set, otherwise just the name. */
+export function formatNameWithNationality(
+  name: string | null | undefined,
+  countryCode: string | null | undefined,
+): string {
+  const n = (name ?? "").trim() || "—";
+  const code = normalizeCountryCode(countryCode);
+  return code ? `${code} ${n}` : n;
+}

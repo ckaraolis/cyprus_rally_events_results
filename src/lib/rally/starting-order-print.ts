@@ -1,4 +1,5 @@
 import type { Entry } from "./types";
+import { formatNameWithNationality } from "@/lib/flags";
 import {
   resolveStartingOrderTime,
   startingOrderPrintTitle,
@@ -148,8 +149,8 @@ export function buildStartingOrderPdfHtml(input: {
       ? input.rows.map((row, i) => [
           String(i + 1),
           String(row.startNumber),
-          row.driver || "—",
-          row.coDriver || "—",
+          formatNameWithNationality(row.driver, row.driverCountryCode),
+          formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
           row.car || "—",
           row.class || "—",
           resolveStartingOrderTime(orderForResolve, row.id, i),

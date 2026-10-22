@@ -1,4 +1,5 @@
 import type { Entry, Stage } from "@/lib/rally/types";
+import { formatNameWithNationality } from "@/lib/flags";
 import { downloadExcelTable } from "@/lib/rally/download-excel";
 import { resolveStartingOrderTime, startingOrderScopeLabel } from "@/lib/rally/leg-starting-order";
 import {
@@ -210,8 +211,8 @@ export async function exportRallyStageExcel(
     const rows = ranked.map(({ row, durations, bestMs }, i) => [
       String(i + 1),
       String(row.startNumber),
-      row.driver || "—",
-      row.coDriver || "—",
+      formatNameWithNationality(row.driver, row.driverCountryCode),
+      formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
       ...Array.from({ length: passCount }, (_, pi) => {
@@ -277,8 +278,8 @@ export async function exportRallyStageExcel(
     ({ row, cell, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
       String(i + 1),
       formatCarNumber(row.startNumber, rally2),
-      row.driver || "—",
-      row.coDriver || "—",
+      formatNameWithNationality(row.driver, row.driverCountryCode),
+      formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
       cell.outcome ?? formatDurationMs(ssTimeMs, timeDigits),
@@ -374,8 +375,8 @@ export async function exportRallyAfterSsExcel(
   const rows = ranked.map(({ row, ssTimesMs, totalMs, penaltyMs }, i) => [
     String(i + 1),
     String(row.startNumber),
-    row.driver || "—",
-    row.coDriver || "—",
+    formatNameWithNationality(row.driver, row.driverCountryCode),
+    formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
     row.car || "—",
     row.class || "—",
     formatDurationMs(ssTimesMs),
@@ -474,8 +475,8 @@ export async function exportRallyLegExcel(
   const rows = ranked.map((r, i) => [
     String(i + 1),
     String(r.row.startNumber),
-    r.row.driver || "—",
-    r.row.coDriver || "—",
+    formatNameWithNationality(r.row.driver, r.row.driverCountryCode),
+    formatNameWithNationality(r.row.coDriver, r.row.coDriverCountryCode),
     r.row.car || "—",
     r.row.class || "—",
     ...r.stageTexts,
@@ -603,8 +604,8 @@ export function buildOfficialFinalResultRows(
     ({ row, timeMs, penaltyMs, totalMs, tier, statusLabel }) => [
       tier === 0 ? String(++classifiedPos) : "—",
       String(row.startNumber),
-      row.driver || "—",
-      row.coDriver || "—",
+      formatNameWithNationality(row.driver, row.driverCountryCode),
+      formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
       tier === 0 ? formatDurationMs(timeMs) : "—",
@@ -661,8 +662,8 @@ export async function exportRallyStartingOrderExcel(input: {
   const rows = input.rows.map((row, i) => [
     String(i + 1),
     String(row.startNumber),
-    row.driver || "—",
-    row.coDriver || "—",
+    formatNameWithNationality(row.driver, row.driverCountryCode),
+    formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
     row.car || "—",
     row.class || "—",
     resolveStartingOrderTime(order, row.id, i),
