@@ -1029,9 +1029,10 @@ export function EventEditor({ event: initial }: Props) {
   }
 
   /**
-   * Rally stage starts are scheduled on whole minutes. ALGE start clocks fire a few
-   * seconds early/late — round to the nearest minute as HH:MM:00.00.
-   * Examples: 13:10:01.67 → 13:10:00.00, 11:12:58.97 → 11:13:00.00.
+   * Rally stage starts (SS / Shakedown / Qualify) are scheduled on whole minutes.
+   * ALGE start clocks fire a few seconds early/late — round to the nearest minute
+   * as HH:MM:00.00.
+   * Examples: 11:16:59.36 → 11:17:00.00, 11:18:01.06 → 11:18:00.00.
    */
   function roundRallyStartClockToNearestMinute(clock: string): string {
     const m = clock
@@ -1387,11 +1388,10 @@ export function EventEditor({ event: initial }: Props) {
                         timingChannelNum === Number.parseInt(algeStartChannelId, 10)
                       ? "start"
                       : "start");
-              // Competitive SS starts round to the minute; Shakedown/Qualify keep exact ALGE time.
+              // All rally stage starts (SS, Shakedown, Qualify) round to the nearest minute.
+              // Finish times stay exact (incl. thousandths on Shakedown/Qualify).
               const triggerTime =
-                metaRef.current.type === "rally" &&
-                activeTrigger === "start" &&
-                (!activeRallyStage || isCompetitiveStage(activeRallyStage))
+                metaRef.current.type === "rally" && activeTrigger === "start"
                   ? roundRallyStartClockToNearestMinute(rawTriggerTime)
                   : rawTriggerTime;
               let nextEntriesSnapshot: Entry[] | null = null;
@@ -4182,10 +4182,10 @@ export function EventEditor({ event: initial }: Props) {
                 </div>
                 <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
                   Save devices before connecting the stream so start and finish
-                  clocks are kept if you reload the page. Competitive SS start
-                  triggers are rounded to the nearest minute (e.g. 11:12:58.97 →
-                  11:13:00.00). Shakedown / Qualify keep exact times to
-                  thousandths (0.001s); finish times stay exact.
+                  clocks are kept if you reload the page. Start triggers
+                  (SS, Shakedown, Qualify) are rounded to the nearest minute
+                  (e.g. 11:16:59.36 → 11:17:00.00, 11:18:01.06 → 11:18:00.00).
+                  Finish times stay exact (thousandths on Shakedown / Qualify).
                 </p>
               </div>
             ) : null}
