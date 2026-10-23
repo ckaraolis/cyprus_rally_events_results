@@ -95,7 +95,7 @@ function escapeHtml(raw: string): string {
 
 export function printSignatureFooterCss(): string {
   return `
-  .sig-footer { display: flex; justify-content: space-between; align-items: flex-end; gap: 12mm; margin-top: 8mm; font-size: 10pt; font-weight: 700; line-height: 1.35; color: #111; }
+  .sig-footer { display: flex; justify-content: space-between; align-items: flex-end; gap: 12mm; margin: 8mm 18% 0; font-size: 10pt; font-weight: 700; line-height: 1.35; color: #111; }
   .sig-footer .sig-left { text-align: left; }
   .sig-footer .sig-right { text-align: right; white-space: nowrap; }
   .sig-footer .sig-name, .sig-footer .sig-role, .sig-footer .sig-date, .sig-footer .sig-time { margin: 0; }

@@ -1,8 +1,13 @@
 import type { PrintSignature } from "./print-signature";
 
+export type PrintSignaturePromptResult =
+  | { action: "sign"; signature: PrintSignature }
+  | { action: "skip" }
+  | { action: "cancel" };
+
 type PromptListener = (open: boolean) => void;
 
-let resolver: ((value: PrintSignature | null) => void) | null = null;
+let resolver: ((value: PrintSignaturePromptResult) => void) | null = null;
 const listeners = new Set<PromptListener>();
 
 export function subscribePrintSignaturePrompt(
@@ -24,15 +29,17 @@ function notify(open: boolean): void {
 
 /**
  * Opens the print signature dialog (must have PrintSignatureHost mounted).
- * Resolves with the signed values, or null if cancelled.
+ * - sign: Yes — print with signature footer
+ * - skip: No — print without signature
+ * - cancel: Esc / click outside — do not print
  */
-export function promptPrintSignature(): Promise<PrintSignature | null> {
+export function promptPrintSignature(): Promise<PrintSignaturePromptResult> {
   if (typeof window === "undefined") {
-    return Promise.resolve(null);
+    return Promise.resolve({ action: "cancel" });
   }
   if (resolver) {
     // Replace any stalled prompt so a new Print click is not blocked.
-    resolver(null);
+    resolver({ action: "cancel" });
     resolver = null;
   }
   return new Promise((resolve) => {
@@ -42,7 +49,7 @@ export function promptPrintSignature(): Promise<PrintSignature | null> {
       window.setTimeout(() => {
         if (resolver === resolve) {
           resolver = null;
-          resolve(null);
+          resolve({ action: "cancel" });
         }
       }, 0);
     }
@@ -50,7 +57,7 @@ export function promptPrintSignature(): Promise<PrintSignature | null> {
 }
 
 export function resolvePrintSignaturePrompt(
-  value: PrintSignature | null,
+  value: PrintSignaturePromptResult,
 ): void {
   const r = resolver;
   resolver = null;

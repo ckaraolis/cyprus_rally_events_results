@@ -44,7 +44,7 @@ export function PrintSignatureHost() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
-        resolvePrintSignaturePrompt(null);
+        resolvePrintSignaturePrompt({ action: "cancel" });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -53,7 +53,7 @@ export function PrintSignatureHost() {
 
   if (!open) return null;
 
-  function confirm() {
+  function confirmYes() {
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError("Enter the signature name.");
@@ -71,10 +71,13 @@ export function PrintSignatureHost() {
     const normalizedTime = normalizePrintTime(time);
     savePrintSignatureName(trimmedName);
     resolvePrintSignaturePrompt({
-      name: trimmedName,
-      title: PRINT_SIGNATURE_TITLE,
-      date: normalizedDate,
-      time: normalizedTime,
+      action: "sign",
+      signature: {
+        name: trimmedName,
+        title: PRINT_SIGNATURE_TITLE,
+        date: normalizedDate,
+        time: normalizedTime,
+      },
     });
   }
 
@@ -84,7 +87,7 @@ export function PrintSignatureHost() {
       role="presentation"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) {
-          resolvePrintSignaturePrompt(null);
+          resolvePrintSignaturePrompt({ action: "cancel" });
         }
       }}
     >
@@ -101,8 +104,8 @@ export function PrintSignatureHost() {
           Print signature
         </h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Add the clerk signature and the date/time that will appear on the
-          printed sheet, then choose Yes to continue.
+          <strong>Yes</strong> prints with the signature and date/time.{" "}
+          <strong>No</strong> prints without a signature.
         </p>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
@@ -158,14 +161,14 @@ export function PrintSignatureHost() {
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button
             type="button"
-            onClick={() => resolvePrintSignaturePrompt(null)}
+            onClick={() => resolvePrintSignaturePrompt({ action: "skip" })}
             className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             No
           </button>
           <button
             type="button"
-            onClick={confirm}
+            onClick={confirmYes}
             className="rounded-lg bg-red-700 px-4 py-2 text-sm font-semibold text-white hover:bg-red-800 dark:bg-red-600 dark:hover:bg-red-500"
           >
             Yes

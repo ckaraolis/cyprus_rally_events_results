@@ -93,8 +93,8 @@ function writeAndPrintHtml(
 }
 
 /**
- * Asks for clerk signature + date/time, then prints.
- * Returns false if the user cancels the dialog.
+ * Asks whether to include a clerk signature, then prints.
+ * Yes → signature footer; No → print without signature; Esc/outside → cancel.
  */
 export async function printHtmlDocument(
   html: string,
@@ -103,9 +103,13 @@ export async function printHtmlDocument(
   if (typeof window === "undefined" || typeof document === "undefined") {
     return false;
   }
-  const sig = await promptPrintSignature();
-  if (!sig) return false;
-  writeAndPrintHtml(injectPrintSignatureFooter(html, sig), options);
+  const result = await promptPrintSignature();
+  if (result.action === "cancel") return false;
+  const finalHtml =
+    result.action === "sign"
+      ? injectPrintSignatureFooter(html, result.signature)
+      : html;
+  writeAndPrintHtml(finalHtml, options);
   return true;
 }
 
