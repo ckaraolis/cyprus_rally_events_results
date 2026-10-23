@@ -906,7 +906,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
   const [stageResultsClassFilter, setStageResultsClassFilter] = useState("");
   /** Final results tab: same filter semantics. */
   const [finalResultsClassFilter, setFinalResultsClassFilter] = useState("");
-  /** Dual-series (Cyprus/Test): public must pick MERC or NATIONAL. */
+  /** Dual-series (Cyprus/Test): public must pick MERC or LOCAL. */
   const dualSeries = usesDualSeriesEvent(event);
   const [selectedSeries, setSelectedSeries] = useState<RallySeries | null>(
     null,

@@ -9,10 +9,10 @@ export const RALLY_SERIES_OPTIONS: Array<{
   shortLabel: string;
 }> = [
   { id: "merc", label: "MERC", shortLabel: "MERC" },
-  { id: "national", label: "NATIONAL", shortLabel: "NATIONAL" },
+  { id: "national", label: "LOCAL", shortLabel: "LOCAL" },
 ];
 
-/** Test / Cyprus Rally (Petrolina) events run MERC + NATIONAL side by side. */
+/** Test / Cyprus Rally (Petrolina) events run MERC + LOCAL side by side. */
 export function usesDualSeriesEvent(
   event: Pick<RallyEvent, "name"> | string,
 ): boolean {
@@ -54,7 +54,7 @@ export function filterEntriesCyNational(entries: Entry[]): Entry[] {
 }
 
 export function seriesLabel(series: RallySeries): string {
-  return series === "national" ? "NATIONAL" : "MERC";
+  return series === "national" ? "LOCAL" : "MERC";
 }
 
 export type EntrySeriesFlagsMap = Record<
