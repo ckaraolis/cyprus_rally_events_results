@@ -726,7 +726,7 @@ export function EventEditor({ event: initial }: Props) {
       setFlash("Load starters before printing the starting order.");
       return;
     }
-    printStartingOrderPdf({
+    void printStartingOrderPdf({
       eventName: meta.name || "Event",
       leg: startingOrderLeg,
       logoUrl: meta.logoUrl ?? "",
@@ -5269,7 +5269,7 @@ export function EventEditor({ event: initial }: Props) {
                       );
                       return;
                     }
-                    printOfficialFinalResultsPdf({
+                    void printOfficialFinalResultsPdf({
                       eventName: meta.name || "Event",
                       logoUrl: meta.logoUrl ?? "",
                       entries: entries.filter((e) => e.start !== false),
@@ -5336,7 +5336,7 @@ export function EventEditor({ event: initial }: Props) {
                   );
                   return;
                 }
-                printOfficialFinalResultsPdf({
+                void printOfficialFinalResultsPdf({
                   eventName: meta.name || "Event",
                   logoUrl: meta.logoUrl ?? "",
                   entries: cyprusEntries,

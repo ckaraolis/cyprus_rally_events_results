@@ -32,14 +32,14 @@ const FINAL_COLUMNS = [
 ] as const;
 
 /** Landscape Official Final Results sheet (admin + public print). */
-export function printOfficialFinalResultsPdf(input: {
+export async function printOfficialFinalResultsPdf(input: {
   eventName: string;
   logoUrl: string;
   entries: Entry[];
   stages: Stage[];
   /** Defaults to "Official Final Results". */
   sheetTitle?: string;
-}): void {
+}): Promise<boolean> {
   const tableRows = buildOfficialFinalResultRows(input.entries, input.stages);
   const n = Math.max(tableRows.length, 1);
   const fontPt = Math.max(
@@ -114,5 +114,5 @@ export function printOfficialFinalResultsPdf(input: {
       return `<th class="${cls}">${escapeHtml(c)}</th>`;
     }).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
 
-  printHtmlDocument(html, { landscape: true });
+  return printHtmlDocument(html, { landscape: true });
 }

@@ -9,6 +9,8 @@ import {
   cyprusRallyPrintHeaderCss,
   usesCyprusRallyPrintBrand,
 } from "./print-branding";
+import { injectPrintSignatureFooter } from "./print-signature";
+import { promptPrintSignature } from "./print-signature-prompt";
 
 function escapeHtml(raw: string): string {
   return raw
@@ -24,7 +26,7 @@ function isMobilePrintClient(): boolean {
   return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
 }
 
-export function printHtmlDocument(
+function writeAndPrintHtml(
   html: string,
   options?: { landscape?: boolean },
 ): void {
@@ -88,6 +90,23 @@ export function printHtmlDocument(
   doc.open();
   doc.write(html);
   doc.close();
+}
+
+/**
+ * Asks for clerk signature + date/time, then prints.
+ * Returns false if the user cancels the dialog.
+ */
+export async function printHtmlDocument(
+  html: string,
+  options?: { landscape?: boolean },
+): Promise<boolean> {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return false;
+  }
+  const sig = await promptPrintSignature();
+  if (!sig) return false;
+  writeAndPrintHtml(injectPrintSignatureFooter(html, sig), options);
+  return true;
 }
 
 export function normalizePrintLogoUrl(logoUrl: string | null | undefined): string {
@@ -222,7 +241,7 @@ export function buildStartingOrderPdfHtml(input: {
       .join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
 }
 
-export function printStartingOrderPdf(input: {
+export async function printStartingOrderPdf(input: {
   eventName: string;
   leg: number;
   logoUrl: string;
@@ -230,7 +249,7 @@ export function printStartingOrderPdf(input: {
   firstCarStartTime: string;
   intervalMinutes: number;
   startTimeByEntryId?: Record<string, string>;
-}): void {
+}): Promise<boolean> {
   const html = buildStartingOrderPdfHtml(input);
-  printHtmlDocument(html, { landscape: true });
+  return printHtmlDocument(html, { landscape: true });
 }

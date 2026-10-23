@@ -33,6 +33,7 @@ import {
   cyprusRallyPrintHeaderCss,
   usesCyprusRallyPrintBrand,
 } from "@/lib/rally/print-branding";
+import { printHtmlDocument } from "@/lib/rally/starting-order-print";
 import {
   filterEntriesBySeries,
   RALLY_SERIES_OPTIONS,
@@ -190,79 +191,6 @@ function EntryClassFilterBar({
       {rightAction ? <div className="shrink-0">{rightAction}</div> : null}
     </div>
   );
-}
-
-function isMobilePrintClient(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent || "";
-  return /Android|iPhone|iPad|iPod|Mobile/i.test(ua);
-}
-
-function printHtmlDocument(
-  html: string,
-  options?: { landscape?: boolean },
-): void {
-  if (typeof window === "undefined" || typeof document === "undefined") return;
-  const landscape = options?.landscape === true;
-
-  if (isMobilePrintClient()) {
-    const w = window.open("", "_blank", "noopener,noreferrer");
-    if (w) {
-      w.document.open();
-      w.document.write(html);
-      w.document.close();
-      window.setTimeout(() => {
-        try {
-          w.focus();
-          w.print();
-        } catch {
-          // ignore print-block errors on some browsers
-        }
-      }, 450);
-      return;
-    }
-  }
-
-  const iframe = document.createElement("iframe");
-  iframe.style.position = "fixed";
-  iframe.style.right = "0";
-  iframe.style.bottom = "0";
-  // Give the iframe a real landscape page size so layout/print preview is not 0×0.
-  iframe.style.width = landscape ? "1123px" : "794px";
-  iframe.style.height = landscape ? "794px" : "1123px";
-  iframe.style.border = "0";
-  iframe.style.opacity = "0";
-  iframe.style.pointerEvents = "none";
-  iframe.setAttribute("aria-hidden", "true");
-  document.body.appendChild(iframe);
-
-  const cleanup = () => {
-    window.setTimeout(() => {
-      if (iframe.parentNode) iframe.parentNode.removeChild(iframe);
-    }, 1000);
-  };
-
-  iframe.onload = () => {
-    window.setTimeout(() => {
-      try {
-        const win = iframe.contentWindow;
-        if (!win) return;
-        win.focus();
-        win.print();
-      } finally {
-        cleanup();
-      }
-    }, landscape ? 200 : 0);
-  };
-
-  const doc = iframe.contentDocument;
-  if (!doc) {
-    cleanup();
-    return;
-  }
-  doc.open();
-  doc.write(html);
-  doc.close();
 }
 
 /** Shared landscape one-page results sheet used by rally/speed Print PDF. */
@@ -1284,7 +1212,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           rallyClassificationLayout: true,
           centerFromCol: 5,
         });
-        printHtmlDocument(html, { landscape: true });
+        void printHtmlDocument(html, { landscape: true });
         return;
       }
       const { rows: tableRows, footnote } = buildRallyStagePdfRows(rows, stage);
@@ -1333,7 +1261,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         shakedownPassCount: shakedown ? shakedownPasses : undefined,
         centerFromCol: 5,
       });
-      printHtmlDocument(html, { landscape: true });
+      void printHtmlDocument(html, { landscape: true });
       return;
     }
 
@@ -1356,7 +1284,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         legStageCount: stagesInLeg.length,
         centerFromCol: 5,
       });
-      printHtmlDocument(html, { landscape: true });
+      void printHtmlDocument(html, { landscape: true });
       return;
     }
 
@@ -1424,7 +1352,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         tableRows,
         logoUrl,
       });
-      printHtmlDocument(html, { landscape: true });
+      void printHtmlDocument(html, { landscape: true });
       return;
     }
 
@@ -1456,7 +1384,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         tableRows,
         logoUrl,
       });
-      printHtmlDocument(html, { landscape: true });
+      void printHtmlDocument(html, { landscape: true });
       return;
     }
 
@@ -1478,7 +1406,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       tableRows,
       logoUrl,
     });
-    printHtmlDocument(html, { landscape: true });
+    void printHtmlDocument(html, { landscape: true });
   }
 
   function printSpeedFinalResultsPdf() {
@@ -1523,7 +1451,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       tableRows,
       logoUrl: normalizedLogoUrl,
     });
-    printHtmlDocument(html, { landscape: true });
+    void printHtmlDocument(html, { landscape: true });
   }
 
   function printRallyFinalResultsPdf() {
@@ -1553,7 +1481,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
       rallyClassificationLayout: true,
       centerFromCol: 5,
     });
-    printHtmlDocument(html, { landscape: true });
+    void printHtmlDocument(html, { landscape: true });
   }
 
   useEffect(() => {

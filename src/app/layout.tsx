@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Script from "next/script";
+import { PrintSignatureHost } from "@/components/print/print-signature-host";
 import { themeInlineScript } from "@/components/public/theme-script";
 /* Self-hosted — avoids Vercel build failures when next/font cannot fetch Google Fonts. */
 import "@fontsource/oswald/500.css";
@@ -67,6 +68,7 @@ export default function RootLayout({
           }}
         />
         {children}
+        <PrintSignatureHost />
       </body>
     </html>
   );
