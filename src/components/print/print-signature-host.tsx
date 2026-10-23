@@ -19,15 +19,17 @@ import {
 export function PrintSignatureHost() {
   const titleId = useId();
   const [open, setOpen] = useState(false);
+  const [subject, setSubject] = useState("");
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
   const [time, setTime] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    return subscribePrintSignaturePrompt((nextOpen) => {
+    return subscribePrintSignaturePrompt((nextOpen, options) => {
       if (nextOpen) {
         const now = nowPrintDateTime();
+        setSubject((options.defaultSubject ?? "").trim());
         setName(loadSavedPrintSignatureName());
         setDate(now.date);
         setTime(now.time);
@@ -53,7 +55,18 @@ export function PrintSignatureHost() {
 
   if (!open) return null;
 
+  function resolvedSubject(): string | null {
+    const trimmed = subject.trim();
+    if (!trimmed) {
+      setError("Enter the print subject / title.");
+      return null;
+    }
+    return trimmed;
+  }
+
   function confirmYes() {
+    const subj = resolvedSubject();
+    if (!subj) return;
     const trimmedName = name.trim();
     if (!trimmedName) {
       setError("Enter the signature name.");
@@ -72,6 +85,7 @@ export function PrintSignatureHost() {
     savePrintSignatureName(trimmedName);
     resolvePrintSignaturePrompt({
       action: "sign",
+      subject: subj,
       signature: {
         name: trimmedName,
         title: PRINT_SIGNATURE_TITLE,
@@ -79,6 +93,12 @@ export function PrintSignatureHost() {
         time: normalizedTime,
       },
     });
+  }
+
+  function confirmNo() {
+    const subj = resolvedSubject();
+    if (!subj) return;
+    resolvePrintSignaturePrompt({ action: "skip", subject: subj });
   }
 
   return (
@@ -101,19 +121,31 @@ export function PrintSignatureHost() {
           id={titleId}
           className="text-base font-semibold text-zinc-900 dark:text-zinc-50"
         >
-          Print signature
+          Print options
         </h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          <strong>Yes</strong> prints with the signature and date/time.{" "}
-          <strong>No</strong> prints without a signature.
+          Edit the subject shown at the top of the sheet.{" "}
+          <strong>Yes</strong> also adds the signature; <strong>No</strong>{" "}
+          prints without a signature.
         </p>
+
+        <label className="mt-5 block text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Subject
+          <input
+            autoFocus
+            type="text"
+            value={subject}
+            onChange={(e) => setSubject(e.target.value)}
+            placeholder="e.g. Stage Classification SS4 Ayios Epifanios 2"
+            className="mt-1.5 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50"
+          />
+        </label>
 
         <div className="mt-5 grid gap-4 sm:grid-cols-2">
           <div className="space-y-3">
             <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
               Signature
               <input
-                autoFocus
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -161,7 +193,7 @@ export function PrintSignatureHost() {
         <div className="mt-6 flex flex-wrap justify-end gap-2">
           <button
             type="button"
-            onClick={() => resolvePrintSignaturePrompt({ action: "skip" })}
+            onClick={confirmNo}
             className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-200 dark:hover:bg-zinc-800"
           >
             No

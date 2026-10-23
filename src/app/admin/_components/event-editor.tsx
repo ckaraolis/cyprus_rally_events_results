@@ -28,6 +28,13 @@ import {
 import { printStartingOrderPdf } from "@/lib/rally/starting-order-print";
 import { printOfficialFinalResultsPdf } from "@/lib/rally/official-final-print";
 import {
+  printRallyLegResultsPdf,
+  printRallyStageResultsPdf,
+  printSpeedFinalResultsPdf,
+  printSpeedRunResultsPdf,
+  type SpeedPrintRunId,
+} from "@/lib/rally/results-print";
+import {
   entryCyNational,
   entrySeries,
   filterEntriesCyNational,
@@ -2097,6 +2104,47 @@ export function EventEditor({ event: initial }: Props) {
         ? "run1FinishTime"
         : "run2FinishTime";
   const timingRunStatus = meta.speedRunImportStatus[timingRun];
+  /** Competitive stages grouped by LEG (for LEG print buttons). */
+  const rallyPrintLegs = useMemo(() => {
+    if (meta.type !== "rally") return [];
+    const byLeg = new Map<number, Stage[]>();
+    for (const s of competitiveStages(stages)) {
+      const leg = typeof s.leg === "number" && s.leg >= 1 ? Math.floor(s.leg) : 1;
+      byLeg.set(leg, [...(byLeg.get(leg) ?? []), s]);
+    }
+    return [...byLeg.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([leg, stagesInLeg]) => ({ leg, stagesInLeg }));
+  }, [meta.type, stages]);
+  function printSelectedRallyStage(mode: "ss" | "overall", stage: Stage) {
+    void printRallyStageResultsPdf({
+      eventName: meta.name || "Event",
+      logoUrl: meta.logoUrl ?? "",
+      entries: entries.filter((e) => e.start !== false),
+      stage,
+      allStages: sortedStages,
+      mode,
+    });
+  }
+  function printRallyLeg(leg: number, stagesInLeg: Stage[]) {
+    void printRallyLegResultsPdf({
+      eventName: meta.name || "Event",
+      logoUrl: meta.logoUrl ?? "",
+      entries: entries.filter((e) => e.start !== false),
+      leg,
+      stagesInLeg,
+      allStages: sortedStages,
+    });
+  }
+  function printSpeedRun(runId: SpeedPrintRunId, label: string) {
+    void printSpeedRunResultsPdf({
+      eventName: meta.name || "Event",
+      logoUrl: meta.logoUrl ?? "",
+      entries: entries.filter((e) => e.start !== false),
+      runId,
+      label,
+    });
+  }
   const getTimingValuesForEntry = (
     row: Entry,
     passIndex?: ShakedownPassIndex,
@@ -4904,7 +4952,84 @@ export function EventEditor({ event: initial }: Props) {
               </div>
             </div>
           ) : null}
-          <div className="mt-6 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+          <div className="mt-6 flex flex-wrap items-center gap-2 border-t border-zinc-200 pt-4 dark:border-zinc-700">
+            <span className="mr-1 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Print
+            </span>
+            {meta.type === "rally" ? (
+              <>
+                {selectedRallyTimingStage &&
+                isCompetitiveStage(selectedRallyTimingStage) &&
+                competitiveStages(stages).findIndex(
+                  (s) => s.id === selectedRallyTimingStage.id,
+                ) >= 1 ? (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printSelectedRallyStage("ss", selectedRallyTimingStage)
+                      }
+                      className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      Print SS PDF
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        printSelectedRallyStage(
+                          "overall",
+                          selectedRallyTimingStage,
+                        )
+                      }
+                      className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                    >
+                      Print Overall PDF
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={!selectedRallyTimingStage}
+                    onClick={() => {
+                      if (!selectedRallyTimingStage) return;
+                      printSelectedRallyStage("ss", selectedRallyTimingStage);
+                    }}
+                    className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    Print PDF
+                  </button>
+                )}
+                {rallyPrintLegs.map(({ leg, stagesInLeg }) => (
+                  <button
+                    key={`print-leg-${leg}`}
+                    type="button"
+                    onClick={() => printRallyLeg(leg, stagesInLeg)}
+                    className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  >
+                    Print LEG{leg} PDF
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => printSpeedRun(timingRun, timingRunLabel)}
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Print {timingRunLabel} PDF
+                </button>
+                <button
+                  type="button"
+                  onClick={() => printSpeedRun("best", "Best Time")}
+                  className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                >
+                  Print Best Time PDF
+                </button>
+              </>
+            )}
+          </div>
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-700">
             {meta.type === "rally" ? (
               <div className="mr-auto flex flex-wrap gap-2">
                 <button
@@ -5295,10 +5420,20 @@ export function EventEditor({ event: initial }: Props) {
                 </button>
               </>
             ) : (
-              <p className="w-full text-sm text-zinc-500 dark:text-zinc-400">
-                Speed events: publish to show Official Final Results on the
-                public site, then print from that tab.
-              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void printSpeedFinalResultsPdf({
+                    eventName: meta.name || "Event",
+                    logoUrl: meta.logoUrl ?? "",
+                    // Includes Start = No crews (listed as NON STARTER).
+                    entries,
+                  });
+                }}
+                className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+              >
+                Print PDF
+              </button>
             )}
           </div>
         </section>

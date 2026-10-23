@@ -92,24 +92,33 @@ function writeAndPrintHtml(
   doc.close();
 }
 
+export type PrintHtmlDocumentOptions = {
+  landscape?: boolean;
+  /** Default sheet subject / title shown in the print dialog (editable). */
+  defaultSubject: string;
+};
+
 /**
- * Asks whether to include a clerk signature, then prints.
- * Yes → signature footer; No → print without signature; Esc/outside → cancel.
+ * Opens print options (editable subject + optional signature), then prints.
+ * `buildHtml` runs after the dialog so the chosen subject is on the sheet.
+ * Yes → signature footer; No → no signature; Esc/outside → cancel.
  */
 export async function printHtmlDocument(
-  html: string,
-  options?: { landscape?: boolean },
+  buildHtml: (subject: string) => string,
+  options: PrintHtmlDocumentOptions,
 ): Promise<boolean> {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return false;
   }
-  const result = await promptPrintSignature();
+  const defaultSubject = options.defaultSubject.trim() || "Results";
+  const result = await promptPrintSignature({ defaultSubject });
   if (result.action === "cancel") return false;
-  const finalHtml =
-    result.action === "sign"
-      ? injectPrintSignatureFooter(html, result.signature)
-      : html;
-  writeAndPrintHtml(finalHtml, options);
+  const subject = result.subject.trim() || defaultSubject;
+  let html = buildHtml(subject);
+  if (result.action === "sign") {
+    html = injectPrintSignatureFooter(html, result.signature);
+  }
+  writeAndPrintHtml(html, { landscape: options.landscape });
   return true;
 }
 
@@ -137,6 +146,8 @@ export function buildStartingOrderPdfHtml(input: {
   firstCarStartTime: string;
   intervalMinutes: number;
   startTimeByEntryId?: Record<string, string>;
+  /** Sheet title under the logos (editable in the print dialog). */
+  sheetTitle?: string;
 }): string {
   const n = Math.max(input.rows.length, 1);
   const fontPt = Math.max(
@@ -196,7 +207,8 @@ export function buildStartingOrderPdfHtml(input: {
       : `<tr><td colspan="${columns.length}" class="c" style="color:#666;">No starters in starting order.</td></tr>`;
 
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
-  const sheetTitle = startingOrderPrintTitle(input.leg);
+  const sheetTitle =
+    (input.sheetTitle ?? "").trim() || startingOrderPrintTitle(input.leg);
   const branded = usesCyprusRallyPrintBrand(input.eventName);
   const headerHtml = branded
     ? buildCyprusRallyPrintHeaderHtml({
@@ -254,6 +266,9 @@ export async function printStartingOrderPdf(input: {
   intervalMinutes: number;
   startTimeByEntryId?: Record<string, string>;
 }): Promise<boolean> {
-  const html = buildStartingOrderPdfHtml(input);
-  return printHtmlDocument(html, { landscape: true });
+  const defaultSubject = startingOrderPrintTitle(input.leg);
+  return printHtmlDocument(
+    (subject) => buildStartingOrderPdfHtml({ ...input, sheetTitle: subject }),
+    { landscape: true, defaultSubject },
+  );
 }

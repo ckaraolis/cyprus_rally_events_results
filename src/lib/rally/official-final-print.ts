@@ -31,15 +31,13 @@ const FINAL_COLUMNS = [
   "Diff",
 ] as const;
 
-/** Landscape Official Final Results sheet (admin + public print). */
-export async function printOfficialFinalResultsPdf(input: {
+function buildOfficialFinalResultsPdfHtml(input: {
   eventName: string;
   logoUrl: string;
   entries: Entry[];
   stages: Stage[];
-  /** Defaults to "Official Final Results". */
-  sheetTitle?: string;
-}): Promise<boolean> {
+  sheetTitle: string;
+}): string {
   const tableRows = buildOfficialFinalResultRows(input.entries, input.stages);
   const n = Math.max(tableRows.length, 1);
   const fontPt = Math.max(
@@ -51,8 +49,8 @@ export async function printOfficialFinalResultsPdf(input: {
   const logoH = Math.max(n <= 20 ? 52 : n <= 30 ? 42 : 34, 58);
   const branded = usesCyprusRallyPrintBrand(input.eventName);
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
-  const subtitle = (input.sheetTitle ?? "Official Final Results").trim() ||
-    "Official Final Results";
+  const subtitle =
+    input.sheetTitle.trim() || "Official Final Results";
   const centerFrom = 5;
   const shouldCenter = (colIdx: number) => colIdx <= 1 || colIdx >= centerFrom;
 
@@ -82,7 +80,7 @@ export async function printOfficialFinalResultsPdf(input: {
           : ""
       }<h1>${escapeHtml(input.eventName)}</h1><h2>${escapeHtml(subtitle)}</h2></div>`;
 
-  const html = `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(subtitle)}</title><style>
+  return `<!doctype html><html><head><meta charset="utf-8" /><title>${escapeHtml(input.eventName)} - ${escapeHtml(subtitle)}</title><style>
   @page { size: A4 landscape; margin: 8mm; }
   html, body { margin: 0; padding: 0; color: #111; background: #fff; font-family: Arial, Helvetica, sans-serif; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .page { width: 281mm; max-width: 100%; margin: 0 auto; box-sizing: border-box; }
@@ -113,6 +111,28 @@ export async function printOfficialFinalResultsPdf(input: {
       const cls = shouldCenter(colIdx) ? "c" : "l";
       return `<th class="${cls}">${escapeHtml(c)}</th>`;
     }).join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+}
 
-  return printHtmlDocument(html, { landscape: true });
+/** Landscape Official Final Results sheet (admin + public print). */
+export async function printOfficialFinalResultsPdf(input: {
+  eventName: string;
+  logoUrl: string;
+  entries: Entry[];
+  stages: Stage[];
+  /** Defaults to "Official Final Results". */
+  sheetTitle?: string;
+}): Promise<boolean> {
+  const defaultSubject =
+    (input.sheetTitle ?? "").trim() || "Official Final Results";
+  return printHtmlDocument(
+    (subject) =>
+      buildOfficialFinalResultsPdfHtml({
+        eventName: input.eventName,
+        logoUrl: input.logoUrl,
+        entries: input.entries,
+        stages: input.stages,
+        sheetTitle: subject,
+      }),
+    { landscape: true, defaultSubject },
+  );
 }
