@@ -29,6 +29,7 @@ import {
 import {
   RALLY2_FOOTNOTE,
   buildRallyFinalRanking,
+  buildRallyOverallRanking,
   buildSpeedFinalRanking,
   classifyRallyStageLegCell,
   formatDiffDurationMs,
@@ -1863,58 +1864,11 @@ function CumulativeAfterStageTable({
   entries: Entry[];
   stages: Stage[];
 }) {
-  const throughOrder = useMemo(
-    () => (stages.length > 0 ? Math.max(...stages.map((s) => s.order)) : 0),
-    [stages],
-  );
   const sorted = useMemo(
-    () =>
-      [...entries]
-        .map((row) => {
-          const stageCells = stages.map((st) => {
-            const values = getRallyStageTimingValues(row, st.id);
-            const startMs = parseClockToDayMs(values.startValue);
-            const finishMs = parseClockToDayMs(values.finishValue);
-            const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-            if (startMs == null || finishMs == null) {
-              return { ssMs: null as number | null, jumpMs };
-            }
-            const raw = finishMs - startMs;
-            return {
-              ssMs: raw >= 0 ? raw : null,
-              jumpMs,
-            };
-          });
-          const allTimed =
-            stages.length > 0 && stageCells.every((t) => t.ssMs != null);
-          const ssTimesMs = allTimed
-            ? stageCells.reduce((sum, t) => sum + (t.ssMs ?? 0), 0)
-            : null;
-          const jumpPenaltyMs = stageCells.reduce((sum, t) => sum + t.jumpMs, 0);
-          const eventPenaltyMs =
-            throughOrder > 0
-              ? getRallyEventPenaltyTotalMs(row, throughOrder)
-              : 0;
-          const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
-          const totalMs =
-            ssTimesMs != null ? ssTimesMs + penaltyMs : null;
-          return { row, ssTimesMs, totalMs, penaltyMs };
-        })
-        .filter(
-          (x): x is {
-            row: Entry;
-            ssTimesMs: number;
-            totalMs: number;
-            penaltyMs: number;
-          } => x.totalMs != null,
-        )
-        .sort((a, b) => {
-          if (a.totalMs !== b.totalMs) return a.totalMs - b.totalMs;
-          return a.row.startNumber - b.row.startNumber;
-        }),
-    [entries, stages, throughOrder],
+    () => buildRallyOverallRanking(entries, stages),
+    [entries, stages],
   );
-  const leaderTotal = sorted[0]?.totalMs ?? null;
+  const leaderTotal = sorted.find((x) => x.tier === 0)?.totalMs ?? null;
 
   if (stages.length === 0) {
     return (
@@ -1932,6 +1886,8 @@ function CumulativeAfterStageTable({
     );
   }
 
+  let classifiedPos = 0;
+
   return (
     <table className="ewrc-table ewrc-table-speed-run min-w-[560px] w-full text-sm">
       <thead>
@@ -1946,31 +1902,45 @@ function CumulativeAfterStageTable({
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, ssTimesMs, totalMs, penaltyMs }, i) => (
-          <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
-            <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
-              {i + 1}
-            </td>
-            <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
-              {row.startNumber}
-            </td>
-            <CrewStackCell row={row} />
-            <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {formatDurationMs(ssTimesMs)}
-            </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
-              {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
-            </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
-              {formatDurationMs(totalMs)}
-            </td>
-            <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
-              {leaderTotal == null || totalMs <= leaderTotal
-                ? "—"
-                : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
-            </td>
-          </tr>
-        ))}
+        {sorted.map(
+          ({ row, ssTimesMs, totalMs, penaltyMs, tier, statusLabel }, i) => {
+            const pos = tier === 0 ? String(++classifiedPos) : "—";
+            return (
+              <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+                <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
+                  {pos}
+                </td>
+                <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
+                  {row.startNumber}
+                </td>
+                <CrewStackCell row={row} />
+                <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+                  {tier === 0
+                    ? formatDurationMs(ssTimesMs)
+                    : (statusLabel ?? "—")}
+                </td>
+                <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+                  {tier === 0 && penaltyMs > 0
+                    ? formatDurationMs(penaltyMs)
+                    : "—"}
+                </td>
+                <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+                  {tier === 0
+                    ? formatDurationMs(totalMs)
+                    : (statusLabel ?? "—")}
+                </td>
+                <td className="align-middle text-center font-mono text-[var(--ewrc-heading)]">
+                  {tier === 0 &&
+                  leaderTotal != null &&
+                  totalMs != null &&
+                  totalMs > leaderTotal
+                    ? `+${formatDiffDurationMs(totalMs - leaderTotal)}`
+                    : "—"}
+                </td>
+              </tr>
+            );
+          },
+        )}
       </tbody>
     </table>
   );

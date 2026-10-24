@@ -200,6 +200,99 @@ export type RallyFinalRankRow = {
   statusLabel: string | null;
 };
 
+export type RallyOverallRankRow = {
+  row: Entry;
+  ssTimesMs: number | null;
+  penaltyMs: number;
+  totalMs: number | null;
+  /** 0 = classified, 1 = retired (RET/DNF), 2 = did not start */
+  tier: 0 | 1 | 2;
+  statusLabel: string | null;
+};
+
+/**
+ * Overall classification after a set of stages (After SSx):
+ * (0) crews timed on every stage, by total,
+ * (1) RET / DNF on any stage in the set,
+ * (2) DNS on any stage in the set.
+ * Incomplete (no times and no outcome) crews are omitted.
+ */
+export function buildRallyOverallRanking(
+  entries: Entry[],
+  stages: Stage[],
+  eventPenaltyMode: "through-max" | "in-stages-only" = "through-max",
+): RallyOverallRankRow[] {
+  if (stages.length === 0) return [];
+  const stageOrders = new Set(stages.map((s) => s.order));
+  const throughOrder = Math.max(...stages.map((s) => s.order));
+
+  return entries
+    .map((row) => {
+      const stageCells = stages.map((st) => {
+        const values = getRallyStageTimingValues(row, st.id);
+        const cell = classifyRallyStageLegCell(
+          values.startValue,
+          values.finishValue,
+        );
+        const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+        return { cell, jumpMs, ssMs: cell.durationMs };
+      });
+      const rowOutcome = worstLegRowOutcome(stageCells.map((c) => c.cell));
+      const allTimed =
+        stageCells.every((c) => c.cell.outcome == null && c.ssMs != null);
+      const ssTimesMs = allTimed
+        ? stageCells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
+        : null;
+      const jumpPenaltyMs = stageCells.reduce((sum, c) => sum + c.jumpMs, 0);
+      const eventPenaltyMs =
+        eventPenaltyMode === "in-stages-only"
+          ? getRallyEventPenaltyItems(row)
+              .filter((item) => stageOrders.has(item.afterStageOrder))
+              .reduce(
+                (sum, item) =>
+                  sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
+                0,
+              )
+          : throughOrder > 0
+            ? getRallyEventPenaltyTotalMs(row, throughOrder)
+            : 0;
+      const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
+      const totalMs =
+        ssTimesMs != null ? ssTimesMs + penaltyMs : null;
+
+      let tier: 0 | 1 | 2 | null = null;
+      let statusLabel: string | null = null;
+      if (totalMs != null) {
+        tier = 0;
+      } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
+        tier = 1;
+        statusLabel = rowOutcome;
+      } else if (rowOutcome === "DNS") {
+        tier = 2;
+        statusLabel = "DNS";
+      }
+
+      return { row, ssTimesMs, penaltyMs, totalMs, tier, statusLabel };
+    })
+    .filter((x): x is RallyOverallRankRow => x.tier != null)
+    .sort((a, b) => {
+      if (a.tier !== b.tier) return a.tier - b.tier;
+      if (a.tier === 0 && b.tier === 0) {
+        const at = a.totalMs ?? 0;
+        const bt = b.totalMs ?? 0;
+        return at !== bt
+          ? at - bt
+          : a.row.startNumber - b.row.startNumber;
+      }
+      if (a.tier === 1 && b.tier === 1) {
+        const ao = a.statusLabel === "RET" ? 0 : 1;
+        const bo = b.statusLabel === "RET" ? 0 : 1;
+        if (ao !== bo) return ao - bo;
+      }
+      return a.row.startNumber - b.row.startNumber;
+    });
+}
+
 /**
  * Official Final Results order:
  * (0) classified finishers by total time,

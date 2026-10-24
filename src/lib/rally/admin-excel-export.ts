@@ -16,6 +16,11 @@ import {
   parseStageTimingBlobEntry,
   type StageTimingBlobEntry,
 } from "@/lib/rally/shakedown-passes";
+import {
+  buildRallyOverallRanking,
+  formatDiffDurationMs,
+  formatDurationMs as formatOverallDurationMs,
+} from "@/lib/rally/results-timing";
 
 type TimingBlob = Record<string, StageTimingBlobEntry>;
 
@@ -328,62 +333,41 @@ export async function exportRallyAfterSsExcel(
   entries: Entry[],
   stages: Stage[],
 ): Promise<void> {
-  const throughOrder =
-    stages.length > 0 ? Math.max(...stages.map((s) => s.order)) : 0;
-  const ranked = started(entries)
-    .map((row) => {
-      const cells = stages.map((st) => {
-        const v = stageValues(row, st.id);
-        const cell = classifyCell(v.start, v.finish);
-        const jump = parsePenaltyMs(v.penalty) ?? 0;
-        return { jump, ssMs: cell.durationMs };
-      });
-      const allTimed = cells.length > 0 && cells.every((c) => c.ssMs != null);
-      const ssTimesMs = allTimed
-        ? cells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
-        : null;
-      const jumpMs = cells.reduce((sum, c) => sum + c.jump, 0);
-      const eventMs = throughOrder > 0 ? eventPenaltyMs(row, throughOrder) : 0;
-      const penaltyMs = jumpMs + eventMs;
-      const totalMs =
-        ssTimesMs != null ? ssTimesMs + penaltyMs : null;
-      return {
-        row,
-        ssTimesMs,
-        totalMs,
-        penaltyMs,
-      };
-    })
-    .filter(
-      (x): x is {
-        row: Entry;
-        ssTimesMs: number;
-        totalMs: number;
-        penaltyMs: number;
-      } => x.totalMs != null,
-    )
-    .sort((a, b) =>
-      a.totalMs !== b.totalMs
-        ? a.totalMs - b.totalMs
-        : a.row.startNumber - b.row.startNumber,
-    );
-  const leader = ranked[0]?.totalMs ?? null;
+  const ranked = buildRallyOverallRanking(started(entries), stages);
+  const leader = ranked.find((x) => x.tier === 0)?.totalMs ?? null;
   const last = stages[stages.length - 1];
   const lastLabel = last
     ? stageControlLabel(last, stages).replace(/\s+/g, "")
     : "";
-  const rows = ranked.map(({ row, ssTimesMs, totalMs, penaltyMs }, i) => [
-    String(i + 1),
-    String(row.startNumber),
-    formatNameWithNationality(row.driver, row.driverCountryCode),
-    formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
-    row.car || "—",
-    row.class || "—",
-    formatDurationMs(ssTimesMs),
-    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    formatDurationMs(totalMs),
-    leader == null || totalMs <= leader ? "—" : `+${formatDiffMs(totalMs - leader)}`,
-  ]);
+  let classifiedPos = 0;
+  const rows = ranked.map(
+    ({ row, ssTimesMs, totalMs, penaltyMs, tier, statusLabel }) => {
+      const pos = tier === 0 ? String(++classifiedPos) : "—";
+      return [
+        pos,
+        String(row.startNumber),
+        formatNameWithNationality(row.driver, row.driverCountryCode),
+        formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
+        row.car || "—",
+        row.class || "—",
+        tier === 0
+          ? formatOverallDurationMs(ssTimesMs)
+          : (statusLabel ?? "—"),
+        tier === 0 && penaltyMs > 0
+          ? formatOverallDurationMs(penaltyMs)
+          : "—",
+        tier === 0
+          ? formatOverallDurationMs(totalMs)
+          : (statusLabel ?? "—"),
+        tier === 0 &&
+        leader != null &&
+        totalMs != null &&
+        totalMs > leader
+          ? `+${formatDiffDurationMs(totalMs - leader)}`
+          : "—",
+      ];
+    },
+  );
   await downloadExcelTable({
     fileName: `${eventName}-After-${lastLabel || "SS"}`,
     sheetName: `After ${lastLabel || "SS"}`.slice(0, 31),

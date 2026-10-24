@@ -23,6 +23,7 @@ import {
 } from "./starting-order-print";
 import {
   RALLY2_FOOTNOTE,
+  buildRallyOverallRanking,
   buildSpeedFinalRanking,
   classifyRallyStageLegCell,
   formatDiffDurationMs,
@@ -361,64 +362,31 @@ export function buildRallyOverallPdfRows(
   stages: Stage[],
   eventPenaltyMode: "through-max" | "in-stages-only" = "through-max",
 ): string[][] {
-  const stageOrders = new Set(stages.map((s) => s.order));
-  const throughOrder =
-    stages.length > 0 ? Math.max(...stages.map((s) => s.order)) : 0;
-  const ranked = [...entries]
-    .map((row) => {
-      const stageCells = stages.map((st) => {
-        const values = getRallyStageTimingValues(row, st.id);
-        const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
-        const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-        return { cell, jumpMs, ssMs: cell.durationMs };
-      });
-      const allTimed =
-        stages.length > 0 &&
-        stageCells.every((c) => c.cell.outcome == null && c.ssMs != null);
-      // Pure stage times (finish − start); jump starts live in Penalty.
-      const ssTimesMs = allTimed
-        ? stageCells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
-        : null;
-      const jumpPenaltyMs = stageCells.reduce((sum, c) => sum + c.jumpMs, 0);
-      const eventPenaltyMs =
-        eventPenaltyMode === "in-stages-only"
-          ? getRallyEventPenaltyItems(row)
-              .filter((item) => stageOrders.has(item.afterStageOrder))
-              .reduce(
-                (sum, item) => sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
-                0,
-              )
-          : throughOrder > 0
-            ? getRallyEventPenaltyTotalMs(row, throughOrder)
-            : 0;
-      const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
-      const totalMs =
-        ssTimesMs != null ? ssTimesMs + penaltyMs : null;
-      return { row, totalMs, penaltyMs, ssTimesMs };
-    })
-    .filter((x): x is { row: Entry; totalMs: number; penaltyMs: number; ssTimesMs: number } =>
-      x.totalMs != null,
-    )
-    .sort((a, b) =>
-      a.totalMs !== b.totalMs
-        ? a.totalMs - b.totalMs
-        : a.row.startNumber - b.row.startNumber,
-    );
-  const leaderTotal = ranked[0]?.totalMs ?? null;
-  return ranked.map(({ row, totalMs, penaltyMs, ssTimesMs }, i) => [
-    String(i + 1),
-    String(row.startNumber),
-    formatNameWithNationality(row.driver, row.driverCountryCode),
-    formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
-    row.car || "—",
-    row.class || "—",
-    formatDurationMs(ssTimesMs),
-    penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-    formatDurationMs(totalMs),
-    leaderTotal == null || totalMs <= leaderTotal
-      ? "—"
-      : `+${formatDiffDurationMs(totalMs - leaderTotal)}`,
-  ]);
+  const ranked = buildRallyOverallRanking(entries, stages, eventPenaltyMode);
+  const leaderTotal = ranked.find((x) => x.tier === 0)?.totalMs ?? null;
+  let classifiedPos = 0;
+  return ranked.map(
+    ({ row, totalMs, penaltyMs, ssTimesMs, tier, statusLabel }) => {
+      const pos = tier === 0 ? String(++classifiedPos) : "—";
+      return [
+        pos,
+        String(row.startNumber),
+        formatNameWithNationality(row.driver, row.driverCountryCode),
+        formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
+        row.car || "—",
+        row.class || "—",
+        tier === 0 ? formatDurationMs(ssTimesMs) : (statusLabel ?? "—"),
+        tier === 0 && penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
+        tier === 0 ? formatDurationMs(totalMs) : (statusLabel ?? "—"),
+        tier === 0 &&
+        leaderTotal != null &&
+        totalMs != null &&
+        totalMs > leaderTotal
+          ? `+${formatDiffDurationMs(totalMs - leaderTotal)}`
+          : "—",
+      ];
+    },
+  );
 }
 
 /** LEG sheet: all crews, per-SS times (only when stages are completed). */
