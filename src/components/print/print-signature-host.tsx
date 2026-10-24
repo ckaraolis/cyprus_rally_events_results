@@ -2,6 +2,10 @@
 
 import { useEffect, useId, useState } from "react";
 import {
+  RALLY_SERIES_OPTIONS,
+  type RallySeries,
+} from "@/lib/rally/dual-series";
+import {
   isValidPrintDate,
   isValidPrintTime,
   loadSavedPrintSignatureName,
@@ -19,6 +23,8 @@ import {
 export function PrintSignatureHost() {
   const titleId = useId();
   const [open, setOpen] = useState(false);
+  const [dualSeries, setDualSeries] = useState(false);
+  const [series, setSeries] = useState<RallySeries>("merc");
   const [subject, setSubject] = useState("");
   const [name, setName] = useState("");
   const [date, setDate] = useState("");
@@ -29,6 +35,8 @@ export function PrintSignatureHost() {
     return subscribePrintSignaturePrompt((nextOpen, options) => {
       if (nextOpen) {
         const now = nowPrintDateTime();
+        setDualSeries(options.dualSeries === true);
+        setSeries("merc");
         setSubject((options.defaultSubject ?? "").trim());
         setName(loadSavedPrintSignatureName());
         setDate(now.date);
@@ -77,7 +85,7 @@ export function PrintSignatureHost() {
       return;
     }
     if (!isValidPrintTime(time)) {
-      setError("Time must be HH:MM:SS.");
+      setError("Time must be HH:MM.");
       return;
     }
     const normalizedDate = normalizePrintDate(date);
@@ -86,6 +94,7 @@ export function PrintSignatureHost() {
     resolvePrintSignaturePrompt({
       action: "sign",
       subject: subj,
+      series: dualSeries ? series : null,
       signature: {
         name: trimmedName,
         title: PRINT_SIGNATURE_TITLE,
@@ -98,7 +107,11 @@ export function PrintSignatureHost() {
   function confirmNo() {
     const subj = resolvedSubject();
     if (!subj) return;
-    resolvePrintSignaturePrompt({ action: "skip", subject: subj });
+    resolvePrintSignaturePrompt({
+      action: "skip",
+      subject: subj,
+      series: dualSeries ? series : null,
+    });
   }
 
   return (
@@ -124,15 +137,40 @@ export function PrintSignatureHost() {
           Print options
         </h2>
         <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-400">
-          Edit the subject shown at the top of the sheet.{" "}
+          Edit the subject shown at the top of the sheet
+          {dualSeries ? " and choose MERC or LOCAL" : ""}.{" "}
           <strong>Yes</strong> also adds the signature; <strong>No</strong>{" "}
           prints without a signature.
         </p>
 
+        {dualSeries ? (
+          <fieldset className="mt-5">
+            <legend className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+              Series
+            </legend>
+            <div className="mt-1.5 flex flex-wrap gap-2">
+              {RALLY_SERIES_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  onClick={() => setSeries(opt.id)}
+                  className={`rounded-lg px-4 py-2 text-sm font-semibold ${
+                    series === opt.id
+                      ? "bg-red-700 text-white dark:bg-red-600"
+                      : "border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+        ) : null}
+
         <label className="mt-5 block text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
           Subject
           <input
-            autoFocus
+            autoFocus={!dualSeries}
             type="text"
             value={subject}
             onChange={(e) => setSubject(e.target.value)}
@@ -176,7 +214,7 @@ export function PrintSignatureHost() {
                 type="text"
                 value={time}
                 onChange={(e) => setTime(e.target.value)}
-                placeholder="HH:MM:SS"
+                placeholder="HH:MM"
                 inputMode="numeric"
                 className="mt-1.5 w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-medium text-zinc-900 outline-none focus:border-red-600 focus:ring-1 focus:ring-red-600 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-50"
               />

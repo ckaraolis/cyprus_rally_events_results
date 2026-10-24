@@ -9,6 +9,11 @@ import {
   cyprusRallyPrintHeaderCss,
   usesCyprusRallyPrintBrand,
 } from "./print-branding";
+import {
+  filterEntriesBySeries,
+  usesDualSeriesEvent,
+  type RallySeries,
+} from "./dual-series";
 import { injectPrintSignatureFooter } from "./print-signature";
 import { promptPrintSignature } from "./print-signature-prompt";
 
@@ -92,29 +97,50 @@ function writeAndPrintHtml(
   doc.close();
 }
 
+export type PrintHtmlBuildContext = {
+  subject: string;
+  /** Set when printing a dual-series (MERC / LOCAL) event. */
+  series: RallySeries | null;
+};
+
 export type PrintHtmlDocumentOptions = {
   landscape?: boolean;
   /** Default sheet subject / title shown in the print dialog (editable). */
   defaultSubject: string;
+  /**
+   * When true, the dialog asks MERC vs LOCAL and `buildHtml` receives the choice.
+   * Defaults from `usesDualSeriesEvent(eventName)` when `eventName` is passed.
+   */
+  dualSeries?: boolean;
+  /** Used to auto-detect dual-series when `dualSeries` is omitted. */
+  eventName?: string;
 };
 
 /**
- * Opens print options (editable subject + optional signature), then prints.
- * `buildHtml` runs after the dialog so the chosen subject is on the sheet.
+ * Opens print options (subject, optional series, optional signature), then prints.
+ * `buildHtml` runs after the dialog so subject / series filter apply to the sheet.
  * Yes → signature footer; No → no signature; Esc/outside → cancel.
  */
 export async function printHtmlDocument(
-  buildHtml: (subject: string) => string,
+  buildHtml: (ctx: PrintHtmlBuildContext) => string,
   options: PrintHtmlDocumentOptions,
 ): Promise<boolean> {
   if (typeof window === "undefined" || typeof document === "undefined") {
     return false;
   }
   const defaultSubject = options.defaultSubject.trim() || "Results";
-  const result = await promptPrintSignature({ defaultSubject });
+  const dualSeries =
+    options.dualSeries === true ||
+    (options.dualSeries !== false &&
+      !!options.eventName &&
+      usesDualSeriesEvent(options.eventName));
+  const result = await promptPrintSignature({ defaultSubject, dualSeries });
   if (result.action === "cancel") return false;
   const subject = result.subject.trim() || defaultSubject;
-  let html = buildHtml(subject);
+  let html = buildHtml({
+    subject,
+    series: dualSeries ? result.series : null,
+  });
   if (result.action === "sign") {
     html = injectPrintSignatureFooter(html, result.signature);
   }
@@ -268,7 +294,21 @@ export async function printStartingOrderPdf(input: {
 }): Promise<boolean> {
   const defaultSubject = startingOrderPrintTitle(input.leg);
   return printHtmlDocument(
-    (subject) => buildStartingOrderPdfHtml({ ...input, sheetTitle: subject }),
-    { landscape: true, defaultSubject },
+    ({ subject, series }) => {
+      const rows =
+        series != null
+          ? filterEntriesBySeries(input.rows, series)
+          : input.rows;
+      return buildStartingOrderPdfHtml({
+        ...input,
+        rows,
+        sheetTitle: subject,
+      });
+    },
+    {
+      landscape: true,
+      defaultSubject,
+      eventName: input.eventName,
+    },
   );
 }

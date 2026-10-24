@@ -1,13 +1,21 @@
+import type { RallySeries } from "./dual-series";
 import type { PrintSignature } from "./print-signature";
 
 export type PrintSignaturePromptResult =
-  | { action: "sign"; signature: PrintSignature; subject: string }
-  | { action: "skip"; subject: string }
+  | {
+      action: "sign";
+      signature: PrintSignature;
+      subject: string;
+      series: RallySeries | null;
+    }
+  | { action: "skip"; subject: string; series: RallySeries | null }
   | { action: "cancel" };
 
 export type PrintSignaturePromptOptions = {
   /** Prefilled sheet title shown at the top of the PDF (editable). */
   defaultSubject?: string;
+  /** When true, dialog asks MERC vs LOCAL before printing. */
+  dualSeries?: boolean;
 };
 
 type PromptListener = (open: boolean, options: PrintSignaturePromptOptions) => void;
@@ -35,8 +43,8 @@ function notify(open: boolean): void {
 
 /**
  * Opens the print dialog (must have PrintSignatureHost mounted).
- * - sign: Yes — print with signature footer + subject
- * - skip: No — print without signature, still with subject
+ * - sign: Yes — print with signature footer + subject (+ series when dual)
+ * - skip: No — print without signature, still with subject (+ series when dual)
  * - cancel: Esc / click outside — do not print
  */
 export function promptPrintSignature(

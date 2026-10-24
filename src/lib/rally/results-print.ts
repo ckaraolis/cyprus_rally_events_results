@@ -1,4 +1,5 @@
 import { formatNameWithNationality } from "@/lib/flags";
+import { filterEntriesBySeries, type RallySeries } from "./dual-series";
 import {
   buildCyprusRallyPrintHeaderHtml,
   cyprusRallyPrintHeaderCss,
@@ -631,6 +632,14 @@ function buildSpeedBestTableRows(rows: Entry[]): {
  * Rally stage sheet: this SS only (`ss`) or cumulative After SSx (`overall`).
  * Shakedown / Qualify always print the stage sheet.
  */
+function entriesForPrint(entries: Entry[], series: RallySeries | null): Entry[] {
+  return series != null ? filterEntriesBySeries(entries, series) : [...entries];
+}
+
+/**
+ * Rally stage sheet: this SS only (`ss`) or cumulative After SSx (`overall`).
+ * Shakedown / Qualify always print the stage sheet.
+ */
 export async function printRallyStageResultsPdf(
   input: PrintBase & {
     stage: Stage;
@@ -640,18 +649,24 @@ export async function printRallyStageResultsPdf(
 ): Promise<boolean> {
   const { stage, allStages } = input;
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
-  const rows = [...input.entries];
+  const printOpts = {
+    landscape: true as const,
+    eventName: input.eventName,
+  };
 
   if (input.mode === "overall" && isCompetitiveStage(stage)) {
     const sorted = competitiveStages(allStages);
     const idx = sorted.findIndex((s) => s.id === stage.id);
     const cumulative = idx >= 0 ? sorted.slice(0, idx + 1) : [];
     if (cumulative.length >= 1) {
-      const tableRows = buildRallyOverallPdfRows(rows, cumulative);
       const defaultSubject = `Overall Classification after ${stageHeadingLabel(stage, allStages)}`;
       return printHtmlDocument(
-        (subject) =>
-          buildLandscapeResultsPdfHtml({
+        ({ subject, series }) => {
+          const tableRows = buildRallyOverallPdfRows(
+            entriesForPrint(input.entries, series),
+            cumulative,
+          );
+          return buildLandscapeResultsPdfHtml({
             eventName: input.eventName,
             subtitle: subject,
             modeLabel: "Overall classification",
@@ -671,13 +686,13 @@ export async function printRallyStageResultsPdf(
             logoUrl,
             rallyClassificationLayout: true,
             centerFromCol: 5,
-          }),
-        { landscape: true, defaultSubject },
+          });
+        },
+        { ...printOpts, defaultSubject },
       );
     }
   }
 
-  const { rows: tableRows, footnote } = buildRallyStagePdfRows(rows, stage);
   const shakedown = isShakedownStage(stage);
   const qualify = stage.kind === "qualify";
   const shakedownPasses = shakedown ? getShakedownPassCount(stage) : 3;
@@ -689,8 +704,12 @@ export async function printRallyStageResultsPdf(
         ? stageHeadingLabel(stage, allStages)
         : `Stage Classification ${stageHeadingLabel(stage, allStages)}`;
   return printHtmlDocument(
-    (subject) =>
-      buildLandscapeResultsPdfHtml({
+    ({ subject, series }) => {
+      const { rows: tableRows, footnote } = buildRallyStagePdfRows(
+        entriesForPrint(input.entries, series),
+        stage,
+      );
+      return buildLandscapeResultsPdfHtml({
         eventName: input.eventName,
         subtitle: subject,
         modeLabel: "Stage results",
@@ -725,8 +744,9 @@ export async function printRallyStageResultsPdf(
         shakedownLayout: shakedown,
         shakedownPassCount: shakedown ? shakedownPasses : undefined,
         centerFromCol: 5,
-      }),
-    { landscape: true, defaultSubject },
+      });
+    },
+    { ...printOpts, defaultSubject },
   );
 }
 
@@ -738,15 +758,15 @@ export async function printRallyLegResultsPdf(
     allStages: Stage[];
   },
 ): Promise<boolean> {
-  const { columns, tableRows } = buildRallyLegPdfSheet(
-    input.entries,
-    input.stagesInLeg,
-    input.allStages,
-  );
   const defaultSubject = `LEG ${input.leg} Overall Classification`;
   return printHtmlDocument(
-    (subject) =>
-      buildLandscapeResultsPdfHtml({
+    ({ subject, series }) => {
+      const { columns, tableRows } = buildRallyLegPdfSheet(
+        entriesForPrint(input.entries, series),
+        input.stagesInLeg,
+        input.allStages,
+      );
+      return buildLandscapeResultsPdfHtml({
         eventName: input.eventName,
         subtitle: subject,
         modeLabel: "Leg classification",
@@ -756,8 +776,13 @@ export async function printRallyLegResultsPdf(
         rallyLegLayout: true,
         legStageCount: input.stagesInLeg.length,
         centerFromCol: 5,
-      }),
-    { landscape: true, defaultSubject },
+      });
+    },
+    {
+      landscape: true,
+      defaultSubject,
+      eventName: input.eventName,
+    },
   );
 }
 
@@ -771,47 +796,58 @@ export async function printSpeedRunResultsPdf(
 ): Promise<boolean> {
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
   const defaultSubject = input.label.trim() || "Results";
+  const printOpts = {
+    landscape: true as const,
+    defaultSubject,
+    eventName: input.eventName,
+  };
   if (input.runId === "best") {
-    const { columns, tableRows } = buildSpeedBestTableRows(input.entries);
     return printHtmlDocument(
-      (subject) =>
-        buildLandscapeResultsPdfHtml({
+      ({ subject, series }) => {
+        const { columns, tableRows } = buildSpeedBestTableRows(
+          entriesForPrint(input.entries, series),
+        );
+        return buildLandscapeResultsPdfHtml({
           eventName: input.eventName,
           subtitle: subject,
           modeLabel: "Best Time classification",
           columns,
           tableRows,
           logoUrl,
-        }),
-      { landscape: true, defaultSubject },
+        });
+      },
+      printOpts,
     );
   }
   const runId = input.runId;
-  const ranked = [...input.entries]
-    .map((r) => ({ r, t: getSpeedRunDurationMs(r, runId) }))
-    .filter((x): x is { r: Entry; t: number } => x.t != null)
-    .sort((a, b) =>
-      a.t !== b.t ? a.t - b.t : a.r.startNumber - b.r.startNumber,
-    );
-  const leader = ranked[0]?.t ?? null;
-  const tableRows = ranked.map(({ r, t }, i) => [
-    String(i + 1),
-    String(r.startNumber),
-    formatNameWithNationality(r.driver, r.driverCountryCode),
-    formatDurationMs(t),
-    leader == null || t <= leader ? "—" : `+${formatDiffDurationMs(t - leader)}`,
-  ]);
   return printHtmlDocument(
-    (subject) =>
-      buildLandscapeResultsPdfHtml({
+    ({ subject, series }) => {
+      const ranked = entriesForPrint(input.entries, series)
+        .map((r) => ({ r, t: getSpeedRunDurationMs(r, runId) }))
+        .filter((x): x is { r: Entry; t: number } => x.t != null)
+        .sort((a, b) =>
+          a.t !== b.t ? a.t - b.t : a.r.startNumber - b.r.startNumber,
+        );
+      const leader = ranked[0]?.t ?? null;
+      const tableRows = ranked.map(({ r, t }, i) => [
+        String(i + 1),
+        String(r.startNumber),
+        formatNameWithNationality(r.driver, r.driverCountryCode),
+        formatDurationMs(t),
+        leader == null || t <= leader
+          ? "—"
+          : `+${formatDiffDurationMs(t - leader)}`,
+      ]);
+      return buildLandscapeResultsPdfHtml({
         eventName: input.eventName,
         subtitle: subject,
         modeLabel: "Run results",
         columns: ["Pos", "#", "Driver", "Time", "Diff"],
         tableRows,
         logoUrl,
-      }),
-    { landscape: true, defaultSubject },
+      });
+    },
+    printOpts,
   );
 }
 
@@ -819,19 +855,26 @@ export async function printSpeedRunResultsPdf(
 export async function printSpeedFinalResultsPdf(
   input: PrintBase & { sheetTitle?: string },
 ): Promise<boolean> {
-  const { columns, tableRows } = buildSpeedBestTableRows(input.entries);
   const defaultSubject =
     input.sheetTitle?.trim() || "Official Final Results";
   return printHtmlDocument(
-    (subject) =>
-      buildLandscapeResultsPdfHtml({
+    ({ subject, series }) => {
+      const { columns, tableRows } = buildSpeedBestTableRows(
+        entriesForPrint(input.entries, series),
+      );
+      return buildLandscapeResultsPdfHtml({
         eventName: input.eventName,
         subtitle: subject,
         modeLabel: "Ordered by Best Time",
         columns,
         tableRows,
         logoUrl: normalizePrintLogoUrl(input.logoUrl),
-      }),
-    { landscape: true, defaultSubject },
+      });
+    },
+    {
+      landscape: true,
+      defaultSubject,
+      eventName: input.eventName,
+    },
   );
 }

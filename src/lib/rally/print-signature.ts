@@ -7,7 +7,7 @@ export type PrintSignature = {
   title: string;
   /** DD/MM/YYYY */
   date: string;
-  /** HH:MM:SS */
+  /** HH:MM */
   time: string;
 };
 
@@ -37,11 +37,11 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
-/** Local "now" as DD/MM/YYYY and HH:MM:SS. */
+/** Local "now" as DD/MM/YYYY and HH:MM. */
 export function nowPrintDateTime(d = new Date()): { date: string; time: string } {
   return {
     date: `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}/${d.getFullYear()}`,
-    time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`,
+    time: `${pad2(d.getHours())}:${pad2(d.getMinutes())}`,
   };
 }
 
@@ -61,21 +61,19 @@ export function isValidPrintDate(raw: string): boolean {
 }
 
 export function isValidPrintTime(raw: string): boolean {
-  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  // Accept HH:MM or HH:MM:SS (seconds are dropped on normalize).
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (!m) return false;
   const h = Number(m[1]);
   const min = Number(m[2]);
-  const sec = m[3] != null ? Number(m[3]) : 0;
-  return h >= 0 && h <= 23 && min >= 0 && min <= 59 && sec >= 0 && sec <= 59;
+  return h >= 0 && h <= 23 && min >= 0 && min <= 59;
 }
 
-/** Normalize time to HH:MM:SS. */
+/** Normalize time to HH:MM. */
 export function normalizePrintTime(raw: string): string {
-  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+  const m = raw.trim().match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
   if (!m) return raw.trim();
-  return `${pad2(Number(m[1]))}:${pad2(Number(m[2]))}:${pad2(
-    m[3] != null ? Number(m[3]) : 0,
-  )}`;
+  return `${pad2(Number(m[1]))}:${pad2(Number(m[2]))}`;
 }
 
 /** Normalize date to DD/MM/YYYY. */

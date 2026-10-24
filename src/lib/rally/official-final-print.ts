@@ -5,6 +5,7 @@ import {
   cyprusRallyPrintHeaderCss,
   usesCyprusRallyPrintBrand,
 } from "./print-branding";
+import { filterEntriesBySeries } from "./dual-series";
 import {
   normalizePrintLogoUrl,
   printHtmlDocument,
@@ -121,18 +122,33 @@ export async function printOfficialFinalResultsPdf(input: {
   stages: Stage[];
   /** Defaults to "Official Final Results". */
   sheetTitle?: string;
+  /**
+   * When false, skip MERC/LOCAL picker (e.g. Cyprus Rally Challenge already
+   * filtered). When omitted, dual-series events ask in the print dialog.
+   */
+  dualSeries?: boolean;
 }): Promise<boolean> {
   const defaultSubject =
     (input.sheetTitle ?? "").trim() || "Official Final Results";
   return printHtmlDocument(
-    (subject) =>
-      buildOfficialFinalResultsPdfHtml({
+    ({ subject, series }) => {
+      const entries =
+        series != null
+          ? filterEntriesBySeries(input.entries, series)
+          : input.entries;
+      return buildOfficialFinalResultsPdfHtml({
         eventName: input.eventName,
         logoUrl: input.logoUrl,
-        entries: input.entries,
+        entries,
         stages: input.stages,
         sheetTitle: subject,
-      }),
-    { landscape: true, defaultSubject },
+      });
+    },
+    {
+      landscape: true,
+      defaultSubject,
+      eventName: input.eventName,
+      dualSeries: input.dualSeries,
+    },
   );
 }
