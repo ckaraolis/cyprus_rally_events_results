@@ -249,6 +249,7 @@ export async function exportRallyStageExcel(
   }
 
   const showRally2 = isCompetitiveStage(stage);
+  // SS stage export: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = started(entries)
     .map((row) => {
       const v = stageValues(row, stage.id);
@@ -259,7 +260,6 @@ export async function exportRallyStageExcel(
         ssTimeMs != null ? ssTimeMs + penaltyMs : null;
       return {
         row,
-        cell,
         ssTimeMs,
         penaltyMs,
         totalMs,
@@ -267,30 +267,32 @@ export async function exportRallyStageExcel(
       };
     })
     .filter(
-      (x) =>
-        x.totalMs != null || x.cell.outcome != null || x.penaltyMs > 0,
+      (x): x is {
+        row: Entry;
+        ssTimeMs: number;
+        penaltyMs: number;
+        totalMs: number;
+        rally2: boolean;
+      } => x.totalMs != null,
     )
-    .sort((a, b) => {
-      if (a.totalMs != null && b.totalMs != null && a.totalMs !== b.totalMs) {
-        return a.totalMs - b.totalMs;
-      }
-      if (a.totalMs != null && b.totalMs == null) return -1;
-      if (a.totalMs == null && b.totalMs != null) return 1;
-      return a.row.startNumber - b.row.startNumber;
-    });
-  const leader = ranked.find((x) => x.totalMs != null)?.totalMs ?? null;
+    .sort((a, b) =>
+      a.totalMs !== b.totalMs
+        ? a.totalMs - b.totalMs
+        : a.row.startNumber - b.row.startNumber,
+    );
+  const leader = ranked[0]?.totalMs ?? null;
   const rows = ranked.map(
-    ({ row, cell, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
+    ({ row, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
       String(i + 1),
       formatCarNumber(row.startNumber, rally2),
       formatNameWithNationality(row.driver, row.driverCountryCode),
       formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
-      cell.outcome ?? formatDurationMs(ssTimeMs, timeDigits),
+      formatDurationMs(ssTimeMs, timeDigits),
       penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-      cell.outcome ?? formatDurationMs(totalMs, timeDigits),
-      totalMs == null || leader == null || totalMs <= leader
+      formatDurationMs(totalMs, timeDigits),
+      leader == null || totalMs <= leader
         ? "—"
         : `+${formatDiffMs(totalMs - leader, timeDigits)}`,
     ],

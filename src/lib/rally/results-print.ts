@@ -300,6 +300,7 @@ export function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
   const stageId = stage.id;
   const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
   const showRally2 = isCompetitiveStage(stage);
+  // SS stage sheets: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = [...entries]
     .map((row) => {
       const values = getRallyStageTimingValues(row, stageId);
@@ -310,43 +311,39 @@ export function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
         ssTimeMs != null ? ssTimeMs + penaltyMs : null;
       return {
         row,
-        cell,
         ssTimeMs,
         penaltyMs,
         totalMs,
-        penaltyRaw: values.penaltyValue,
         rally2: showRally2 && values.rally2,
       };
     })
     .filter(
-      (x) =>
-        x.totalMs != null ||
-        x.cell.outcome != null ||
-        x.penaltyMs > 0,
+      (x): x is {
+        row: Entry;
+        ssTimeMs: number;
+        penaltyMs: number;
+        totalMs: number;
+        rally2: boolean;
+      } => x.totalMs != null,
     )
-    .sort((a, b) => {
-      const aTimed = a.totalMs != null;
-      const bTimed = b.totalMs != null;
-      if (aTimed && !bTimed) return -1;
-      if (!aTimed && bTimed) return 1;
-      if (aTimed && bTimed && a.totalMs !== b.totalMs) {
-        return (a.totalMs ?? 0) - (b.totalMs ?? 0);
-      }
-      return a.row.startNumber - b.row.startNumber;
-    });
-  const leaderMs = ranked.find((x) => x.totalMs != null)?.totalMs ?? null;
+    .sort((a, b) =>
+      a.totalMs !== b.totalMs
+        ? a.totalMs - b.totalMs
+        : a.row.startNumber - b.row.startNumber,
+    );
+  const leaderMs = ranked[0]?.totalMs ?? null;
   const rows = ranked.map(
-    ({ row, cell, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
+    ({ row, ssTimeMs, penaltyMs, totalMs, rally2 }, i) => [
       String(i + 1),
       rally2 ? `*${row.startNumber}` : String(row.startNumber),
       formatNameWithNationality(row.driver, row.driverCountryCode),
       formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
       row.car || "—",
       row.class || "—",
-      cell.outcome != null ? cell.outcome : formatDurationMs(ssTimeMs, timeDigits),
+      formatDurationMs(ssTimeMs, timeDigits),
       penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—",
-      cell.outcome != null ? cell.outcome : formatDurationMs(totalMs, timeDigits),
-      totalMs == null || leaderMs == null || totalMs <= leaderMs
+      formatDurationMs(totalMs, timeDigits),
+      leaderMs == null || totalMs <= leaderMs
         ? "—"
         : `+${formatDiffDurationMs(totalMs - leaderMs, timeDigits)}`,
     ],
