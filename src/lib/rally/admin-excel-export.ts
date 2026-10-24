@@ -19,7 +19,6 @@ import {
   RALLY2_FOOTNOTE,
   buildRallyFinalRanking,
   buildRallyOverallRanking,
-  entryHasRally2OnStages,
   formatDiffDurationMs,
   formatDurationMs as formatOverallDurationMs,
   resolveRallyStageCell,
@@ -444,7 +443,6 @@ export async function exportRallyLegExcel(
       totalMs,
       sortTier,
       outcome: totalsReady ? outcome : null,
-      rally2: entryHasRally2OnStages(row, stagesInLeg),
     };
   });
   ranked.sort((a, b) => {
@@ -457,7 +455,7 @@ export async function exportRallyLegExcel(
   const leader = ranked.find((x) => x.sortTier === 0)?.totalMs ?? null;
   const rows = ranked.map((r, i) => [
     String(i + 1),
-    formatCarNumber(r.row.startNumber, r.rally2),
+    String(r.row.startNumber),
     formatNameWithNationality(r.row.driver, r.row.driverCountryCode),
     formatNameWithNationality(r.row.coDriver, r.row.coDriverCountryCode),
     r.row.car || "—",
@@ -470,9 +468,6 @@ export async function exportRallyLegExcel(
       ? "—"
       : `+${formatDiffMs(r.totalMs - leader)}`,
   ]);
-  if (ranked.some((x) => x.rally2)) {
-    rows.push([RALLY2_FOOTNOTE]);
-  }
   await downloadExcelTable({
     fileName: `${eventName}-LEG${leg}`,
     sheetName: `LEG${leg}`,

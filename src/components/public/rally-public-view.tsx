@@ -31,7 +31,6 @@ import {
   buildRallyFinalRanking,
   buildRallyOverallRanking,
   buildSpeedFinalRanking,
-  entryHasRally2OnStages,
   formatDiffDurationMs,
   formatDurationMs,
   getRallyEventPenaltyItems,
@@ -1673,7 +1672,6 @@ function LegResultsTable({
     ssTimesMs: number | null;
     totalMs: number | null;
     penaltyMs: number;
-    rally2: boolean;
   };
 
   const legNumber = useMemo(() => {
@@ -1741,7 +1739,6 @@ function LegResultsTable({
         ssTimesMs,
         totalMs,
         penaltyMs,
-        rally2: entryHasRally2OnStages(row, stagesInLeg),
       };
     });
 
@@ -1766,7 +1763,6 @@ function LegResultsTable({
   }, [entries, revealTimesWithoutCompleted, stagesInLeg, totalsReady]);
 
   const leaderTotal = sorted.find((x) => x.sortTier === 0)?.totalMs ?? null;
-  const hasRally2Marker = sorted.some((x) => x.rally2);
 
   if (stagesInLeg.length === 0) {
     return (
@@ -1785,91 +1781,83 @@ function LegResultsTable({
   }
 
   return (
-    <>
-      <table className="ewrc-table w-full min-w-max text-sm">
-        <thead>
-          <tr>
-            <th className="w-8 text-right">Pos</th>
-            <th className="w-8 text-right">#</th>
-            <th className="min-w-[11rem]">Crew</th>
-            <th className="w-14 !text-center">Class</th>
-            {stagesInLeg.map((st) => (
-              <th key={st.id} className="w-16 whitespace-nowrap !text-center">
-                {stageChipLabel(st, allStages)}
-              </th>
-            ))}
-            <th className="w-20 !text-center">SS Times</th>
-            <th className="w-20 !text-center">Penalty</th>
-            <th className="w-24 !text-center">Total</th>
-            <th className="w-20 !text-center">Diff</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((legRow, i) => {
-            const {
-              row,
-              cells,
-              sortTier,
-              rowOutcome,
-              ssTimesMs,
-              totalMs,
-              penaltyMs,
-              rally2,
-            } = legRow;
-            return (
-              <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
-                <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
-                  {i + 1}
+    <table className="ewrc-table w-full min-w-max text-sm">
+      <thead>
+        <tr>
+          <th className="w-8 text-right">Pos</th>
+          <th className="w-8 text-right">#</th>
+          <th className="min-w-[11rem]">Crew</th>
+          <th className="w-14 !text-center">Class</th>
+          {stagesInLeg.map((st) => (
+            <th key={st.id} className="w-16 whitespace-nowrap !text-center">
+              {stageChipLabel(st, allStages)}
+            </th>
+          ))}
+          <th className="w-20 !text-center">SS Times</th>
+          <th className="w-20 !text-center">Penalty</th>
+          <th className="w-24 !text-center">Total</th>
+          <th className="w-20 !text-center">Diff</th>
+        </tr>
+      </thead>
+      <tbody>
+        {sorted.map((legRow, i) => {
+          const {
+            row,
+            cells,
+            sortTier,
+            rowOutcome,
+            ssTimesMs,
+            totalMs,
+            penaltyMs,
+          } = legRow;
+          return (
+            <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
+              <td className="align-top text-right font-mono text-[var(--ewrc-strong)]">
+                {i + 1}
+              </td>
+              <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
+                {row.startNumber}
+              </td>
+              <CrewStackCell row={row} />
+              <td className="align-middle !text-center text-[11px] text-[var(--ewrc-muted)] sm:text-xs">
+                {row.class || "—"}
+              </td>
+              {cells.map((c, idx) => (
+                <td
+                  key={stagesInLeg[idx]!.id}
+                  className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs"
+                >
+                  {c.outcome != null
+                    ? c.outcome
+                    : formatDurationMs(c.durationMs)}
                 </td>
-                <td className="align-top text-right font-mono text-[var(--ewrc-ss)]">
-                  {rally2 ? `*${row.startNumber}` : row.startNumber}
-                </td>
-                <CrewStackCell row={row} />
-                <td className="align-middle !text-center text-[11px] text-[var(--ewrc-muted)] sm:text-xs">
-                  {row.class || "—"}
-                </td>
-                {cells.map((c, idx) => (
-                  <td
-                    key={stagesInLeg[idx]!.id}
-                    className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs"
-                  >
-                    {c.outcome != null
-                      ? c.outcome
-                      : formatDurationMs(c.durationMs)}
-                  </td>
-                ))}
-                <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {totalsReady && rowOutcome != null
-                    ? rowOutcome
-                    : formatDurationMs(ssTimesMs)}
-                </td>
-                <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
-                  {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
-                </td>
-                <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {totalsReady && rowOutcome != null
-                    ? rowOutcome
-                    : formatDurationMs(totalMs)}
-                </td>
-                <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
-                  {sortTier !== 0 ||
-                  leaderTotal == null ||
-                  totalMs == null ||
-                  totalMs <= leaderTotal
-                    ? "—"
-                    : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-      {hasRally2Marker ? (
-        <p className="mt-2 px-1 text-xs text-[var(--ewrc-muted)]">
-          {RALLY2_FOOTNOTE}
-        </p>
-      ) : null}
-    </>
+              ))}
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {totalsReady && rowOutcome != null
+                  ? rowOutcome
+                  : formatDurationMs(ssTimesMs)}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+                {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
+                {totalsReady && rowOutcome != null
+                  ? rowOutcome
+                  : formatDurationMs(totalMs)}
+              </td>
+              <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-heading)] sm:text-xs">
+                {sortTier !== 0 ||
+                leaderTotal == null ||
+                totalMs == null ||
+                totalMs <= leaderTotal
+                  ? "—"
+                  : `+${formatDiffDurationMs(totalMs - leaderTotal)}`}
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
   );
 }
 

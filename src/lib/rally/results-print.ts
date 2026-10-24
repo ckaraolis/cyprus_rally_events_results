@@ -25,7 +25,6 @@ import {
   RALLY2_FOOTNOTE,
   buildRallyOverallRanking,
   buildSpeedFinalRanking,
-  entryHasRally2OnStages,
   formatDiffDurationMs,
   formatDurationMs,
   getRallyEventPenaltyItems,
@@ -414,7 +413,6 @@ function buildRallyLegPdfSheet(
     totalMs: number | null;
     sortTier: 0 | 1 | 2;
     rowOutcome: "DNS" | "DNF" | "RET" | null;
-    rally2: boolean;
   };
 
   const ranked: LegPdfRow[] = entries.map((row) => {
@@ -480,7 +478,6 @@ function buildRallyLegPdfSheet(
       totalMs,
       sortTier,
       rowOutcome,
-      rally2: entryHasRally2OnStages(row, stagesInLeg),
     };
   });
 
@@ -517,9 +514,7 @@ function buildRallyLegPdfSheet(
   ];
   const tableRows = ranked.map((legRow, i) => [
     String(i + 1),
-    legRow.rally2
-      ? `*${legRow.row.startNumber}`
-      : String(legRow.row.startNumber),
+    String(legRow.row.startNumber),
     formatNameWithNationality(
       legRow.row.driver,
       legRow.row.driverCountryCode,
@@ -545,8 +540,7 @@ function buildRallyLegPdfSheet(
       ? "—"
       : `+${formatDiffDurationMs(legRow.totalMs - leaderTotal)}`,
   ]);
-  const footnote = ranked.some((x) => x.rally2) ? RALLY2_FOOTNOTE : null;
-  return { columns, tableRows, footnote };
+  return { columns, tableRows, footnote: null };
 }
 
 export type SpeedPrintRunId = "trial" | "run1" | "run2" | "best";
