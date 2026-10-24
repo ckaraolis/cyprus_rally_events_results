@@ -487,6 +487,8 @@ export function EventEditor({ event: initial }: Props) {
   const timingAutosaveInFlightRef = useRef(false);
   const timingAutosaveQueuedRef = useRef(false);
   const timingAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Bumps on every local timing edit so in-flight autosaves cannot freeze a stale snapshot as “saved”. */
+  const timingSaveGenRef = useRef(0);
   const lastTimingSavedSigRef = useRef(timingSignature(meta, entries));
   const [savedRallyStageAlgeSig, setSavedRallyStageAlgeSig] = useState<string>(() =>
     JSON.stringify(
@@ -947,6 +949,7 @@ export function EventEditor({ event: initial }: Props) {
         timingAutosaveQueuedRef.current = false;
         const m = metaRef.current;
         const en = entriesRef.current;
+        const genAtStart = timingSaveGenRef.current;
         const sig = timingSignature(m, en);
         if (sig === lastTimingSavedSigRef.current) continue;
         const { payload } = sanitizeMetaForSave(m);
@@ -974,6 +977,12 @@ export function EventEditor({ event: initial }: Props) {
         if (!res.ok) {
           console.error("Timing autosave failed:", res.error);
           break;
+        }
+        // A newer edit landed while this request was in flight — do not treat this
+        // snapshot as authoritative; loop again with the freshest entriesRef.
+        if (genAtStart !== timingSaveGenRef.current) {
+          timingAutosaveQueuedRef.current = true;
+          continue;
         }
         lastTimingSavedSigRef.current = sig;
         if (metaChanged) {
@@ -1011,6 +1020,7 @@ export function EventEditor({ event: initial }: Props) {
     setEntries((prev) => {
       const next = reducer(prev);
       entriesRef.current = next;
+      timingSaveGenRef.current += 1;
       return next;
     });
     queueTimingAutosave();
@@ -1088,7 +1098,22 @@ export function EventEditor({ event: initial }: Props) {
         while (liveSaveQueuedRef.current) {
           const batch = liveSaveQueuedRef.current;
           liveSaveQueuedRef.current = null;
-          await replaceEntries(eventId, batch);
+          const genAtStart = timingSaveGenRef.current;
+          const res = await replaceEntries(eventId, batch);
+          if (!res.ok) {
+            console.error("Live timing save failed:", res.error);
+            continue;
+          }
+          // Only mark saved if nothing newer was applied while this write ran.
+          if (genAtStart === timingSaveGenRef.current) {
+            lastTimingSavedSigRef.current = timingSignature(
+              metaRef.current,
+              batch,
+            );
+          } else {
+            timingAutosaveQueuedRef.current = true;
+            queueTimingAutosave();
+          }
         }
       } finally {
         liveSaveInFlightRef.current = false;
@@ -1414,6 +1439,10 @@ export function EventEditor({ event: initial }: Props) {
                   );
                 });
                 nextEntriesSnapshot = next;
+                // Sync ref immediately — do not wait for useEffect, or autosave can
+                // persist a pre-trigger snapshot and wipe the new start/finish time.
+                entriesRef.current = next;
+                timingSaveGenRef.current += 1;
                 return next;
               });
               if (matched && nextEntriesSnapshot) {
@@ -2393,6 +2422,7 @@ export function EventEditor({ event: initial }: Props) {
           : x,
       );
       entriesRef.current = next;
+      timingSaveGenRef.current += 1;
       return next;
     });
     queueTimingAutosave();
@@ -2518,6 +2548,7 @@ export function EventEditor({ event: initial }: Props) {
         );
       });
       entriesRef.current = next;
+      timingSaveGenRef.current += 1;
       return next;
     });
     setShowAssignStartModal(false);

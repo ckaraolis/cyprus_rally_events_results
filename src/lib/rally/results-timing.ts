@@ -213,9 +213,10 @@ export type RallyOverallRankRow = {
 /**
  * Overall classification after a set of stages (After SSx):
  * (0) crews timed on every stage, by total,
- * (1) RET / DNF on any stage in the set,
- * (2) DNS on any stage in the set.
- * Incomplete (no times and no outcome) crews are omitted.
+ * (1) RET / DNF only when that outcome is on the *last* stage (this After SSx),
+ * (2) DNS only when that outcome is on the *last* stage.
+ * A DNF on SS3 appears on After SS3 only — not on After SS4 / later.
+ * Incomplete crews (no times and no outcome on this stage) are omitted.
  */
 export function buildRallyOverallRanking(
   entries: Entry[],
@@ -237,7 +238,7 @@ export function buildRallyOverallRanking(
         const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
         return { cell, jumpMs, ssMs: cell.durationMs };
       });
-      const rowOutcome = worstLegRowOutcome(stageCells.map((c) => c.cell));
+      const lastOutcome = stageCells[stageCells.length - 1]?.cell.outcome ?? null;
       const allTimed =
         stageCells.every((c) => c.cell.outcome == null && c.ssMs != null);
       const ssTimesMs = allTimed
@@ -264,10 +265,11 @@ export function buildRallyOverallRanking(
       let statusLabel: string | null = null;
       if (totalMs != null) {
         tier = 0;
-      } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
+      } else if (lastOutcome === "RET" || lastOutcome === "DNF") {
+        // Only list retirements on the After SS sheet for the stage they went out.
         tier = 1;
-        statusLabel = rowOutcome;
-      } else if (rowOutcome === "DNS") {
+        statusLabel = lastOutcome;
+      } else if (lastOutcome === "DNS") {
         tier = 2;
         statusLabel = "DNS";
       }
