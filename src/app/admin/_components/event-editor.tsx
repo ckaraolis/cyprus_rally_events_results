@@ -4612,7 +4612,7 @@ export function EventEditor({ event: initial }: Props) {
                               ? "border-amber-600 bg-amber-600 text-white dark:border-amber-500 dark:bg-amber-500"
                               : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                           }`}
-                          title="LEG1 Rally2: stage time = best in class + 10:00"
+                          title="Mark crew as Rally2 (* on LEG1 stage results)"
                         >
                           Rally2
                         </button>
@@ -4825,7 +4825,7 @@ export function EventEditor({ event: initial }: Props) {
                                     ? "border-amber-600 bg-amber-600 text-white dark:border-amber-500 dark:bg-amber-500"
                                     : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                                 }`}
-                                title="LEG1 Rally2: stage time = best in class + 10:00"
+                                title="Mark crew as Rally2 (* on LEG1 stage results)"
                               >
                                 Rally2
                               </button>

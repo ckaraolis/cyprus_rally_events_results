@@ -23,7 +23,6 @@ import {
 } from "./starting-order-print";
 import {
   RALLY2_FOOTNOTE,
-  buildBestInCategoryStageMap,
   buildRallyOverallRanking,
   buildSpeedFinalRanking,
   entryHasRally2OnStages,
@@ -303,14 +302,11 @@ export function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
   const stageId = stage.id;
   const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
   const showRally2 = stageAllowsRally2(stage);
-  const bestInCategory = showRally2
-    ? buildBestInCategoryStageMap(entries, stageId)
-    : new Map<string, number>();
   // SS stage sheets: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = [...entries]
     .map((row) => {
       const values = getRallyStageTimingValues(row, stageId);
-      const cell = resolveRallyStageCell(row, stage, bestInCategory);
+      const cell = resolveRallyStageCell(row, stage);
       const penaltyMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
       const ssTimeMs = cell.durationMs;
       const totalMs =
@@ -398,18 +394,17 @@ function buildRallyLegPdfSheet(
   stagesInLeg: Stage[],
   allStages: Stage[],
 ): { columns: string[]; tableRows: string[][]; footnote: string | null } {
+  const legNumber =
+    typeof stagesInLeg[0]?.leg === "number" &&
+    Number.isFinite(stagesInLeg[0].leg)
+      ? Math.floor(stagesInLeg[0].leg)
+      : 1;
+  const revealTimesWithoutCompleted = legNumber === 1;
   const allLegStagesCompleted =
     stagesInLeg.length > 0 &&
     stagesInLeg.every((st) => st.progressStatus === "completed");
+  const totalsReady = revealTimesWithoutCompleted || allLegStagesCompleted;
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
-  const bestByStage = new Map(
-    stagesInLeg.map((st) => [
-      st.id,
-      stageAllowsRally2(st)
-        ? buildBestInCategoryStageMap(entries, st.id)
-        : new Map<string, number>(),
-    ]),
-  );
 
   type LegPdfRow = {
     row: Entry;
@@ -425,8 +420,8 @@ function buildRallyLegPdfSheet(
   const ranked: LegPdfRow[] = entries.map((row) => {
     let jumpPenaltyMs = 0;
     const cells = stagesInLeg.map((st) => {
-      // Show each completed stage’s times even if later stages are still live.
-      if (st.progressStatus !== "completed") {
+      // LEG1: times as in stage control. LEG2+: only completed stages.
+      if (!revealTimesWithoutCompleted && st.progressStatus !== "completed") {
         return {
           text: "—",
           outcome: null as "DNS" | "DNF" | "RET" | null,
@@ -436,11 +431,7 @@ function buildRallyLegPdfSheet(
       const values = getRallyStageTimingValues(row, st.id);
       const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
       jumpPenaltyMs += pen;
-      const cell = resolveRallyStageCell(
-        row,
-        st,
-        bestByStage.get(st.id) ?? new Map(),
-      );
+      const cell = resolveRallyStageCell(row, st);
       if (cell.outcome != null) {
         return { text: cell.outcome, outcome: cell.outcome, ssMs: null };
       }
@@ -458,10 +449,10 @@ function buildRallyLegPdfSheet(
       })),
     );
     const allTimedNoOutcome =
-      allLegStagesCompleted &&
+      totalsReady &&
       cells.length > 0 &&
       cells.every((c) => c.outcome == null && c.ssMs != null);
-    const eventPenaltyMs = allLegStagesCompleted
+    const eventPenaltyMs = totalsReady
       ? getRallyEventPenaltyItems(row)
           .filter((item) => legOrders.has(item.afterStageOrder))
           .reduce(
@@ -476,7 +467,7 @@ function buildRallyLegPdfSheet(
     const totalMs =
       ssTimesMs != null ? ssTimesMs + penaltyMs : null;
     const sortTier: 0 | 1 | 2 =
-      allLegStagesCompleted && rowOutcome != null
+      totalsReady && rowOutcome != null
         ? 2
         : totalMs != null
           ? 0
@@ -540,11 +531,11 @@ function buildRallyLegPdfSheet(
     legRow.row.car || "—",
     legRow.row.class || "—",
     ...legRow.cells,
-    allLegStagesCompleted && legRow.rowOutcome != null
+    totalsReady && legRow.rowOutcome != null
       ? legRow.rowOutcome
       : formatDurationMs(legRow.ssTimesMs),
     legRow.penaltyMs > 0 ? formatDurationMs(legRow.penaltyMs) : "—",
-    allLegStagesCompleted && legRow.rowOutcome != null
+    totalsReady && legRow.rowOutcome != null
       ? legRow.rowOutcome
       : formatDurationMs(legRow.totalMs),
     legRow.sortTier !== 0 ||

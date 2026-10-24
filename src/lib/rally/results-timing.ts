@@ -112,17 +112,13 @@ export function getRallyStageTimingValues(
   };
 }
 
-/** Extra stage time for Rally2: best in class + 10 minutes. */
-export const RALLY2_NOTIONAL_EXTRA_MS = 10 * 60_000;
-
-export const RALLY2_FOOTNOTE =
-  "* Cars under Rally2 rules (best in class + 10:00).";
+export const RALLY2_FOOTNOTE = "* Cars under Rally2 rules.";
 
 /** LEG 2 starting-order print: cars that used Rally2 on LEG 1. */
 export const RALLY2_LEG2_START_FOOTNOTE =
   "*Subject to passing rescrutineering for all retired car(s) restarting under Art.55.";
 
-/** Rally2 (notional time) applies only on competitive LEG 1 stages. */
+/** Rally2 marker applies only on competitive LEG 1 stages. */
 export function stageAllowsRally2(
   stage: Pick<Stage, "leg" | "kind">,
 ): boolean {
@@ -145,85 +141,23 @@ export function entryHasRally2OnStages(
   );
 }
 
-/** Category key: series + class (trim). Peers must match both. */
-export function rallyCategoryKey(row: Entry): string {
-  return `${row.series ?? ""}\0${(row.class ?? "").trim()}`;
-}
-
-/**
- * Clocked stage duration used for “best in class”.
- * Rally2 cars are excluded so they do not define the baseline.
- */
-export function clockedNonRally2StageDurationMs(
-  row: Entry,
-  stageId: string,
-): number | null {
-  const values = getRallyStageTimingValues(row, stageId);
-  if (values.rally2) return null;
-  const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
-  if (cell.outcome != null) return null;
-  return cell.durationMs;
-}
-
-/** Fastest clocked (non-Rally2) time per category on a stage. */
-export function buildBestInCategoryStageMap(
-  entries: Entry[],
-  stageId: string,
-): Map<string, number> {
-  const map = new Map<string, number>();
-  for (const row of entries) {
-    if (row.start === false) continue;
-    const d = clockedNonRally2StageDurationMs(row, stageId);
-    if (d == null) continue;
-    const key = rallyCategoryKey(row);
-    const prev = map.get(key);
-    if (prev == null || d < prev) map.set(key, d);
-  }
-  return map;
-}
-
 export type ResolvedRallyStageCell = {
   outcome: "DNS" | "DNF" | "RET" | null;
   durationMs: number | null;
   rally2: boolean;
-  /** Duration is best-in-class + 10:00 (not a clocked run). */
-  rally2Notional: boolean;
 };
 
-/**
- * Effective stage cell for results.
- * LEG1 + Rally2 marked: time = best in class + 10:00
- * (replaces clock / DNF / DNS / RET for that stage). LEG2+ ignores Rally2.
- */
+/** Stage cell from clocked times; Rally2 is a display flag only (no notional time). */
 export function resolveRallyStageCell(
   row: Entry,
   stage: Pick<Stage, "id" | "leg" | "kind">,
-  bestInCategory: Map<string, number>,
 ): ResolvedRallyStageCell {
   const values = getRallyStageTimingValues(row, stage.id);
-  if (stageAllowsRally2(stage) && values.rally2) {
-    const best = bestInCategory.get(rallyCategoryKey(row));
-    if (best != null) {
-      return {
-        outcome: null,
-        durationMs: best + RALLY2_NOTIONAL_EXTRA_MS,
-        rally2: true,
-        rally2Notional: true,
-      };
-    }
-    return {
-      outcome: null,
-      durationMs: null,
-      rally2: true,
-      rally2Notional: true,
-    };
-  }
   const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
   return {
     outcome: cell.outcome,
     durationMs: cell.durationMs,
-    rally2: false,
-    rally2Notional: false,
+    rally2: stageAllowsRally2(stage) && values.rally2,
   };
 }
 
@@ -340,24 +274,11 @@ export function buildRallyOverallRanking(
   if (stages.length === 0) return [];
   const stageOrders = new Set(stages.map((s) => s.order));
   const throughOrder = Math.max(...stages.map((s) => s.order));
-  const bestByStage = new Map(
-    stages.map((st) => [
-      st.id,
-      stageAllowsRally2(st)
-        ? buildBestInCategoryStageMap(entries, st.id)
-        : new Map<string, number>(),
-    ]),
-  );
-
   return entries
     .map((row) => {
       const stageCells = stages.map((st) => {
         const values = getRallyStageTimingValues(row, st.id);
-        const cell = resolveRallyStageCell(
-          row,
-          st,
-          bestByStage.get(st.id) ?? new Map(),
-        );
+        const cell = resolveRallyStageCell(row, st);
         const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
         return { cell, jumpMs, ssMs: cell.durationMs };
       });
@@ -429,24 +350,12 @@ export function buildRallyFinalRanking(
   stages: Stage[],
 ): RallyFinalRankRow[] {
   if (stages.length === 0) return [];
-  const bestByStage = new Map(
-    stages.map((st) => [
-      st.id,
-      stageAllowsRally2(st)
-        ? buildBestInCategoryStageMap(entries, st.id)
-        : new Map<string, number>(),
-    ]),
-  );
 
   return entries
     .map((row) => {
       const stageCells = stages.map((st) => {
         const values = getRallyStageTimingValues(row, st.id);
-        const cell = resolveRallyStageCell(
-          row,
-          st,
-          bestByStage.get(st.id) ?? new Map(),
-        );
+        const cell = resolveRallyStageCell(row, st);
         const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
         const timeMs =
           cell.durationMs != null ? cell.durationMs + jumpMs : null;

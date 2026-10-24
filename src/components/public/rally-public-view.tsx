@@ -28,7 +28,6 @@ import {
 } from "@/lib/rally/shakedown-passes";
 import {
   RALLY2_FOOTNOTE,
-  buildBestInCategoryStageMap,
   buildRallyFinalRanking,
   buildRallyOverallRanking,
   buildSpeedFinalRanking,
@@ -1677,37 +1676,32 @@ function LegResultsTable({
     rally2: boolean;
   };
 
+  const legNumber = useMemo(() => {
+    const raw = stagesInLeg[0]?.leg;
+    return typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : 1;
+  }, [stagesInLeg]);
+  /** LEG1 shows times as entered in stage control; LEG2+ waits for stages marked completed. */
+  const revealTimesWithoutCompleted = legNumber === 1;
   const allLegStagesCompleted = useMemo(
     () =>
       stagesInLeg.length > 0 &&
       stagesInLeg.every((st) => st.progressStatus === "completed"),
     [stagesInLeg],
   );
+  const totalsReady = revealTimesWithoutCompleted || allLegStagesCompleted;
   const sorted = useMemo((): LegRow[] => {
     const legOrders = new Set(stagesInLeg.map((s) => s.order));
-    const bestByStage = new Map(
-      stagesInLeg.map((st) => [
-        st.id,
-        stageAllowsRally2(st)
-          ? buildBestInCategoryStageMap(entries, st.id)
-          : new Map<string, number>(),
-      ]),
-    );
     const rows: LegRow[] = entries.map((row) => {
       let jumpPenaltyMs = 0;
       const cells = stagesInLeg.map((st) => {
         const values = getRallyStageTimingValues(row, st.id);
         const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-        // Only reveal stage times once that stage is officially completed.
-        if (st.progressStatus !== "completed") {
+        // LEG1: times as in stage control. LEG2+: only once stage is completed.
+        if (!revealTimesWithoutCompleted && st.progressStatus !== "completed") {
           return { outcome: null, durationMs: null };
         }
         jumpPenaltyMs += pen;
-        const cell = resolveRallyStageCell(
-          row,
-          st,
-          bestByStage.get(st.id) ?? new Map(),
-        );
+        const cell = resolveRallyStageCell(row, st);
         // Per-SS cell is pure stage time; jump starts are in Penalty.
         return {
           outcome: cell.outcome,
@@ -1718,7 +1712,7 @@ function LegResultsTable({
       const allTimedNoOutcome =
         cells.length > 0 &&
         cells.every((c) => c.outcome == null && c.durationMs != null);
-      const eventPenaltyMs = allLegStagesCompleted
+      const eventPenaltyMs = totalsReady
         ? getRallyEventPenaltyItems(row)
             .filter((item) => legOrders.has(item.afterStageOrder))
             .reduce(
@@ -1727,14 +1721,14 @@ function LegResultsTable({
             )
         : 0;
       const ssTimesMs =
-        allLegStagesCompleted && allTimedNoOutcome
+        totalsReady && allTimedNoOutcome
           ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
           : null;
       const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
       const totalMs =
         ssTimesMs != null ? ssTimesMs + penaltyMs : null;
       const sortTier: 0 | 1 | 2 =
-        allLegStagesCompleted && rowOutcome != null
+        totalsReady && rowOutcome != null
           ? 2
           : totalMs != null
             ? 0
@@ -1769,7 +1763,7 @@ function LegResultsTable({
       }
       return a.row.startNumber - b.row.startNumber;
     });
-  }, [allLegStagesCompleted, entries, stagesInLeg]);
+  }, [entries, revealTimesWithoutCompleted, stagesInLeg, totalsReady]);
 
   const leaderTotal = sorted.find((x) => x.sortTier === 0)?.totalMs ?? null;
   const hasRally2Marker = sorted.some((x) => x.rally2);
@@ -1845,7 +1839,7 @@ function LegResultsTable({
                   </td>
                 ))}
                 <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {allLegStagesCompleted && rowOutcome != null
+                  {totalsReady && rowOutcome != null
                     ? rowOutcome
                     : formatDurationMs(ssTimesMs)}
                 </td>
@@ -1853,7 +1847,7 @@ function LegResultsTable({
                   {penaltyMs > 0 ? formatDurationMs(penaltyMs) : "—"}
                 </td>
                 <td className="align-middle !text-center font-mono text-[11px] text-[var(--ewrc-strong)] sm:text-xs">
-                  {allLegStagesCompleted && rowOutcome != null
+                  {totalsReady && rowOutcome != null
                     ? rowOutcome
                     : formatDurationMs(totalMs)}
                 </td>
@@ -2016,13 +2010,10 @@ function StageTimesTable({
   const showRally2 = !!stage && stageAllowsRally2(stage);
   const sorted = useMemo(() => {
     if (shakedown || !stage || !stageId) return [];
-    const bestInCategory = showRally2
-      ? buildBestInCategoryStageMap(entries, stageId)
-      : new Map<string, number>();
     return [...entries]
       .map((row) => {
         const values = getRallyStageTimingValues(row, stageId);
-        const cell = resolveRallyStageCell(row, stage, bestInCategory);
+        const cell = resolveRallyStageCell(row, stage);
         const penaltyMs = parsePenaltyDurationMs(values.penaltyValue);
         const pen = penaltyMs ?? 0;
         const rally2 = showRally2 && cell.rally2;

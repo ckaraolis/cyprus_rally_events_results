@@ -17,7 +17,6 @@ import {
 } from "@/lib/rally/shakedown-passes";
 import {
   RALLY2_FOOTNOTE,
-  buildBestInCategoryStageMap,
   buildRallyFinalRanking,
   buildRallyOverallRanking,
   entryHasRally2OnStages,
@@ -238,14 +237,11 @@ export async function exportRallyStageExcel(
   }
 
   const showRally2 = stageAllowsRally2(stage);
-  const bestInCategory = showRally2
-    ? buildBestInCategoryStageMap(entries, stage.id)
-    : new Map<string, number>();
   // SS stage export: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = started(entries)
     .map((row) => {
       const v = stageValues(row, stage.id);
-      const cell = resolveRallyStageCell(row, stage, bestInCategory);
+      const cell = resolveRallyStageCell(row, stage);
       const penaltyMs = parsePenaltyMs(v.penalty) ?? 0;
       const ssTimeMs = cell.durationMs;
       const totalMs =
@@ -388,35 +384,30 @@ export async function exportRallyLegExcel(
   leg: number,
   allStages: Stage[] = stagesInLeg,
 ): Promise<void> {
+  const legNumber =
+    typeof stagesInLeg[0]?.leg === "number" &&
+    Number.isFinite(stagesInLeg[0].leg)
+      ? Math.floor(stagesInLeg[0].leg)
+      : 1;
+  const revealTimesWithoutCompleted = legNumber === 1;
   const allCompleted =
     stagesInLeg.length > 0 &&
     stagesInLeg.every((st) => st.progressStatus === "completed");
+  const totalsReady = revealTimesWithoutCompleted || allCompleted;
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
-  const bestByStage = new Map(
-    stagesInLeg.map((st) => [
-      st.id,
-      stageAllowsRally2(st)
-        ? buildBestInCategoryStageMap(entries, st.id)
-        : new Map<string, number>(),
-    ]),
-  );
   const ranked = started(entries).map((row) => {
     let jumpMs = 0;
     const stageTexts: string[] = [];
     const ssDurations: Array<number | null> = [];
     let outcome: string | null = null;
     for (const st of stagesInLeg) {
-      if (st.progressStatus !== "completed") {
+      if (!revealTimesWithoutCompleted && st.progressStatus !== "completed") {
         stageTexts.push("—");
         ssDurations.push(null);
         continue;
       }
       const v = stageValues(row, st.id);
-      const cell = resolveRallyStageCell(
-        row,
-        st,
-        bestByStage.get(st.id) ?? new Map(),
-      );
+      const cell = resolveRallyStageCell(row, st);
       const pen = parsePenaltyMs(v.penalty) ?? 0;
       jumpMs += pen;
       if (cell.outcome) {
@@ -434,17 +425,17 @@ export async function exportRallyLegExcel(
       }
     }
     const allTimed =
-      allCompleted &&
+      totalsReady &&
       ssDurations.length > 0 &&
       ssDurations.every((d) => d != null);
-    const eventMs = allCompleted ? eventPenaltyMs(row, undefined, legOrders) : 0;
+    const eventMs = totalsReady ? eventPenaltyMs(row, undefined, legOrders) : 0;
     const ssTimesMs = allTimed
       ? ssDurations.reduce((sum, d) => sum + (d ?? 0), 0)
       : null;
     const penaltyMs = jumpMs + eventMs;
     const totalMs = ssTimesMs != null ? ssTimesMs + penaltyMs : null;
     const sortTier =
-      allCompleted && outcome ? 2 : totalMs != null ? 0 : 1;
+      totalsReady && outcome ? 2 : totalMs != null ? 0 : 1;
     return {
       row,
       stageTexts,
@@ -452,7 +443,7 @@ export async function exportRallyLegExcel(
       penaltyMs,
       totalMs,
       sortTier,
-      outcome: allCompleted ? outcome : null,
+      outcome: totalsReady ? outcome : null,
       rally2: entryHasRally2OnStages(row, stagesInLeg),
     };
   });
