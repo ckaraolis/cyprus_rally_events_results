@@ -23,9 +23,10 @@ import {
 } from "./starting-order-print";
 import {
   RALLY2_FOOTNOTE,
+  buildBestInCategoryStageMap,
   buildRallyOverallRanking,
   buildSpeedFinalRanking,
-  classifyRallyStageLegCell,
+  entryHasRally2OnStages,
   formatDiffDurationMs,
   formatDurationMs,
   getRallyEventPenaltyItems,
@@ -37,6 +38,8 @@ import {
   parseClockToDayMs,
   parsePenaltyDurationMs,
   parseRallyStageTimingBlob,
+  resolveRallyStageCell,
+  stageAllowsRally2,
   stageChipLabel,
   stageHeadingLabel,
   worstLegRowOutcome,
@@ -299,12 +302,15 @@ export function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
   }
   const stageId = stage.id;
   const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
-  const showRally2 = isCompetitiveStage(stage);
+  const showRally2 = stageAllowsRally2(stage);
+  const bestInCategory = showRally2
+    ? buildBestInCategoryStageMap(entries, stageId)
+    : new Map<string, number>();
   // SS stage sheets: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = [...entries]
     .map((row) => {
       const values = getRallyStageTimingValues(row, stageId);
-      const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+      const cell = resolveRallyStageCell(row, stage, bestInCategory);
       const penaltyMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
       const ssTimeMs = cell.durationMs;
       const totalMs =
@@ -314,7 +320,7 @@ export function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
         ssTimeMs,
         penaltyMs,
         totalMs,
-        rally2: showRally2 && values.rally2,
+        rally2: showRally2 && cell.rally2,
       };
     })
     .filter(
@@ -386,16 +392,24 @@ export function buildRallyOverallPdfRows(
   );
 }
 
-/** LEG sheet: all crews, per-SS times (only when stages are completed). */
+/** LEG sheet: all crews, per-SS times (revealed when that stage is completed). */
 function buildRallyLegPdfSheet(
   entries: Entry[],
   stagesInLeg: Stage[],
   allStages: Stage[],
-): { columns: string[]; tableRows: string[][] } {
+): { columns: string[]; tableRows: string[][]; footnote: string | null } {
   const allLegStagesCompleted =
     stagesInLeg.length > 0 &&
     stagesInLeg.every((st) => st.progressStatus === "completed");
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
+  const bestByStage = new Map(
+    stagesInLeg.map((st) => [
+      st.id,
+      stageAllowsRally2(st)
+        ? buildBestInCategoryStageMap(entries, st.id)
+        : new Map<string, number>(),
+    ]),
+  );
 
   type LegPdfRow = {
     row: Entry;
@@ -405,12 +419,14 @@ function buildRallyLegPdfSheet(
     totalMs: number | null;
     sortTier: 0 | 1 | 2;
     rowOutcome: "DNS" | "DNF" | "RET" | null;
+    rally2: boolean;
   };
 
   const ranked: LegPdfRow[] = entries.map((row) => {
     let jumpPenaltyMs = 0;
     const cells = stagesInLeg.map((st) => {
-      if (!allLegStagesCompleted || st.progressStatus !== "completed") {
+      // Show each completed stage’s times even if later stages are still live.
+      if (st.progressStatus !== "completed") {
         return {
           text: "—",
           outcome: null as "DNS" | "DNF" | "RET" | null,
@@ -420,7 +436,11 @@ function buildRallyLegPdfSheet(
       const values = getRallyStageTimingValues(row, st.id);
       const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
       jumpPenaltyMs += pen;
-      const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
+      const cell = resolveRallyStageCell(
+        row,
+        st,
+        bestByStage.get(st.id) ?? new Map(),
+      );
       if (cell.outcome != null) {
         return { text: cell.outcome, outcome: cell.outcome, ssMs: null };
       }
@@ -469,6 +489,7 @@ function buildRallyLegPdfSheet(
       totalMs,
       sortTier,
       rowOutcome,
+      rally2: entryHasRally2OnStages(row, stagesInLeg),
     };
   });
 
@@ -505,7 +526,9 @@ function buildRallyLegPdfSheet(
   ];
   const tableRows = ranked.map((legRow, i) => [
     String(i + 1),
-    String(legRow.row.startNumber),
+    legRow.rally2
+      ? `*${legRow.row.startNumber}`
+      : String(legRow.row.startNumber),
     formatNameWithNationality(
       legRow.row.driver,
       legRow.row.driverCountryCode,
@@ -531,7 +554,8 @@ function buildRallyLegPdfSheet(
       ? "—"
       : `+${formatDiffDurationMs(legRow.totalMs - leaderTotal)}`,
   ]);
-  return { columns, tableRows };
+  const footnote = ranked.some((x) => x.rally2) ? RALLY2_FOOTNOTE : null;
+  return { columns, tableRows, footnote };
 }
 
 export type SpeedPrintRunId = "trial" | "run1" | "run2" | "best";
@@ -726,7 +750,7 @@ export async function printRallyLegResultsPdf(
   const defaultSubject = `LEG ${input.leg} Overall Classification`;
   return printHtmlDocument(
     ({ subject, series }) => {
-      const { columns, tableRows } = buildRallyLegPdfSheet(
+      const { columns, tableRows, footnote } = buildRallyLegPdfSheet(
         entriesForPrint(input.entries, series),
         input.stagesInLeg,
         input.allStages,
@@ -738,6 +762,7 @@ export async function printRallyLegResultsPdf(
         columns,
         tableRows,
         logoUrl: normalizePrintLogoUrl(input.logoUrl),
+        footnote,
         rallyLegLayout: true,
         legStageCount: input.stagesInLeg.length,
         centerFromCol: 5,

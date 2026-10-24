@@ -1,4 +1,4 @@
-import type { Entry } from "./types";
+import type { Entry, Stage } from "./types";
 import { formatNameWithNationality } from "@/lib/flags";
 import {
   resolveStartingOrderTime,
@@ -16,6 +16,11 @@ import {
 } from "./dual-series";
 import { injectPrintSignatureFooter } from "./print-signature";
 import { promptPrintSignature } from "./print-signature-prompt";
+import {
+  RALLY2_LEG2_START_FOOTNOTE,
+  entryHasRally2OnStages,
+  stageAllowsRally2,
+} from "./results-timing";
 
 function escapeHtml(raw: string): string {
   return raw
@@ -174,6 +179,8 @@ export function buildStartingOrderPdfHtml(input: {
   startTimeByEntryId?: Record<string, string>;
   /** Sheet title under the logos (editable in the print dialog). */
   sheetTitle?: string;
+  /** All event stages — used on LEG 2 to mark LEG1 Rally2 restarts with *. */
+  stages?: Stage[];
 }): string {
   const n = Math.max(input.rows.length, 1);
   const fontPt = Math.max(
@@ -204,17 +211,28 @@ export function buildStartingOrderPdfHtml(input: {
     startTimeByEntryId: input.startTimeByEntryId ?? {},
   };
 
+  const leg1Stages = (input.stages ?? []).filter(stageAllowsRally2);
+  const markRally2Restarts = input.leg === 2 && leg1Stages.length > 0;
+  let hasRally2Marker = false;
+
   const tableRows =
     input.rows.length > 0
-      ? input.rows.map((row, i) => [
-          String(i + 1),
-          String(row.startNumber),
-          formatNameWithNationality(row.driver, row.driverCountryCode),
-          formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
-          row.car || "—",
-          row.class || "—",
-          resolveStartingOrderTime(orderForResolve, row.id, i),
-        ])
+      ? input.rows.map((row, i) => {
+          const rally2Restart =
+            markRally2Restarts && entryHasRally2OnStages(row, leg1Stages);
+          if (rally2Restart) hasRally2Marker = true;
+          return [
+            String(i + 1),
+            rally2Restart
+              ? `*${row.startNumber}`
+              : String(row.startNumber),
+            formatNameWithNationality(row.driver, row.driverCountryCode),
+            formatNameWithNationality(row.coDriver, row.coDriverCountryCode),
+            row.car || "—",
+            row.class || "—",
+            resolveStartingOrderTime(orderForResolve, row.id, i),
+          ];
+        })
       : [];
 
   const bodyHtml =
@@ -231,6 +249,11 @@ export function buildStartingOrderPdfHtml(input: {
           )
           .join("")
       : `<tr><td colspan="${columns.length}" class="c" style="color:#666;">No starters in starting order.</td></tr>`;
+
+  const footnoteHtml =
+    hasRally2Marker
+      ? `<p class="footnote">${escapeHtml(RALLY2_LEG2_START_FOOTNOTE)}</p>`
+      : "";
 
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
   const sheetTitle =
@@ -256,6 +279,7 @@ export function buildStartingOrderPdfHtml(input: {
   h1 { margin: 0; font-size: ${titlePt}pt; line-height: 1.15; }
   h2 { margin: 2px 0 0; font-size: ${subPt}pt; font-weight: 600; line-height: 1.2; }
   h3 { margin: 1px 0 0; font-size: ${Math.max(7, subPt - 1)}pt; font-weight: 500; color: #444; text-transform: uppercase; letter-spacing: .04em; }
+  .footnote { margin: 3mm 0 0; font-size: ${Math.max(6.5, fontPt - 1)}pt; line-height: 1.25; color: #222; }
   ${branded ? cyprusRallyPrintHeaderCss(logoH) : ""}
   table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: ${fontPt}pt; }
   th, td { border: 1px solid #bdbdbd; padding: ${padY}mm ${padX}mm; vertical-align: middle; line-height: 1.2; word-wrap: break-word; }
@@ -280,7 +304,7 @@ export function buildStartingOrderPdfHtml(input: {
         const cls = shouldCenter(colIdx) ? "c" : "l";
         return `<th class="${cls}">${escapeHtml(c)}</th>`;
       })
-      .join("")}</tr></thead><tbody>${bodyHtml}</tbody></table></div></body></html>`;
+      .join("")}</tr></thead><tbody>${bodyHtml}</tbody></table>${footnoteHtml}</div></body></html>`;
 }
 
 export async function printStartingOrderPdf(input: {
@@ -291,6 +315,7 @@ export async function printStartingOrderPdf(input: {
   firstCarStartTime: string;
   intervalMinutes: number;
   startTimeByEntryId?: Record<string, string>;
+  stages?: Stage[];
 }): Promise<boolean> {
   const defaultSubject = startingOrderPrintTitle(input.leg);
   return printHtmlDocument(

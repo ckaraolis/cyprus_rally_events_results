@@ -66,6 +66,7 @@ import {
   type StageTimingBlobEntry,
 } from "@/lib/rally/shakedown-passes";
 import { AdminCountrySelect } from "./admin-country-select";
+import { stageAllowsRally2 } from "@/lib/rally/results-timing";
 import {
   buildOfficialFinalResultRows,
   exportRallyAfterSsExcel,
@@ -743,6 +744,7 @@ export function EventEditor({ event: initial }: Props) {
       firstCarStartTime: currentLegStartingOrder.firstCarStartTime || "09:00",
       intervalMinutes: currentLegStartingOrder.intervalMinutes,
       startTimeByEntryId: currentLegStartingOrder.startTimeByEntryId ?? {},
+      stages,
     });
   }
 
@@ -2111,9 +2113,9 @@ export function EventEditor({ event: initial }: Props) {
       : DEFAULT_RALLY_STAGE_ALGE_CONFIG;
   const isShakedownTiming =
     !!selectedRallyTimingStage && isShakedownStage(selectedRallyTimingStage);
-  /** Rally2 status flag only on competitive SS (not Shakedown / Qualify). */
+  /** Rally2 only on competitive LEG 1 SS (not LEG 2+, Shakedown, or Qualify). */
   const isRally2Timing =
-    !!selectedRallyTimingStage && isCompetitiveStage(selectedRallyTimingStage);
+    !!selectedRallyTimingStage && stageAllowsRally2(selectedRallyTimingStage);
   const shakedownTimingPassCount: ShakedownPassCount = isShakedownTiming
     ? getShakedownPassCount(selectedRallyTimingStage)
     : 3;
@@ -4610,7 +4612,7 @@ export function EventEditor({ event: initial }: Props) {
                               ? "border-amber-600 bg-amber-600 text-white dark:border-amber-500 dark:bg-amber-500"
                               : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                           }`}
-                          title="Mark crew as Rally2 (* on stage results)"
+                          title="LEG1 Rally2: stage time = best in class + 10:00"
                         >
                           Rally2
                         </button>
@@ -4823,7 +4825,7 @@ export function EventEditor({ event: initial }: Props) {
                                     ? "border-amber-600 bg-amber-600 text-white dark:border-amber-500 dark:bg-amber-500"
                                     : "border-zinc-300 text-zinc-700 hover:bg-zinc-50 dark:border-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-800"
                                 }`}
-                                title="Mark crew as Rally2 (* on stage results)"
+                                title="LEG1 Rally2: stage time = best in class + 10:00"
                               >
                                 Rally2
                               </button>
