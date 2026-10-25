@@ -70,6 +70,26 @@ export function competitiveStages(stages: Stage[]): Stage[] {
   return sortStagesByKindThenOrder(stages).filter(isCompetitiveStage);
 }
 
+/** Competitive stages grouped by itinerary leg (leg 1, 2, …), in leg order. */
+export function competitiveStagesByLeg(
+  stages: Stage[],
+): Array<{ leg: number; stages: Stage[] }> {
+  const byLeg = new Map<number, Stage[]>();
+  const legOrder: number[] = [];
+  for (const s of competitiveStages(stages)) {
+    const leg =
+      typeof s.leg === "number" && Number.isFinite(s.leg) && s.leg >= 1
+        ? Math.floor(s.leg)
+        : 1;
+    if (!byLeg.has(leg)) {
+      byLeg.set(leg, []);
+      legOrder.push(leg);
+    }
+    byLeg.get(leg)!.push(s);
+  }
+  return legOrder.map((leg) => ({ leg, stages: byLeg.get(leg)! }));
+}
+
 /** 1-based SS number among competitive stages only (Shakedown/Qualify ignored). */
 export function competitiveStageNumber(
   stage: Stage,

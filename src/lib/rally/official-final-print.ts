@@ -38,8 +38,13 @@ function buildOfficialFinalResultsPdfHtml(input: {
   entries: Entry[];
   stages: Stage[];
   sheetTitle: string;
+  eventPenaltyMode?: "through-max" | "in-stages-only";
 }): string {
-  const tableRows = buildOfficialFinalResultRows(input.entries, input.stages);
+  const tableRows = buildOfficialFinalResultRows(
+    input.entries,
+    input.stages,
+    input.eventPenaltyMode ?? "through-max",
+  );
   const n = Math.max(tableRows.length, 1);
   const fontPt = Math.max(
     5.5,
@@ -127,6 +132,10 @@ export async function printOfficialFinalResultsPdf(input: {
    * filtered). When omitted, dual-series events ask in the print dialog.
    */
   dualSeries?: boolean;
+  /**
+   * `in-stages-only`: treat `stages` as a standalone rally (e.g. one CRC leg).
+   */
+  eventPenaltyMode?: "through-max" | "in-stages-only";
 }): Promise<boolean> {
   const defaultSubject =
     (input.sheetTitle ?? "").trim() || "Official Final Results";
@@ -142,6 +151,7 @@ export async function printOfficialFinalResultsPdf(input: {
         entries,
         stages: input.stages,
         sheetTitle: subject,
+        eventPenaltyMode: input.eventPenaltyMode,
       });
     },
     {

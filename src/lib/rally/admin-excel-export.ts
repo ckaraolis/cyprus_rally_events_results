@@ -524,8 +524,9 @@ export async function exportRallyLegExcel(
 export function buildOfficialFinalResultRows(
   entries: Entry[],
   stages: Stage[],
+  eventPenaltyMode: "through-max" | "in-stages-only" = "through-max",
 ): string[][] {
-  const ranked = buildRallyFinalRanking(entries, stages);
+  const ranked = buildRallyFinalRanking(entries, stages, eventPenaltyMode);
   const leader = ranked.find((x) => x.tier === 0)?.totalMs ?? null;
   let classifiedPos = 0;
   return ranked.map(
@@ -553,11 +554,19 @@ export async function exportRallyFinalExcel(
   eventName: string,
   entries: Entry[],
   stages: Stage[],
+  options?: {
+    sheetName?: string;
+    eventPenaltyMode?: "through-max" | "in-stages-only";
+  },
 ): Promise<void> {
-  const rows = buildOfficialFinalResultRows(entries, stages);
+  const rows = buildOfficialFinalResultRows(
+    entries,
+    stages,
+    options?.eventPenaltyMode ?? "through-max",
+  );
   await downloadExcelTable({
     fileName: `${eventName}-Final-Results`,
-    sheetName: "Final Results",
+    sheetName: (options?.sheetName ?? "Final Results").slice(0, 31),
     columns: [
       "Pos",
       "#",

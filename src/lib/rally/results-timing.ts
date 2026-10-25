@@ -377,13 +377,21 @@ export function buildRallyOverallRanking(
  * (0) classified finishers by total time,
  * (1) retirements (RET then DNF),
  * (2) did not start (DNS, including Start=No).
+ *
+ * `eventPenaltyMode`:
+ * - `through-max` (default): event penalties with afterStageOrder ≤ max stage order
+ * - `in-stages-only`: only penalties whose afterStageOrder is in this stage set
+ *   (use for Cyprus Challenge / per-leg “separate rally” sheets)
  */
 export function buildRallyFinalRanking(
   entries: Entry[],
   stages: Stage[],
+  eventPenaltyMode: "through-max" | "in-stages-only" = "through-max",
 ): RallyFinalRankRow[] {
   const activeStages = stagesCountingInOverall(stages);
   if (activeStages.length === 0) return [];
+  const stageOrders = new Set(activeStages.map((s) => s.order));
+  const throughOrder = Math.max(...activeStages.map((s) => s.order));
 
   return entries
     .map((row) => {
@@ -401,7 +409,16 @@ export function buildRallyFinalRanking(
       const timeMs = allTimed
         ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
         : null;
-      const penaltyMs = getRallyEventPenaltyTotalMs(row);
+      const penaltyMs =
+        eventPenaltyMode === "in-stages-only"
+          ? getRallyEventPenaltyItems(row)
+              .filter((item) => stageOrders.has(item.afterStageOrder))
+              .reduce(
+                (sum, item) =>
+                  sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
+                0,
+              )
+          : getRallyEventPenaltyTotalMs(row, throughOrder);
       const totalMs = timeMs != null ? timeMs + penaltyMs : null;
       const rowOutcome = worstLegRowOutcome(stageCells.map((c) => c.cell));
       const nonStarter = row.start === false;

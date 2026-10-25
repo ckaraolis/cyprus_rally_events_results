@@ -51,6 +51,7 @@ import {
   stageControlLabel,
   stageHasKind,
   competitiveStages,
+  competitiveStagesByLeg,
 } from "@/lib/rally/stage-kind";
 import {
   findShakedownPassForTrigger,
@@ -416,24 +417,42 @@ export function EventEditor({ event: initial }: Props) {
     const cyprusEntries = filterEntriesCyNational(
       entries.filter((e) => e.start !== false),
     );
-    const competitive = competitiveStages(stages);
+    const legs = competitiveStagesByLeg(stages);
     if (cyprusEntries.length === 0) {
       return {
         columns,
-        rows: [] as string[][],
+        legs: [] as Array<{
+          leg: number;
+          stageLabels: string;
+          rows: string[][];
+        }>,
         emptyMessage: "No CY NATIONAL = Yes crews yet.",
       };
     }
-    if (competitive.length === 0) {
+    if (legs.length === 0) {
       return {
         columns,
-        rows: [] as string[][],
+        legs: [] as Array<{
+          leg: number;
+          stageLabels: string;
+          rows: string[][];
+        }>,
         emptyMessage: "Add competitive stages to build classification.",
       };
     }
     return {
       columns,
-      rows: buildOfficialFinalResultRows(cyprusEntries, competitive),
+      legs: legs.map(({ leg, stages: stagesInLeg }) => ({
+        leg,
+        stageLabels: stagesInLeg
+          .map((st) => stageControlLabel(st, stages).replace(/\s+/g, ""))
+          .join("–"),
+        rows: buildOfficialFinalResultRows(
+          cyprusEntries,
+          stagesInLeg,
+          "in-stages-only",
+        ),
+      })),
       emptyMessage: "",
     };
   }, [entries, stages]);
@@ -5505,96 +5524,137 @@ export function EventEditor({ event: initial }: Props) {
       activeTab === "cyprus-championship" ? (
         <section className="rounded-2xl border border-zinc-200 bg-white p-6 dark:border-zinc-800 dark:bg-zinc-900">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-            Cyprus Rally Challenge Final Results
+            Cyprus Rally Challenge — per-leg results
           </h2>
           <p className="mt-2 max-w-3xl text-sm text-zinc-600 dark:text-zinc-400">
-            Admin-only check sheet. Includes only crews with{" "}
-            <strong>CY NATIONAL = Yes</strong> (and Start = Yes). Review
-            before printing — this is not shown on the public website.
+            Admin-only. Each leg is treated as a{" "}
+            <strong>separate rally</strong> (own SS times + penalties for that
+            leg only). Crews with <strong>CY NATIONAL = Yes</strong> and Start =
+            Yes. Not shown on the public website.
           </p>
-          <div className="mt-4 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const competitive = competitiveStages(stages);
-                const cyprusEntries = filterEntriesCyNational(
-                  entries.filter((e) => e.start !== false),
+          {cyprusChampionshipPreview.legs.length === 0 ? (
+            <p className="mt-5 p-6 text-center text-sm text-zinc-500">
+              {cyprusChampionshipPreview.emptyMessage}
+            </p>
+          ) : (
+            <div className="mt-5 space-y-8">
+              {cyprusChampionshipPreview.legs.map((legBlock) => {
+                const stagesInLeg =
+                  competitiveStagesByLeg(stages).find(
+                    (x) => x.leg === legBlock.leg,
+                  )?.stages ?? [];
+                return (
+                  <div
+                    key={legBlock.leg}
+                    className="rounded-lg border border-zinc-200 p-4 dark:border-zinc-700"
+                  >
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                          LEG {legBlock.leg}
+                          {legBlock.stageLabels
+                            ? ` (${legBlock.stageLabels})`
+                            : ""}
+                        </h3>
+                        <p className="mt-0.5 text-xs text-zinc-500">
+                          Standalone classification for this leg only.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const cyprusEntries = filterEntriesCyNational(
+                              entries.filter((e) => e.start !== false),
+                            );
+                            if (stagesInLeg.length === 0) {
+                              setFlash(
+                                `No competitive stages on LEG ${legBlock.leg}.`,
+                              );
+                              return;
+                            }
+                            if (cyprusEntries.length === 0) {
+                              setFlash(
+                                "No crews marked CY NATIONAL = Yes. Set the flag on Entries first.",
+                              );
+                              return;
+                            }
+                            void printOfficialFinalResultsPdf({
+                              eventName: meta.name || "Event",
+                              logoUrl: meta.logoUrl ?? "",
+                              entries: cyprusEntries,
+                              stages: stagesInLeg,
+                              sheetTitle: `Cyprus Rally Challenge — LEG ${legBlock.leg} Results`,
+                              dualSeries: false,
+                              eventPenaltyMode: "in-stages-only",
+                            });
+                          }}
+                          className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                        >
+                          Print LEG {legBlock.leg} PDF
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            void exportRallyFinalExcel(
+                              `${meta.name || "Event"}-Cyprus-Rally-Challenge-LEG${legBlock.leg}`,
+                              filterEntriesCyNational(
+                                entries.filter((e) => e.start !== false),
+                              ),
+                              stagesInLeg,
+                              {
+                                sheetName: `CRC LEG${legBlock.leg}`,
+                                eventPenaltyMode: "in-stages-only",
+                              },
+                            );
+                          }}
+                          className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
+                        >
+                          Export LEG {legBlock.leg} Excel
+                        </button>
+                      </div>
+                    </div>
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
+                      {legBlock.rows.length === 0 ? (
+                        <p className="p-4 text-center text-sm text-zinc-500">
+                          No classified results for this leg yet.
+                        </p>
+                      ) : (
+                        <table className="w-full min-w-[720px] text-left text-sm">
+                          <thead>
+                            <tr className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950">
+                              {cyprusChampionshipPreview.columns.map((c) => (
+                                <th key={c} className="px-2 py-2">
+                                  {c}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {legBlock.rows.map((r, i) => (
+                              <tr
+                                key={`leg${legBlock.leg}-${r[1]}-${i}`}
+                                className="border-b border-zinc-100 dark:border-zinc-800"
+                              >
+                                {r.map((cell, ci) => (
+                                  <td
+                                    key={ci}
+                                    className="px-2 py-1.5 font-mono text-xs"
+                                  >
+                                    {cell}
+                                  </td>
+                                ))}
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
                 );
-                if (competitive.length === 0) {
-                  setFlash(
-                    "Add competitive stages before printing Cyprus Rally Challenge results.",
-                  );
-                  return;
-                }
-                if (cyprusEntries.length === 0) {
-                  setFlash(
-                    "No crews marked CY NATIONAL = Yes. Set the flag on Entries first.",
-                  );
-                  return;
-                }
-                void printOfficialFinalResultsPdf({
-                  eventName: meta.name || "Event",
-                  logoUrl: meta.logoUrl ?? "",
-                  entries: cyprusEntries,
-                  stages: competitive,
-                  sheetTitle: "Cyprus Rally Challenge Final Results",
-                  // Already filtered by CY NATIONAL — do not ask MERC/LOCAL.
-                  dualSeries: false,
-                });
-              }}
-              className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
-            >
-              Print PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void exportRallyFinalExcel(
-                  `${meta.name || "Event"}-Cyprus-Rally-Challenge`,
-                  filterEntriesCyNational(
-                    entries.filter((e) => e.start !== false),
-                  ),
-                  competitiveStages(stages),
-                );
-              }}
-              className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
-            >
-              Export Excel
-            </button>
-          </div>
-          <div className="mt-5 overflow-x-auto rounded-lg border border-zinc-200 dark:border-zinc-700">
-            {cyprusChampionshipPreview.rows.length === 0 ? (
-              <p className="p-6 text-center text-sm text-zinc-500">
-                {cyprusChampionshipPreview.emptyMessage}
-              </p>
-            ) : (
-              <table className="w-full min-w-[720px] text-left text-sm">
-                <thead>
-                  <tr className="border-b border-zinc-200 bg-zinc-50 text-xs uppercase text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950">
-                    {cyprusChampionshipPreview.columns.map((c) => (
-                      <th key={c} className="px-2 py-2">
-                        {c}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {cyprusChampionshipPreview.rows.map((r, i) => (
-                    <tr
-                      key={`${r[1]}-${i}`}
-                      className="border-b border-zinc-100 dark:border-zinc-800"
-                    >
-                      {r.map((cell, ci) => (
-                        <td key={ci} className="px-2 py-1.5 font-mono text-xs">
-                          {cell}
-                        </td>
-                      ))}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </div>
+              })}
+            </div>
+          )}
         </section>
       ) : null}
     </div>
