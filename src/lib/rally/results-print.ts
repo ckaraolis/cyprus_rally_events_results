@@ -36,6 +36,8 @@ import {
   parseClockToDayMs,
   parsePenaltyDurationMs,
   parseRallyStageTimingBlob,
+  isStageCancelled,
+  isStageSettledForLeg,
   resolveRallyStageCell,
   stageAllowsRally2,
   stageChipLabel,
@@ -301,6 +303,9 @@ export function buildRallyStagePdfRows(entries: Entry[], stage: Stage): {
   const stageId = stage.id;
   const timeDigits: 2 | 3 = isPreEventStage(stage) ? 3 : 2;
   const showRally2 = stageAllowsRally2(stage);
+  if (isStageCancelled(stage)) {
+    return { rows: [], footnote: null };
+  }
   // SS stage sheets: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = [...entries]
     .map((row) => {
@@ -399,10 +404,10 @@ function buildRallyLegPdfSheet(
       ? Math.floor(stagesInLeg[0].leg)
       : 1;
   const revealTimesWithoutCompleted = legNumber === 1;
-  const allLegStagesCompleted =
+  const allLegStagesSettled =
     stagesInLeg.length > 0 &&
-    stagesInLeg.every((st) => st.progressStatus === "completed");
-  const totalsReady = revealTimesWithoutCompleted || allLegStagesCompleted;
+    stagesInLeg.every((st) => isStageSettledForLeg(st));
+  const totalsReady = revealTimesWithoutCompleted || allLegStagesSettled;
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
 
   type LegPdfRow = {
@@ -418,8 +423,19 @@ function buildRallyLegPdfSheet(
   const ranked: LegPdfRow[] = entries.map((row) => {
     let jumpPenaltyMs = 0;
     const cells = stagesInLeg.map((st) => {
-      // LEG1: times as in stage control. LEG2+: only completed stages.
-      if (!revealTimesWithoutCompleted && st.progressStatus !== "completed") {
+      if (isStageCancelled(st)) {
+        return {
+          text: "—",
+          outcome: null as "DNS" | "DNF" | "RET" | null,
+          ssMs: null as number | null,
+        };
+      }
+      // LEG1: times as in stage control. LEG2+: completed/stopped stages.
+      if (
+        !revealTimesWithoutCompleted &&
+        st.progressStatus !== "completed" &&
+        st.progressStatus !== "stopped"
+      ) {
         return {
           text: "—",
           outcome: null as "DNS" | "DNF" | "RET" | null,
@@ -440,16 +456,19 @@ function buildRallyLegPdfSheet(
         ssMs: cell.durationMs,
       };
     });
+    const countingCells = cells.filter(
+      (_, i) => !isStageCancelled(stagesInLeg[i]!),
+    );
     const rowOutcome = worstLegRowOutcome(
-      cells.map((c) => ({
+      countingCells.map((c) => ({
         outcome: c.outcome,
         durationMs: c.ssMs,
       })),
     );
     const allTimedNoOutcome =
       totalsReady &&
-      cells.length > 0 &&
-      cells.every((c) => c.outcome == null && c.ssMs != null);
+      countingCells.length > 0 &&
+      countingCells.every((c) => c.outcome == null && c.ssMs != null);
     const eventPenaltyMs = totalsReady
       ? getRallyEventPenaltyItems(row)
           .filter((item) => legOrders.has(item.afterStageOrder))
@@ -459,7 +478,7 @@ function buildRallyLegPdfSheet(
           )
       : 0;
     const ssTimesMs = allTimedNoOutcome
-      ? cells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
+      ? countingCells.reduce((sum, c) => sum + (c.ssMs ?? 0), 0)
       : null;
     const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
     const totalMs =

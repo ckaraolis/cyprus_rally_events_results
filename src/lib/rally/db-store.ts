@@ -51,7 +51,14 @@ function toStage(row: {
       const p = String(row.progressStatus ?? "")
         .trim()
         .toLowerCase();
-      if (p === "live" || p === "completed") return p;
+      if (
+        p === "live" ||
+        p === "completed" ||
+        p === "cancelled" ||
+        p === "stopped"
+      ) {
+        return p;
+      }
       return "pending";
     })(),
   };

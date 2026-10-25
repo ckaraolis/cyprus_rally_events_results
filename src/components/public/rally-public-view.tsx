@@ -45,6 +45,8 @@ import {
   parseClockToDayMs,
   parsePenaltyDurationMs,
   parseRallyStageTimingBlob,
+  isStageCancelled,
+  isStageSettledForLeg,
   resolveRallyStageCell,
   stageAllowsRally2,
   stageChipLabel,
@@ -508,7 +510,12 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     resultsStripItems.find((x) => x.id === selectedStripId) ??
     resultsStripItems[0] ??
     null;
-  /** Competitive SS from the first up to the selected stage (excludes Shakedown/Qualify). */
+  /**
+   * Competitive SS from the first up to the selected stage (all legs in order).
+   * LEG2 After-SS therefore continues from LEG1’s last overall. Cancelled stages
+   * stay in the list so After a cancelled SS still resolves to the previous overall
+   * inside `buildRallyOverallRanking`.
+   */
   const cumulativeStagesUpToSelected = useMemo<Stage[]>(() => {
     if (
       event.type !== "rally" ||
@@ -887,7 +894,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
               (classification). Dots on stages:{" "}
               <span className="text-[var(--ewrc-yellow)]">yellow</span> = not started,{" "}
               <span className="text-[var(--ewrc-green)]">green</span> = live,{" "}
-              <span className="text-[var(--ewrc-red)]">red</span> = completed.
+              <span className="text-[var(--ewrc-red)]">red</span> = completed,{" "}
+              <span className="text-[var(--ewrc-black)]">black</span> = cancelled,{" "}
+              <span className="text-[var(--ewrc-blue)]">blue</span> = stopped.
             </p>
 
             <div className="ewrc-panel overflow-hidden p-0">
@@ -1680,22 +1689,31 @@ function LegResultsTable({
   }, [stagesInLeg]);
   /** LEG1 shows times as entered in stage control; LEG2+ waits for stages marked completed. */
   const revealTimesWithoutCompleted = legNumber === 1;
-  const allLegStagesCompleted = useMemo(
+  const allLegStagesSettled = useMemo(
     () =>
       stagesInLeg.length > 0 &&
-      stagesInLeg.every((st) => st.progressStatus === "completed"),
+      stagesInLeg.every((st) => isStageSettledForLeg(st)),
     [stagesInLeg],
   );
-  const totalsReady = revealTimesWithoutCompleted || allLegStagesCompleted;
+  const totalsReady = revealTimesWithoutCompleted || allLegStagesSettled;
   const sorted = useMemo((): LegRow[] => {
     const legOrders = new Set(stagesInLeg.map((s) => s.order));
+    const countingStages = stagesInLeg.filter((st) => !isStageCancelled(st));
     const rows: LegRow[] = entries.map((row) => {
       let jumpPenaltyMs = 0;
       const cells = stagesInLeg.map((st) => {
+        // Cancelled SS: always "—" (no times count).
+        if (isStageCancelled(st)) {
+          return { outcome: null, durationMs: null };
+        }
         const values = getRallyStageTimingValues(row, st.id);
         const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-        // LEG1: times as in stage control. LEG2+: only once stage is completed.
-        if (!revealTimesWithoutCompleted && st.progressStatus !== "completed") {
+        // LEG1: times as in stage control. LEG2+: once completed/stopped.
+        if (
+          !revealTimesWithoutCompleted &&
+          st.progressStatus !== "completed" &&
+          st.progressStatus !== "stopped"
+        ) {
           return { outcome: null, durationMs: null };
         }
         jumpPenaltyMs += pen;
@@ -1706,10 +1724,11 @@ function LegResultsTable({
           durationMs: cell.durationMs,
         };
       });
-      const rowOutcome = worstLegRowOutcome(cells);
+      const countingCells = cells.filter((_, i) => !isStageCancelled(stagesInLeg[i]!));
+      const rowOutcome = worstLegRowOutcome(countingCells);
       const allTimedNoOutcome =
-        cells.length > 0 &&
-        cells.every((c) => c.outcome == null && c.durationMs != null);
+        countingStages.length > 0 &&
+        countingCells.every((c) => c.outcome == null && c.durationMs != null);
       const eventPenaltyMs = totalsReady
         ? getRallyEventPenaltyItems(row)
             .filter((item) => legOrders.has(item.afterStageOrder))
@@ -1720,7 +1739,7 @@ function LegResultsTable({
         : 0;
       const ssTimesMs =
         totalsReady && allTimedNoOutcome
-          ? cells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
+          ? countingCells.reduce((sum, c) => sum + (c.durationMs ?? 0), 0)
           : null;
       const penaltyMs = jumpPenaltyMs + eventPenaltyMs;
       const totalMs =
@@ -2042,6 +2061,14 @@ function StageTimesTable({
   const leaderMs = shakedown
     ? (shakedownSorted[0]?.bestMs ?? null)
     : (sorted[0]?.durationMs ?? null);
+
+  if (stage && isStageCancelled(stage)) {
+    return (
+      <p className="p-6 text-center text-sm text-[var(--ewrc-muted-3)]">
+        Stage cancelled — no times.
+      </p>
+    );
+  }
 
   if (shakedown) {
     if (shakedownSorted.length === 0) {
@@ -2487,6 +2514,22 @@ function StageProgressDot({ status }: { status: StageProgressStatus }) {
           className={`${base} bg-[var(--ewrc-red)]`}
           title="Completed"
           aria-label="Stage completed"
+        />
+      );
+    case "cancelled":
+      return (
+        <span
+          className={`${base} bg-[var(--ewrc-black)]`}
+          title="Cancelled"
+          aria-label="Stage cancelled"
+        />
+      );
+    case "stopped":
+      return (
+        <span
+          className={`${base} bg-[var(--ewrc-blue)]`}
+          title="Stopped"
+          aria-label="Stage stopped"
         />
       );
     default:

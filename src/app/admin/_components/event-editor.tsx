@@ -3147,11 +3147,13 @@ export function EventEditor({ event: initial }: Props) {
         </div>
         <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
           <strong>Bar status</strong> drives the public Stage results strip:
-          not started (yellow), live (green), completed (red). ALGE can update
-          this later via API. <strong>Leg</strong> groups stages on the public
-          Itinerary (same number = same leg). Optional{" "}
-          <strong>Shakedown</strong> / <strong>Qualify</strong> sit at the top of
-          the itinerary and Stages Control, but do not count in rally results.
+          not started (yellow), live (green), completed (red), cancelled (black),
+          stopped (blue). Cancelled stages add no times (LEG shows —, After SS
+          matches the previous overall). ALGE can update this later via API.{" "}
+          <strong>Leg</strong> groups stages on the public Itinerary (same number
+          = same leg). Optional <strong>Shakedown</strong> /{" "}
+          <strong>Qualify</strong> sit at the top of the itinerary and Stages
+          Control, but do not count in rally results.
         </p>
         {meta.type === "rally" ? (
           <div className="mt-3 flex flex-wrap gap-4 rounded-lg border border-zinc-200 px-3 py-2 dark:border-zinc-700">
@@ -3335,6 +3337,8 @@ export function EventEditor({ event: initial }: Props) {
                         <option value="pending">Not started (yellow)</option>
                         <option value="live">Live (green)</option>
                         <option value="completed">Completed (red)</option>
+                        <option value="cancelled">Cancelled (black)</option>
+                        <option value="stopped">Stopped (blue)</option>
                       </select>
                     </td>
                   ) : null}
@@ -4094,9 +4098,11 @@ export function EventEditor({ event: initial }: Props) {
               <strong className="capitalize">
                 {selectedRallyTimingStage.progressStatus}
               </strong>
-              {selectedRallyTimingStage.progressStatus === "live"
-                ? " — ALGE triggers apply; change on the Stages tab if needed."
-                : " — ALGE triggers off; enter times manually (set Live on the Stages tab for ALGE)."}
+              {selectedRallyTimingStage.progressStatus === "cancelled"
+                ? " — Cancelled stages do not count; results show — and After SS matches the previous overall."
+                : selectedRallyTimingStage.progressStatus === "live"
+                  ? " — ALGE triggers apply; change on the Stages tab if needed."
+                  : " — ALGE triggers off; enter times manually (set Live on the Stages tab for ALGE)."}
             </p>
           ) : null}
           {meta.type === "rally" && selectedRallyTimingStage ? (

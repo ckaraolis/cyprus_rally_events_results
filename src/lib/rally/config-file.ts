@@ -112,10 +112,26 @@ function normalizeOfficialNoticeDocuments(
 }
 
 function normalizeProgressStatus(v: unknown): StageProgressStatus {
-  if (v === "live" || v === "completed" || v === "pending") return v;
+  if (
+    v === "live" ||
+    v === "completed" ||
+    v === "pending" ||
+    v === "cancelled" ||
+    v === "stopped"
+  ) {
+    return v;
+  }
   if (typeof v === "string") {
     const t = v.trim().toLowerCase();
-    if (t === "live" || t === "completed" || t === "pending") return t;
+    if (
+      t === "live" ||
+      t === "completed" ||
+      t === "pending" ||
+      t === "cancelled" ||
+      t === "stopped"
+    ) {
+      return t;
+    }
   }
   return "pending";
 }

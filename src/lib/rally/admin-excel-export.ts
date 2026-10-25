@@ -21,6 +21,8 @@ import {
   buildRallyOverallRanking,
   formatDiffDurationMs,
   formatDurationMs as formatOverallDurationMs,
+  isStageCancelled,
+  isStageSettledForLeg,
   resolveRallyStageCell,
   stageAllowsRally2,
 } from "@/lib/rally/results-timing";
@@ -236,6 +238,26 @@ export async function exportRallyStageExcel(
   }
 
   const showRally2 = stageAllowsRally2(stage);
+  if (isStageCancelled(stage)) {
+    await downloadExcelTable({
+      fileName: `${eventName}-${fileTag}`,
+      sheetName: fileTag.slice(0, 31),
+      columns: [
+        "Pos",
+        "#",
+        "Driver",
+        "Co-driver",
+        "Car",
+        "Class",
+        isPreEventStage(stage) ? "Time" : "SS Time",
+        "Penalty",
+        "Total time",
+        "Diff",
+      ],
+      rows: [["—", "—", "Stage cancelled — no times.", "", "", "", "", "", "", ""]],
+    });
+    return;
+  }
   // SS stage export: timed crews only. DNF/DNS/RET appear on After-SS overall.
   const ranked = started(entries)
     .map((row) => {
@@ -389,10 +411,10 @@ export async function exportRallyLegExcel(
       ? Math.floor(stagesInLeg[0].leg)
       : 1;
   const revealTimesWithoutCompleted = legNumber === 1;
-  const allCompleted =
+  const allSettled =
     stagesInLeg.length > 0 &&
-    stagesInLeg.every((st) => st.progressStatus === "completed");
-  const totalsReady = revealTimesWithoutCompleted || allCompleted;
+    stagesInLeg.every((st) => isStageSettledForLeg(st));
+  const totalsReady = revealTimesWithoutCompleted || allSettled;
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
   const ranked = started(entries).map((row) => {
     let jumpMs = 0;
@@ -400,7 +422,15 @@ export async function exportRallyLegExcel(
     const ssDurations: Array<number | null> = [];
     let outcome: string | null = null;
     for (const st of stagesInLeg) {
-      if (!revealTimesWithoutCompleted && st.progressStatus !== "completed") {
+      if (isStageCancelled(st)) {
+        stageTexts.push("—");
+        continue;
+      }
+      if (
+        !revealTimesWithoutCompleted &&
+        st.progressStatus !== "completed" &&
+        st.progressStatus !== "stopped"
+      ) {
         stageTexts.push("—");
         ssDurations.push(null);
         continue;

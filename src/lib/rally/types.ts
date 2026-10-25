@@ -8,8 +8,13 @@ export type OfficialNoticeCategory =
   | "Sportity"
   | "Other";
 
-/** Public “Stage results” bar: dot colour (yellow / green / red). */
-export type StageProgressStatus = "pending" | "live" | "completed";
+/** Public “Stage results” bar: yellow / green / red / black / blue. */
+export type StageProgressStatus =
+  | "pending"
+  | "live"
+  | "completed"
+  | "cancelled"
+  | "stopped";
 
 /** Competitive SS vs optional pre-event stages (times only; not in rally results). */
 export type StageKind = "ss" | "shakedown" | "qualify";

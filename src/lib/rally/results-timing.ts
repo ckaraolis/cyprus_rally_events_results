@@ -147,11 +147,42 @@ export type ResolvedRallyStageCell = {
   rally2: boolean;
 };
 
+export function isStageCancelled(
+  stage: Pick<Stage, "progressStatus">,
+): boolean {
+  return stage.progressStatus === "cancelled";
+}
+
+export function isStageStopped(stage: Pick<Stage, "progressStatus">): boolean {
+  return stage.progressStatus === "stopped";
+}
+
+/**
+ * Cancelled stages contribute no times to overall / final classification.
+ * After a cancelled SS, ranking matches the previous stage’s overall.
+ */
+export function stagesCountingInOverall(
+  stages: Stage[],
+): Stage[] {
+  return stages.filter((st) => !isStageCancelled(st));
+}
+
+/** Terminal statuses that close a stage for LEG “all done” checks. */
+export function isStageSettledForLeg(
+  stage: Pick<Stage, "progressStatus">,
+): boolean {
+  const s = stage.progressStatus;
+  return s === "completed" || s === "cancelled" || s === "stopped";
+}
+
 /** Stage cell from clocked times; Rally2 is a display flag only (no notional time). */
 export function resolveRallyStageCell(
   row: Entry,
-  stage: Pick<Stage, "id" | "leg" | "kind">,
+  stage: Pick<Stage, "id" | "leg" | "kind" | "progressStatus">,
 ): ResolvedRallyStageCell {
+  if (isStageCancelled(stage)) {
+    return { outcome: null, durationMs: null, rally2: false };
+  }
   const values = getRallyStageTimingValues(row, stage.id);
   const cell = classifyRallyStageLegCell(values.startValue, values.finishValue);
   return {
@@ -271,12 +302,14 @@ export function buildRallyOverallRanking(
   stages: Stage[],
   eventPenaltyMode: "through-max" | "in-stages-only" = "through-max",
 ): RallyOverallRankRow[] {
-  if (stages.length === 0) return [];
-  const stageOrders = new Set(stages.map((s) => s.order));
-  const throughOrder = Math.max(...stages.map((s) => s.order));
+  // Skip cancelled stages so After SSx matches the previous overall when SSx is cancelled.
+  const activeStages = stagesCountingInOverall(stages);
+  if (activeStages.length === 0) return [];
+  const stageOrders = new Set(activeStages.map((s) => s.order));
+  const throughOrder = Math.max(...activeStages.map((s) => s.order));
   return entries
     .map((row) => {
-      const stageCells = stages.map((st) => {
+      const stageCells = activeStages.map((st) => {
         const values = getRallyStageTimingValues(row, st.id);
         const cell = resolveRallyStageCell(row, st);
         const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
@@ -349,11 +382,12 @@ export function buildRallyFinalRanking(
   entries: Entry[],
   stages: Stage[],
 ): RallyFinalRankRow[] {
-  if (stages.length === 0) return [];
+  const activeStages = stagesCountingInOverall(stages);
+  if (activeStages.length === 0) return [];
 
   return entries
     .map((row) => {
-      const stageCells = stages.map((st) => {
+      const stageCells = activeStages.map((st) => {
         const values = getRallyStageTimingValues(row, st.id);
         const cell = resolveRallyStageCell(row, st);
         const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;

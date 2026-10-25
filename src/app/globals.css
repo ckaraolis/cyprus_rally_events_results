@@ -67,6 +67,8 @@
   --ewrc-yellow: #eab308;
   --ewrc-green: #22c55e;
   --ewrc-red: #ef4444;
+  --ewrc-black: #111111;
+  --ewrc-blue: #3b82f6;
   --ewrc-input-bg: #141414;
   --ewrc-input-fg: #e0e0e0;
   --ewrc-surface-raised: #141414;
@@ -150,6 +152,8 @@ html.light {
   --ewrc-yellow: #ca8a04;
   --ewrc-green: #16a34a;
   --ewrc-red: #dc2626;
+  --ewrc-black: #18181b;
+  --ewrc-blue: #2563eb;
   --ewrc-input-bg: #ffffff;
   --ewrc-input-fg: #18181b;
   --ewrc-surface-raised: #ffffff;
