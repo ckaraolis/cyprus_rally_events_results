@@ -1306,20 +1306,33 @@ export function EventEditor({ event: initial }: Props) {
                   timestamp?: number | string;
                   timeOffset?: number | string;
                   startNumber?:
-                    | { startNumber?: number | string }
+                    | {
+                        startNumber?: number | string;
+                        /** ALGE: MANUAL (keypad) vs SEQUENTIAL (auto bib). */
+                        type?: string;
+                      }
                     | number
                     | string;
                 };
               };
               const dto = payload?.dto;
-              const startNumberRaw =
-                typeof dto?.startNumber === "object"
-                  ? dto.startNumber?.startNumber
-                  : dto?.startNumber;
+              const startNumberObj =
+                dto?.startNumber &&
+                typeof dto.startNumber === "object" &&
+                !Array.isArray(dto.startNumber)
+                  ? dto.startNumber
+                  : null;
+              const startNumberRaw = startNumberObj
+                ? startNumberObj.startNumber
+                : dto?.startNumber;
               const startNumber =
                 typeof startNumberRaw === "number"
                   ? Math.floor(startNumberRaw)
                   : Number.parseInt(String(startNumberRaw ?? ""), 10);
+              // Only apply ALGE times when the bib was set MANUAL (ignore SEQUENTIAL).
+              const bibAssignType = String(startNumberObj?.type ?? "")
+                .trim()
+                .toUpperCase();
               const timestampNum =
                 typeof dto?.timestamp === "number"
                   ? dto.timestamp
@@ -1339,6 +1352,12 @@ export function EventEditor({ event: initial }: Props) {
               if (Number.isNaN(timestampNum) || Number.isNaN(startNumber)) {
                 setStreamInfo(
                   `Connected (${topicLabel}) · ${sub.topic} trigger received but could not parse start/timestamp`,
+                );
+                return;
+              }
+              if (bibAssignType !== "MANUAL") {
+                setStreamInfo(
+                  `Connected (${topicLabel}) · ignored #${startNumber} (${bibAssignType || "no type"} — MANUAL only) (${sub.topic})`,
                 );
                 return;
               }
@@ -4149,8 +4168,11 @@ export function EventEditor({ event: initial }: Props) {
                 ALGE triggers apply only when the selected stage&apos;s status is{" "}
                 <strong>Live</strong> (set on the Stages tab). If the stage is{" "}
                 <strong>Completed</strong> or <strong>pending</strong>, enter times
-                manually; stream triggers are ignored. Finish device IDs are saved per stage
-                so multiple Live stages can use different finish devices at the same time.
+                manually; stream triggers are ignored. Only ALGE bib type{" "}
+                <strong>MANUAL</strong> is applied — <strong>SEQUENTIAL</strong>{" "}
+                triggers are ignored. Finish device IDs are saved per stage so
+                multiple Live stages can use different finish devices at the same
+                time.
               </p>
             )}
             {meta.type === "speed" ? (
