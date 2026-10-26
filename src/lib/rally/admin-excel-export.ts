@@ -5,6 +5,7 @@ import { resolveStartingOrderTime, startingOrderScopeLabel } from "@/lib/rally/l
 import {
   isPreEventStage,
   stageControlLabel,
+  stageLegNumber,
 } from "@/lib/rally/stage-kind";
 import {
   findShakedownBestDurationMs,
@@ -405,16 +406,12 @@ export async function exportRallyLegExcel(
   leg: number,
   allStages: Stage[] = stagesInLeg,
 ): Promise<void> {
-  const legNumber =
-    typeof stagesInLeg[0]?.leg === "number" &&
-    Number.isFinite(stagesInLeg[0].leg)
-      ? Math.floor(stagesInLeg[0].leg)
-      : 1;
-  const revealTimesWithoutCompleted = legNumber === 1;
-  const allSettled =
-    stagesInLeg.length > 0 &&
-    stagesInLeg.every((st) => isStageSettledForLeg(st));
-  const totalsReady = revealTimesWithoutCompleted || allSettled;
+  const resultLeg =
+    Number.isFinite(leg) && leg >= 1 ? Math.floor(leg) : 1;
+  const laterLegStagesSettled = stagesInLeg
+    .filter((st) => stageLegNumber(st) >= 2 && !isStageCancelled(st))
+    .every((st) => isStageSettledForLeg(st));
+  const totalsReady = resultLeg === 1 || laterLegStagesSettled;
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
   const ranked = started(entries).map((row) => {
     let jumpMs = 0;
@@ -426,8 +423,9 @@ export async function exportRallyLegExcel(
         stageTexts.push("—");
         continue;
       }
+      const stLeg = stageLegNumber(st);
       if (
-        !revealTimesWithoutCompleted &&
+        stLeg >= 2 &&
         st.progressStatus !== "completed" &&
         st.progressStatus !== "stopped"
       ) {

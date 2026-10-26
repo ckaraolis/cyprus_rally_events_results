@@ -274,7 +274,7 @@ export type RallyFinalRankRow = {
   timeMs: number | null;
   penaltyMs: number;
   totalMs: number | null;
-  /** 0 = classified, 1 = retired (RET/DNF), 2 = did not start */
+  /** 0 = classified, 1 = retired (RET/DNF). DNS is omitted from final. */
   tier: 0 | 1 | 2;
   statusLabel: string | null;
 };
@@ -375,8 +375,8 @@ export function buildRallyOverallRanking(
 /**
  * Official Final Results order:
  * (0) classified finishers by total time,
- * (1) retirements (RET then DNF),
- * (2) did not start (DNS, including Start=No).
+ * (1) retirements (RET then DNF).
+ * DNS / Start=No crews are omitted (not listed on the final sheet).
  *
  * `eventPenaltyMode`:
  * - `through-max` (default): event penalties with afterStageOrder ≤ max stage order
@@ -427,15 +427,12 @@ export function buildRallyFinalRanking(
       let statusLabel: string | null = null;
       if (totalMs != null) {
         tier = 0;
-      } else if (nonStarter) {
-        tier = 2;
-        statusLabel = "DNS";
+      } else if (nonStarter || rowOutcome === "DNS") {
+        // Omit DNS from official final — listed on After-SS / stage sheets only.
+        tier = null;
       } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
         tier = 1;
         statusLabel = rowOutcome;
-      } else if (rowOutcome === "DNS") {
-        tier = 2;
-        statusLabel = "DNS";
       }
 
       return { row, timeMs, penaltyMs, totalMs, tier, statusLabel };
@@ -453,11 +450,6 @@ export function buildRallyFinalRanking(
       if (a.tier === 1 && b.tier === 1) {
         const ao = a.statusLabel === "RET" ? 0 : 1;
         const bo = b.statusLabel === "RET" ? 0 : 1;
-        if (ao !== bo) return ao - bo;
-      }
-      if (a.tier === 2 && b.tier === 2) {
-        const ao = a.statusLabel === "DNS" ? 0 : 1;
-        const bo = b.statusLabel === "DNS" ? 0 : 1;
         if (ao !== bo) return ao - bo;
       }
       return a.row.startNumber - b.row.startNumber;
@@ -586,7 +578,8 @@ export type SpeedFinalRankRow = {
 
 /**
  * Final order: (0) classified by faster of 1st/2nd run, (1) started but no run time
- * (including DNF/DNS or blank on both runs), (3) non-starters last.
+ * (including DNF/DNS or blank on both runs).
+ * Non-starters (Start=No) are omitted from official final.
  * Trial is displayed for reference only and never used for Best/Total ranking.
  */
 export function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
@@ -623,7 +616,7 @@ export function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
         nonStarter,
       };
     })
-    .filter((x) => x.hasResult || x.nonStarter)
+    .filter((x) => !x.nonStarter && x.hasResult)
     .sort((a, b) => {
       if (a.tier !== b.tier) return a.tier - b.tier;
       if (a.tier === 0 && b.tier === 0) {

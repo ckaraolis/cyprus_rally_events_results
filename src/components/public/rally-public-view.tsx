@@ -14,9 +14,11 @@ import type {
 import {
   competitiveStageNumber,
   competitiveStages,
+  competitiveStagesForLegResults,
   isCompetitiveStage,
   isPreEventStage,
   sortStagesByKindThenOrder,
+  stageLegNumber,
 } from "@/lib/rally/stage-kind";
 import {
   findShakedownBestDurationMs,
@@ -1187,7 +1189,11 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                   ) : (
                     <LegResultsTable
                       entries={entriesForStageResults}
-                      stagesInLeg={selectedStripItem.stagesInLeg}
+                      leg={selectedStripItem.leg}
+                      stagesInLeg={competitiveStagesForLegResults(
+                        event.stages,
+                        selectedStripItem.leg,
+                      )}
                       allStages={event.stages}
                     />
                   )}
@@ -1662,10 +1668,13 @@ function DriverOnlyCell({ row }: { row: Entry }) {
 /** Per-stage times for the leg + penalty, leg total, diff (ALGE fills values). */
 function LegResultsTable({
   entries,
+  leg,
   stagesInLeg,
   allStages,
 }: {
   entries: Entry[];
+  /** Selected end-of-leg (LEG 2 sheet may include LEG 1 stages). */
+  leg: number;
   stagesInLeg: Stage[];
   allStages: Stage[];
 }) {
@@ -1683,19 +1692,17 @@ function LegResultsTable({
     penaltyMs: number;
   };
 
-  const legNumber = useMemo(() => {
-    const raw = stagesInLeg[0]?.leg;
-    return typeof raw === "number" && Number.isFinite(raw) ? Math.floor(raw) : 1;
-  }, [stagesInLeg]);
-  /** LEG1 shows times as entered in stage control; LEG2+ waits for stages marked completed. */
-  const revealTimesWithoutCompleted = legNumber === 1;
-  const allLegStagesSettled = useMemo(
+  const resultLeg =
+    Number.isFinite(leg) && leg >= 1 ? Math.floor(leg) : 1;
+  /** Later-leg columns wait for completed/stopped; LEG1 columns show as entered. */
+  const laterLegStagesSettled = useMemo(
     () =>
-      stagesInLeg.length > 0 &&
-      stagesInLeg.every((st) => isStageSettledForLeg(st)),
+      stagesInLeg
+        .filter((st) => stageLegNumber(st) >= 2 && !isStageCancelled(st))
+        .every((st) => isStageSettledForLeg(st)),
     [stagesInLeg],
   );
-  const totalsReady = revealTimesWithoutCompleted || allLegStagesSettled;
+  const totalsReady = resultLeg === 1 || laterLegStagesSettled;
   const sorted = useMemo((): LegRow[] => {
     const legOrders = new Set(stagesInLeg.map((s) => s.order));
     const countingStages = stagesInLeg.filter((st) => !isStageCancelled(st));
@@ -1708,9 +1715,10 @@ function LegResultsTable({
         }
         const values = getRallyStageTimingValues(row, st.id);
         const pen = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-        // LEG1: times as in stage control. LEG2+: once completed/stopped.
+        const stLeg = stageLegNumber(st);
+        // LEG1 stages: times as in stage control. Later legs: once completed/stopped.
         if (
-          !revealTimesWithoutCompleted &&
+          stLeg >= 2 &&
           st.progressStatus !== "completed" &&
           st.progressStatus !== "stopped"
         ) {
@@ -1779,7 +1787,7 @@ function LegResultsTable({
       }
       return a.row.startNumber - b.row.startNumber;
     });
-  }, [entries, revealTimesWithoutCompleted, stagesInLeg, totalsReady]);
+  }, [entries, stagesInLeg, totalsReady]);
 
   const leaderTotal = sorted.find((x) => x.sortTier === 0)?.totalMs ?? null;
 

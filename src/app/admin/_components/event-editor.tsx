@@ -52,6 +52,7 @@ import {
   stageHasKind,
   competitiveStages,
   competitiveStagesByLeg,
+  competitiveStagesForLegResults,
 } from "@/lib/rally/stage-kind";
 import {
   findShakedownPassForTrigger,
@@ -2195,13 +2196,16 @@ export function EventEditor({ event: initial }: Props) {
       mode,
     });
   }
-  function printRallyLeg(leg: number, stagesInLeg: Stage[]) {
+  function printRallyLeg(leg: number, _stagesInLeg: Stage[]) {
+    // Normal MERC/LOCAL (and other) LEG sheets: LEG2+ includes prior legs.
+    // Cyprus Challenge uses its own per-leg prints (non-cumulative).
+    const stagesForSheet = competitiveStagesForLegResults(stages, leg);
     void printRallyLegResultsPdf({
       eventName: meta.name || "Event",
       logoUrl: meta.logoUrl ?? "",
       entries: entries.filter((e) => e.start !== false),
       leg,
-      stagesInLeg,
+      stagesInLeg: stagesForSheet,
       allStages: sortedStages,
     });
   }
@@ -5151,9 +5155,10 @@ export function EventEditor({ event: initial }: Props) {
                     ),
                   ].sort((a, b) => a - b);
                   return legs.map((leg) => {
-                    const stagesInLeg = stages
-                      .filter((s) => s.leg === leg)
-                      .sort((a, b) => a.order - b.order);
+                    const stagesInLeg = competitiveStagesForLegResults(
+                      stages,
+                      leg,
+                    );
                     return (
                       <button
                         key={`excel-leg-${leg}`}

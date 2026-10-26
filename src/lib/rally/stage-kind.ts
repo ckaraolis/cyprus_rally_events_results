@@ -90,6 +90,32 @@ export function competitiveStagesByLeg(
   return legOrder.map((leg) => ({ leg, stages: byLeg.get(leg)! }));
 }
 
+export function stageLegNumber(stage: Pick<Stage, "leg">): number {
+  return typeof stage.leg === "number" &&
+    Number.isFinite(stage.leg) &&
+    stage.leg >= 1
+    ? Math.floor(stage.leg)
+    : 1;
+}
+
+/**
+ * Competitive stages for a LEG results sheet.
+ * Normal events: LEG 2+ includes all prior legs (cumulative).
+ * Pass `cumulative: false` for Cyprus Challenge (each leg is its own rally).
+ */
+export function competitiveStagesForLegResults(
+  stages: Stage[],
+  leg: number,
+  options?: { cumulative?: boolean },
+): Stage[] {
+  const target =
+    Number.isFinite(leg) && leg >= 1 ? Math.floor(leg) : 1;
+  const cumulative = options?.cumulative !== false;
+  return competitiveStagesByLeg(stages)
+    .filter((g) => (cumulative ? g.leg <= target : g.leg === target))
+    .flatMap((g) => g.stages);
+}
+
 /** 1-based SS number among competitive stages only (Shakedown/Qualify ignored). */
 export function competitiveStageNumber(
   stage: Stage,

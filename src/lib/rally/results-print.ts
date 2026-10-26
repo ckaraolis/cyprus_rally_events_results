@@ -16,6 +16,7 @@ import {
   competitiveStages,
   isCompetitiveStage,
   isPreEventStage,
+  stageLegNumber,
 } from "./stage-kind";
 import {
   normalizePrintLogoUrl,
@@ -397,17 +398,14 @@ function buildRallyLegPdfSheet(
   entries: Entry[],
   stagesInLeg: Stage[],
   allStages: Stage[],
+  resultLeg: number,
 ): { columns: string[]; tableRows: string[][]; footnote: string | null } {
-  const legNumber =
-    typeof stagesInLeg[0]?.leg === "number" &&
-    Number.isFinite(stagesInLeg[0].leg)
-      ? Math.floor(stagesInLeg[0].leg)
-      : 1;
-  const revealTimesWithoutCompleted = legNumber === 1;
-  const allLegStagesSettled =
-    stagesInLeg.length > 0 &&
-    stagesInLeg.every((st) => isStageSettledForLeg(st));
-  const totalsReady = revealTimesWithoutCompleted || allLegStagesSettled;
+  const leg =
+    Number.isFinite(resultLeg) && resultLeg >= 1 ? Math.floor(resultLeg) : 1;
+  const laterLegStagesSettled = stagesInLeg
+    .filter((st) => stageLegNumber(st) >= 2 && !isStageCancelled(st))
+    .every((st) => isStageSettledForLeg(st));
+  const totalsReady = leg === 1 || laterLegStagesSettled;
   const legOrders = new Set(stagesInLeg.map((s) => s.order));
 
   type LegPdfRow = {
@@ -430,9 +428,10 @@ function buildRallyLegPdfSheet(
           ssMs: null as number | null,
         };
       }
-      // LEG1: times as in stage control. LEG2+: completed/stopped stages.
+      const stLeg = stageLegNumber(st);
+      // LEG1 columns: as entered. Later-leg columns: completed/stopped.
       if (
-        !revealTimesWithoutCompleted &&
+        stLeg >= 2 &&
         st.progressStatus !== "completed" &&
         st.progressStatus !== "stopped"
       ) {
@@ -758,6 +757,7 @@ export async function printRallyLegResultsPdf(
         entriesForPrint(input.entries, series),
         input.stagesInLeg,
         input.allStages,
+        input.leg,
       );
       return buildLandscapeResultsPdfHtml({
         eventName: input.eventName,
