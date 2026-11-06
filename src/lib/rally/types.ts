@@ -132,8 +132,17 @@ export interface RallyEvent {
       startChannelId: string;
       finishDeviceId: string;
       finishChannelId: string;
+      /** GPS app stage section id (KMZ stage line) for start/finish proximity. */
+      gpsSectionId: string;
     }
   >;
+  /**
+   * When true, ALGE triggers ignore the clock bib and use the nearest GPS car
+   * within 500m of that stage’s start or finish (via gpsServerUrl).
+   */
+  gpsAlgeAutoBib: boolean;
+  /** Public base URL of the Rally GPS server (no trailing slash required). */
+  gpsServerUrl: string;
   /** Custom category names for Official Notice Board. */
   officialNoticeCustomCategories: string[];
   /** Uploaded documents / links for Official Notice Board. */

@@ -232,11 +232,13 @@ const DEFAULT_RALLY_STAGE_ALGE_CONFIG: {
   startChannelId: string;
   finishDeviceId: string;
   finishChannelId: string;
+  gpsSectionId: string;
 } = {
   startDeviceId: "",
   startChannelId: "0",
   finishDeviceId: "",
   finishChannelId: "1",
+  gpsSectionId: "",
 };
 
 function normalizeInitialRallyStageAlgeConfig(
@@ -256,6 +258,8 @@ function normalizeInitialRallyStageAlgeConfig(
         typeof c.finishDeviceId === "string" ? c.finishDeviceId.trim() : "",
       finishChannelId:
         typeof c.finishChannelId === "string" ? c.finishChannelId.trim() : "1",
+      gpsSectionId:
+        typeof c.gpsSectionId === "string" ? c.gpsSectionId.trim() : "",
     };
   }
   return out;
@@ -325,6 +329,61 @@ function parseRallyStageTimingBlob(raw: string): RallyStageTimingBlob {
   }
 }
 
+/** Ask Rally GPS which car is within radiusM of a stage start/finish. */
+async function fetchNearestGpsCar(input: {
+  gpsServerUrl: string;
+  sectionId: string;
+  point: "start" | "finish";
+  radiusM?: number;
+}): Promise<
+  | { ok: true; carNumber: number; distanceM: number; pointLabel: string | null }
+  | { ok: false; error: string }
+> {
+  const base = input.gpsServerUrl.trim().replace(/\/$/, "");
+  if (!base) return { ok: false, error: "GPS server URL is empty" };
+  const sectionId = input.sectionId.trim();
+  if (!sectionId) return { ok: false, error: "GPS section ID is empty for this stage" };
+  const radiusM = input.radiusM ?? 500;
+  const url = new URL(`${base}/api/nearest-car`);
+  url.searchParams.set("sectionId", sectionId);
+  url.searchParams.set("point", input.point);
+  url.searchParams.set("radiusM", String(radiusM));
+  try {
+    const res = await fetch(url.toString(), { cache: "no-store" });
+    const data = (await res.json().catch(() => ({}))) as {
+      car?: { carNumber?: string | number; distanceM?: number } | null;
+      pointLabel?: string | null;
+      error?: string;
+    };
+    if (!res.ok || !data.car?.carNumber) {
+      return {
+        ok: false,
+        error:
+          data.error ||
+          `no GPS car within ${radiusM}m of ${data.pointLabel || input.point}`,
+      };
+    }
+    const carNumber =
+      typeof data.car.carNumber === "number"
+        ? Math.floor(data.car.carNumber)
+        : Number.parseInt(String(data.car.carNumber), 10);
+    if (Number.isNaN(carNumber)) {
+      return { ok: false, error: "GPS returned an invalid car number" };
+    }
+    return {
+      ok: true,
+      carNumber,
+      distanceM: Number(data.car.distanceM) || 0,
+      pointLabel: data.pointLabel ?? null,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "GPS nearest-car request failed",
+    };
+  }
+}
+
 export function EventEditor({ event: initial }: Props) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -361,6 +420,8 @@ export function EventEditor({ event: initial }: Props) {
     officialNoticeDocuments: initial.officialNoticeDocuments ?? [],
     legStartingOrders: initial.legStartingOrders ?? {},
     finalResultsPublished: initial.finalResultsPublished === true,
+    gpsAlgeAutoBib: initial.gpsAlgeAutoBib === true,
+    gpsServerUrl: (initial.gpsServerUrl ?? "").trim().replace(/\/$/, ""),
   });
   const [stages, setStages] = useState<Stage[]>(() =>
     sortStagesByKindThenOrder(
@@ -1319,192 +1380,233 @@ export function EventEditor({ event: initial }: Props) {
         setStreamInfo(`Connected (${topicLabel})`);
         for (const sub of uniqueSubscriptions) {
           client.subscribe(sub.topic, (message) => {
-            try {
-              setStreamLastPayload(message.body.slice(0, 1000));
-              const payload = JSON.parse(message.body) as {
-                dto?: {
-                  timestamp?: number | string;
-                  timeOffset?: number | string;
-                  startNumber?:
-                    | {
-                        startNumber?: number | string;
-                        /** ALGE: MANUAL (keypad) vs SEQUENTIAL (auto bib). */
-                        type?: string;
-                      }
-                    | number
-                    | string;
+            void (async () => {
+              try {
+                setStreamLastPayload(message.body.slice(0, 1000));
+                const payload = JSON.parse(message.body) as {
+                  dto?: {
+                    timestamp?: number | string;
+                    timeOffset?: number | string;
+                    startNumber?:
+                      | {
+                          startNumber?: number | string;
+                          /** ALGE: MANUAL (keypad) vs SEQUENTIAL (auto bib). */
+                          type?: string;
+                        }
+                      | number
+                      | string;
+                  };
                 };
-              };
-              const dto = payload?.dto;
-              const startNumberObj =
-                dto?.startNumber &&
-                typeof dto.startNumber === "object" &&
-                !Array.isArray(dto.startNumber)
-                  ? dto.startNumber
-                  : null;
-              const startNumberRaw = startNumberObj
-                ? startNumberObj.startNumber
-                : dto?.startNumber;
-              const startNumber =
-                typeof startNumberRaw === "number"
-                  ? Math.floor(startNumberRaw)
-                  : Number.parseInt(String(startNumberRaw ?? ""), 10);
-              // Only apply ALGE times when the bib was set MANUAL (ignore SEQUENTIAL).
-              const bibAssignType = String(startNumberObj?.type ?? "")
-                .trim()
-                .toUpperCase();
-              const timestampNum =
-                typeof dto?.timestamp === "number"
-                  ? dto.timestamp
-                  : Number.parseInt(String(dto?.timestamp ?? ""), 10);
-              const timeOffsetNum =
-                typeof dto?.timeOffset === "number"
-                  ? dto.timeOffset
-                  : Number.parseInt(String(dto?.timeOffset ?? ""), 10);
-              const timingChannelRaw =
-                payload?.dto && typeof payload.dto === "object"
-                  ? String((payload.dto as Record<string, unknown>).timingChannel ?? "")
-                  : "";
-              const timingChannelNum = Number.parseInt(
-                timingChannelRaw.replace(/^[^0-9]*/, ""),
-                10,
-              );
-              if (Number.isNaN(timestampNum) || Number.isNaN(startNumber)) {
-                setStreamInfo(
-                  `Connected (${topicLabel}) · ${sub.topic} trigger received but could not parse start/timestamp`,
-                );
-                return;
-              }
-              if (bibAssignType !== "MANUAL") {
-                setStreamInfo(
-                  `Connected (${topicLabel}) · ignored #${startNumber} (${bibAssignType || "no type"} — MANUAL only) (${sub.topic})`,
-                );
-                return;
-              }
-              if (
-                sub.expectedChannelId &&
-                !Number.isNaN(timingChannelNum) &&
-                metaRef.current.type === "rally"
-              ) {
-                const expectedChannelNum = Number.parseInt(
-                  sub.expectedChannelId.replace(/^[^0-9]*/, ""),
+                const dto = payload?.dto;
+                const startNumberObj =
+                  dto?.startNumber &&
+                  typeof dto.startNumber === "object" &&
+                  !Array.isArray(dto.startNumber)
+                    ? dto.startNumber
+                    : null;
+                const startNumberRaw = startNumberObj
+                  ? startNumberObj.startNumber
+                  : dto?.startNumber;
+                let startNumber =
+                  typeof startNumberRaw === "number"
+                    ? Math.floor(startNumberRaw)
+                    : Number.parseInt(String(startNumberRaw ?? ""), 10);
+                // MANUAL-only when GPS auto-bib is off; when on, ALGE bib is ignored.
+                const bibAssignType = String(startNumberObj?.type ?? "")
+                  .trim()
+                  .toUpperCase();
+                const timestampNum =
+                  typeof dto?.timestamp === "number"
+                    ? dto.timestamp
+                    : Number.parseInt(String(dto?.timestamp ?? ""), 10);
+                const timeOffsetNum =
+                  typeof dto?.timeOffset === "number"
+                    ? dto.timeOffset
+                    : Number.parseInt(String(dto?.timeOffset ?? ""), 10);
+                const timingChannelRaw =
+                  payload?.dto && typeof payload.dto === "object"
+                    ? String(
+                        (payload.dto as Record<string, unknown>).timingChannel ??
+                          "",
+                      )
+                    : "";
+                const timingChannelNum = Number.parseInt(
+                  timingChannelRaw.replace(/^[^0-9]*/, ""),
                   10,
                 );
-                if (
-                  !Number.isNaN(expectedChannelNum) &&
-                  timingChannelNum !== expectedChannelNum
-                ) {
+                if (Number.isNaN(timestampNum)) {
                   setStreamInfo(
-                    `Connected (${topicLabel}) · ignored ch ${timingChannelNum} on ${sub.topic} (expect ch ${expectedChannelNum} for ${sub.forcedTrigger ?? "trigger"})`,
+                    `Connected (${topicLabel}) · ${sub.topic} trigger received but could not parse timestamp`,
                   );
                   return;
                 }
-              }
-              const mNow = metaRef.current;
-              let algeTriggersAllowed = false;
-              if (mNow.type === "speed") {
-                algeTriggersAllowed =
-                  mNow.speedRunImportStatus[timingRunRef.current] === "live";
-              } else if (mNow.type === "rally") {
-                const sid = (sub.stageId ?? rallyTimingStageIdRef.current).trim();
-                const st = sid
-                  ? stagesRef.current.find((s) => s.id === sid)
-                  : undefined;
-                algeTriggersAllowed = st?.progressStatus === "live";
-              }
-              if (!algeTriggersAllowed) {
-                const runOrStageHint =
-                  mNow.type === "speed"
-                    ? `${speedRunIdLabel(timingRunRef.current)} import status is not Live (ALGE only when Live; use manual entry when Completed or Scheduled)`
-                    : (() => {
-                        const sid = (sub.stageId ?? rallyTimingStageIdRef.current).trim();
-                        const st = sid
-                          ? stagesRef.current.find((s) => s.id === sid)
-                          : undefined;
-                        const label = st
-                          ? `${stageControlLabel(st, stagesRef.current)} (${st.progressStatus})`
-                          : "selected stage";
-                        return `${label} is not Live — set the stage to Live on the Stages tab for ALGE (Completed = manual only)`;
-                      })();
-                setStreamInfo(
-                  `Connected (${topicLabel}) · trigger ignored: ${runOrStageHint} · car #${startNumber} (${sub.topic})`,
-                );
-                return;
-              }
-              const activeRallyStageId =
-                metaRef.current.type === "rally"
-                  ? (sub.stageId ?? rallyTimingStageIdRef.current)
-                  : undefined;
-              const activeRallyStage =
-                activeRallyStageId
+                if (
+                  sub.expectedChannelId &&
+                  !Number.isNaN(timingChannelNum) &&
+                  metaRef.current.type === "rally"
+                ) {
+                  const expectedChannelNum = Number.parseInt(
+                    sub.expectedChannelId.replace(/^[^0-9]*/, ""),
+                    10,
+                  );
+                  if (
+                    !Number.isNaN(expectedChannelNum) &&
+                    timingChannelNum !== expectedChannelNum
+                  ) {
+                    setStreamInfo(
+                      `Connected (${topicLabel}) · ignored ch ${timingChannelNum} on ${sub.topic} (expect ch ${expectedChannelNum} for ${sub.forcedTrigger ?? "trigger"})`,
+                    );
+                    return;
+                  }
+                }
+                const mNow = metaRef.current;
+                let algeTriggersAllowed = false;
+                if (mNow.type === "speed") {
+                  algeTriggersAllowed =
+                    mNow.speedRunImportStatus[timingRunRef.current] === "live";
+                } else if (mNow.type === "rally") {
+                  const sid = (sub.stageId ?? rallyTimingStageIdRef.current).trim();
+                  const st = sid
+                    ? stagesRef.current.find((s) => s.id === sid)
+                    : undefined;
+                  algeTriggersAllowed = st?.progressStatus === "live";
+                }
+                if (!algeTriggersAllowed) {
+                  const runOrStageHint =
+                    mNow.type === "speed"
+                      ? `${speedRunIdLabel(timingRunRef.current)} import status is not Live (ALGE only when Live; use manual entry when Completed or Scheduled)`
+                      : (() => {
+                          const sid = (
+                            sub.stageId ?? rallyTimingStageIdRef.current
+                          ).trim();
+                          const st = sid
+                            ? stagesRef.current.find((s) => s.id === sid)
+                            : undefined;
+                          const label = st
+                            ? `${stageControlLabel(st, stagesRef.current)} (${st.progressStatus})`
+                            : "selected stage";
+                          return `${label} is not Live — set the stage to Live on the Stages tab for ALGE (Completed = manual only)`;
+                        })();
+                  setStreamInfo(
+                    `Connected (${topicLabel}) · trigger ignored: ${runOrStageHint} (${sub.topic})`,
+                  );
+                  return;
+                }
+                const activeRallyStageId =
+                  metaRef.current.type === "rally"
+                    ? (sub.stageId ?? rallyTimingStageIdRef.current)
+                    : undefined;
+                const activeRallyStage = activeRallyStageId
                   ? stagesRef.current.find((s) => s.id === activeRallyStageId)
                   : undefined;
-              const clockDigits: 2 | 3 =
-                activeRallyStage && isPreEventStage(activeRallyStage) ? 3 : 2;
-              const rawTriggerTime = formatTriggerClock(
-                timestampNum,
-                Number.isNaN(timeOffsetNum) ? 0 : timeOffsetNum,
-                clockDigits,
-              );
-              let matched = false;
-              const finishChannelNum = Number.parseInt(algeFinishChannelId, 10);
-              const activeTrigger: "start" | "finish" =
-                sub.forcedTrigger ??
-                (metaRef.current.type === "rally"
-                  ? "finish"
-                  : !Number.isNaN(timingChannelNum) &&
-                      !Number.isNaN(finishChannelNum) &&
-                      timingChannelNum === finishChannelNum
+                const finishChannelNum = Number.parseInt(algeFinishChannelId, 10);
+                const activeTrigger: "start" | "finish" =
+                  sub.forcedTrigger ??
+                  (metaRef.current.type === "rally"
                     ? "finish"
                     : !Number.isNaN(timingChannelNum) &&
-                        !Number.isNaN(Number.parseInt(algeStartChannelId, 10)) &&
-                        timingChannelNum === Number.parseInt(algeStartChannelId, 10)
-                      ? "start"
-                      : "start");
-              // All rally stage starts (SS, Shakedown, Qualify) round to the nearest minute.
-              // Finish times stay exact (incl. thousandths on Shakedown/Qualify).
-              const triggerTime =
-                metaRef.current.type === "rally" && activeTrigger === "start"
-                  ? roundRallyStartClockToNearestMinute(rawTriggerTime)
-                  : rawTriggerTime;
-              let nextEntriesSnapshot: Entry[] | null = null;
-              setEntries((prev) => {
-                const next = prev.map((x) => {
-                  if (Math.floor(Number(x.startNumber)) !== startNumber) return x;
-                  matched = true;
-                  return applyTriggerTimingValue(
-                    x,
-                    activeTrigger,
-                    triggerTime,
-                    activeRallyStageId,
-                  );
+                        !Number.isNaN(finishChannelNum) &&
+                        timingChannelNum === finishChannelNum
+                      ? "finish"
+                      : !Number.isNaN(timingChannelNum) &&
+                          !Number.isNaN(Number.parseInt(algeStartChannelId, 10)) &&
+                          timingChannelNum ===
+                            Number.parseInt(algeStartChannelId, 10)
+                        ? "start"
+                        : "start");
+
+                const gpsAuto =
+                  mNow.gpsAlgeAutoBib === true && mNow.type === "rally";
+                let gpsNote = "";
+                if (gpsAuto) {
+                  const stageCfg = activeRallyStageId
+                    ? mNow.rallyStageAlgeConfig[activeRallyStageId]
+                    : undefined;
+                  const gpsSectionId = (stageCfg?.gpsSectionId ?? "").trim();
+                  const gpsHit = await fetchNearestGpsCar({
+                    gpsServerUrl: mNow.gpsServerUrl ?? "",
+                    sectionId: gpsSectionId,
+                    point: activeTrigger,
+                    radiusM: 500,
+                  });
+                  if (!gpsHit.ok) {
+                    setStreamInfo(
+                      `Connected (${topicLabel}) · GPS auto-bib: ${gpsHit.error} · ALGE bib ignored (${sub.topic})`,
+                    );
+                    return;
+                  }
+                  startNumber = gpsHit.carNumber;
+                  gpsNote = ` · GPS #${startNumber} @ ${gpsHit.distanceM}m${
+                    gpsHit.pointLabel ? ` (${gpsHit.pointLabel})` : ""
+                  }`;
+                } else {
+                  if (Number.isNaN(startNumber)) {
+                    setStreamInfo(
+                      `Connected (${topicLabel}) · ${sub.topic} trigger received but could not parse start/timestamp`,
+                    );
+                    return;
+                  }
+                  if (bibAssignType !== "MANUAL") {
+                    setStreamInfo(
+                      `Connected (${topicLabel}) · ignored #${startNumber} (${bibAssignType || "no type"} — MANUAL only) (${sub.topic})`,
+                    );
+                    return;
+                  }
+                }
+
+                const clockDigits: 2 | 3 =
+                  activeRallyStage && isPreEventStage(activeRallyStage) ? 3 : 2;
+                const rawTriggerTime = formatTriggerClock(
+                  timestampNum,
+                  Number.isNaN(timeOffsetNum) ? 0 : timeOffsetNum,
+                  clockDigits,
+                );
+                let matched = false;
+                // All rally stage starts (SS, Shakedown, Qualify) round to the nearest minute.
+                // Finish times stay exact (incl. thousandths on Shakedown/Qualify).
+                const triggerTime =
+                  metaRef.current.type === "rally" && activeTrigger === "start"
+                    ? roundRallyStartClockToNearestMinute(rawTriggerTime)
+                    : rawTriggerTime;
+                let nextEntriesSnapshot: Entry[] | null = null;
+                setEntries((prev) => {
+                  const next = prev.map((x) => {
+                    if (Math.floor(Number(x.startNumber)) !== startNumber) return x;
+                    matched = true;
+                    return applyTriggerTimingValue(
+                      x,
+                      activeTrigger,
+                      triggerTime,
+                      activeRallyStageId,
+                    );
+                  });
+                  nextEntriesSnapshot = next;
+                  // Sync ref immediately — do not wait for useEffect, or autosave can
+                  // persist a pre-trigger snapshot and wipe the new start/finish time.
+                  entriesRef.current = next;
+                  timingSaveGenRef.current += 1;
+                  return next;
                 });
-                nextEntriesSnapshot = next;
-                // Sync ref immediately — do not wait for useEffect, or autosave can
-                // persist a pre-trigger snapshot and wipe the new start/finish time.
-                entriesRef.current = next;
-                timingSaveGenRef.current += 1;
-                return next;
-              });
-              if (matched && nextEntriesSnapshot) {
-                queueLiveEntriesSave(nextEntriesSnapshot);
-                // Keep autosave path active too, so trigger-applied times are always persisted.
-                queueTimingAutosave();
+                if (matched && nextEntriesSnapshot) {
+                  queueLiveEntriesSave(nextEntriesSnapshot);
+                  // Keep autosave path active too, so trigger-applied times are always persisted.
+                  queueTimingAutosave();
+                }
+                setStreamInfo(
+                  matched
+                    ? `Connected (${topicLabel}) · #${startNumber} ${activeTrigger}=${triggerTime}${
+                        triggerTime !== rawTriggerTime
+                          ? ` (from ${rawTriggerTime})`
+                          : ""
+                      }${gpsNote} (${sub.topic})`
+                    : `Connected (${topicLabel}) · trigger for #${startNumber} received, but no matching entry${gpsNote} (${sub.topic})`,
+                );
+              } catch (e) {
+                setStreamInfo(
+                  `Connected (${topicLabel}) · could not parse trigger from ${sub.topic}: ${e instanceof Error ? e.message : "unknown error"}`,
+                );
               }
-              setStreamInfo(
-                matched
-                  ? `Connected (${topicLabel}) · #${startNumber} ${activeTrigger}=${triggerTime}${
-                      triggerTime !== rawTriggerTime
-                        ? ` (from ${rawTriggerTime})`
-                        : ""
-                    } (${sub.topic})`
-                  : `Connected (${topicLabel}) · trigger for #${startNumber} received, but no matching entry (${sub.topic})`,
-              );
-            } catch (e) {
-              setStreamInfo(
-                `Connected (${topicLabel}) · could not parse trigger from ${sub.topic}: ${e instanceof Error ? e.message : "unknown error"}`,
-              );
-            }
+            })();
           });
         }
       };
@@ -4191,11 +4293,12 @@ export function EventEditor({ event: initial }: Props) {
                 ALGE triggers apply only when the selected stage&apos;s status is{" "}
                 <strong>Live</strong> (set on the Stages tab). If the stage is{" "}
                 <strong>Completed</strong> or <strong>pending</strong>, enter times
-                manually; stream triggers are ignored. Only ALGE bib type{" "}
-                <strong>MANUAL</strong> is applied — <strong>SEQUENTIAL</strong>{" "}
-                triggers are ignored. Finish device IDs are saved per stage so
-                multiple Live stages can use different finish devices at the same
-                time.
+                manually; stream triggers are ignored. Unless{" "}
+                <strong>Auto car number from GPS</strong> is on, only ALGE bib
+                type <strong>MANUAL</strong> is applied —{" "}
+                <strong>SEQUENTIAL</strong> triggers are ignored. Finish device
+                IDs are saved per stage so multiple Live stages can use different
+                finish devices at the same time.
               </p>
             )}
             {meta.type === "speed" ? (
@@ -4311,6 +4414,21 @@ export function EventEditor({ event: initial }: Props) {
                       placeholder="1"
                     />
                   </div>
+                  <div>
+                    <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                      GPS section ID
+                    </label>
+                    <input
+                      className="mt-1 w-56 rounded border border-zinc-200 px-2 py-1 font-mono text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                      value={selectedRallyStageAlgeConfig.gpsSectionId}
+                      onChange={(e) =>
+                        updateRallyStageAlgeConfig(selectedRallyTimingStage.id, {
+                          gpsSectionId: e.target.value,
+                        })
+                      }
+                      placeholder="uuid of stage line in GPS app"
+                    />
+                  </div>
                 </div>
                 <p className="mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
                   Save devices before connecting the stream so start and finish
@@ -4318,9 +4436,52 @@ export function EventEditor({ event: initial }: Props) {
                   (SS, Shakedown, Qualify) are rounded to the nearest minute
                   (e.g. 11:16:59.36 → 11:17:00.00, 11:18:01.06 → 11:18:00.00).
                   Finish times stay exact (thousandths on Shakedown / Qualify).
+                  GPS section ID is the stage path id from Rally GPS (for auto
+                  bib when Auto car number from GPS is on).
                 </p>
               </div>
             ) : null}
+            <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
+              <label className="flex cursor-pointer items-start gap-2 text-sm text-zinc-800 dark:text-zinc-100">
+                <input
+                  type="checkbox"
+                  className="mt-1"
+                  checked={meta.gpsAlgeAutoBib === true}
+                  onChange={(e) =>
+                    setMeta((m) => ({
+                      ...m,
+                      gpsAlgeAutoBib: e.target.checked,
+                    }))
+                  }
+                />
+                <span>
+                  <span className="font-medium">Auto car number from GPS (500m)</span>
+                  <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
+                    When on, ALGE bib is ignored. The nearest tracked car within
+                    500m of this stage&apos;s Start or Finish (GPS map) gets the
+                    time. Requires GPS server URL + GPS section ID per stage.
+                    Save with Save devices / Event details.
+                  </span>
+                </span>
+              </label>
+              <div className="mt-2">
+                <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                  GPS server URL
+                </label>
+                <input
+                  className="mt-1 w-full max-w-xl rounded border border-zinc-200 px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                  value={meta.gpsServerUrl}
+                  onChange={(e) =>
+                    setMeta((m) => ({
+                      ...m,
+                      gpsServerUrl: e.target.value,
+                    }))
+                  }
+                  placeholder="https://your-gps.vercel.app"
+                  disabled={!meta.gpsAlgeAutoBib}
+                />
+              </div>
+            </div>
             {meta.type === "rally" ? (
               <div className="mt-3 rounded border border-zinc-200 p-3 dark:border-zinc-700">
                 <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">

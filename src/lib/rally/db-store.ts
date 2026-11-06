@@ -168,6 +168,8 @@ function toEvent(row: {
               typeof cfg.finishDeviceId === "string" ? cfg.finishDeviceId.trim() : "",
             finishChannelId:
               typeof cfg.finishChannelId === "string" ? cfg.finishChannelId.trim() : "1",
+            gpsSectionId:
+              typeof cfg.gpsSectionId === "string" ? cfg.gpsSectionId.trim() : "",
           },
         ];
       }),
@@ -224,6 +226,8 @@ function toEvent(row: {
             k !== "__shakedownPassCounts" &&
             k !== "__entrySeriesFlags" &&
             k !== "__finalResultsPublished" &&
+            k !== "__gpsAlgeAutoBib" &&
+            k !== "__gpsServerUrl" &&
             k !== "__configUpdatedAt",
         )
         .map(([k, v]) => [k, typeof v === "number" ? v : 0]),
@@ -233,6 +237,11 @@ function toEvent(row: {
     officialNoticeDocuments: officialDocs,
     legStartingOrders: normalizeLegStartingOrders(legStartingOrdersRaw),
     finalResultsPublished: algeMap.__finalResultsPublished === true,
+    gpsAlgeAutoBib: algeMap.__gpsAlgeAutoBib === true,
+    gpsServerUrl:
+      typeof algeMap.__gpsServerUrl === "string"
+        ? String(algeMap.__gpsServerUrl).trim().replace(/\/$/, "")
+        : "",
     stages: row.stages.map((s) => {
       const stage = toStage(s, stageKindsRaw[s.id]);
       if (stage.kind !== "shakedown") return stage;
@@ -440,6 +449,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
             ),
             __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
             __finalResultsPublished: e.finalResultsPublished === true,
+            __gpsAlgeAutoBib: e.gpsAlgeAutoBib === true,
+            __gpsServerUrl: (e.gpsServerUrl ?? "").trim().replace(/\/$/, ""),
             /** Bumps on every save so public poll `updatedAt` always moves with timing edits. */
             __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,
@@ -476,6 +487,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
             ),
             __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
             __finalResultsPublished: e.finalResultsPublished === true,
+            __gpsAlgeAutoBib: e.gpsAlgeAutoBib === true,
+            __gpsServerUrl: (e.gpsServerUrl ?? "").trim().replace(/\/$/, ""),
             __configUpdatedAt: config.updatedAt,
           } as unknown as Prisma.InputJsonValue,
         },

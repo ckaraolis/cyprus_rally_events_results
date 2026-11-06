@@ -186,6 +186,8 @@ function normalizeRallyStageAlgeConfig(
         typeof cfg.finishDeviceId === "string" ? cfg.finishDeviceId.trim() : "",
       finishChannelId:
         typeof cfg.finishChannelId === "string" ? cfg.finishChannelId.trim() : "1",
+      gpsSectionId:
+        typeof cfg.gpsSectionId === "string" ? cfg.gpsSectionId.trim() : "",
     };
   }
   return out;
@@ -298,6 +300,8 @@ function normalizeEvent(raw: unknown): RallyEvent {
       officialNoticeDocuments: [],
       legStartingOrders: {},
       finalResultsPublished: false,
+      gpsAlgeAutoBib: false,
+      gpsServerUrl: "",
       stages: [],
       entries: [],
     };
@@ -354,6 +358,9 @@ function normalizeEvent(raw: unknown): RallyEvent {
     ),
     legStartingOrders: normalizeLegStartingOrders(o.legStartingOrders),
     finalResultsPublished: o.finalResultsPublished === true,
+    gpsAlgeAutoBib: o.gpsAlgeAutoBib === true,
+    gpsServerUrl:
+      typeof o.gpsServerUrl === "string" ? o.gpsServerUrl.trim().replace(/\/$/, "") : "",
     stages,
     entries,
   };

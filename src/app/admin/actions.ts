@@ -101,6 +101,8 @@ export async function createEvent(input: {
     officialNoticeDocuments: [],
     legStartingOrders: {},
     finalResultsPublished: false,
+    gpsAlgeAutoBib: false,
+    gpsServerUrl: "",
     stages: defaultStages,
     entries: [],
   };
@@ -132,6 +134,8 @@ export async function updateEventMeta(
     officialNoticeDocuments: RallyEvent["officialNoticeDocuments"];
     legStartingOrders: RallyEvent["legStartingOrders"];
     finalResultsPublished?: boolean;
+    gpsAlgeAutoBib?: boolean;
+    gpsServerUrl?: string;
   },
 ) {
   const config = await loadRallyConfig();
@@ -152,6 +156,8 @@ export async function updateEventMeta(
   e.officialNoticeDocuments = input.officialNoticeDocuments;
   e.legStartingOrders = input.legStartingOrders ?? {};
   e.finalResultsPublished = input.finalResultsPublished === true;
+  e.gpsAlgeAutoBib = input.gpsAlgeAutoBib === true;
+  e.gpsServerUrl = (input.gpsServerUrl ?? "").trim().replace(/\/$/, "");
   await saveRallyConfig(config);
   revalidatePath("/admin/events");
   revalidatePath(`/admin/events/${eventId}`);

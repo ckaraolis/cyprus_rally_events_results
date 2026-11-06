@@ -275,7 +275,7 @@ export type RallyFinalRankRow = {
   penaltyMs: number;
   totalMs: number | null;
   /** 0 = classified, 1 = retired (RET/DNF). DNS is omitted from final. */
-  tier: 0 | 1 | 2;
+  tier: 0 | 1;
   statusLabel: string | null;
 };
 
@@ -393,67 +393,69 @@ export function buildRallyFinalRanking(
   const stageOrders = new Set(activeStages.map((s) => s.order));
   const throughOrder = Math.max(...activeStages.map((s) => s.order));
 
-  return entries
-    .map((row) => {
-      const stageCells = activeStages.map((st) => {
-        const values = getRallyStageTimingValues(row, st.id);
-        const cell = resolveRallyStageCell(row, st);
-        const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
-        const timeMs =
-          cell.durationMs != null ? cell.durationMs + jumpMs : null;
-        return { cell, timeMs };
-      });
-      const allTimed = stageCells.every(
-        (c) => c.cell.outcome == null && c.timeMs != null,
-      );
-      const timeMs = allTimed
-        ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
-        : null;
-      const penaltyMs =
-        eventPenaltyMode === "in-stages-only"
-          ? getRallyEventPenaltyItems(row)
-              .filter((item) => stageOrders.has(item.afterStageOrder))
-              .reduce(
-                (sum, item) =>
-                  sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
-                0,
-              )
-          : getRallyEventPenaltyTotalMs(row, throughOrder);
-      const totalMs = timeMs != null ? timeMs + penaltyMs : null;
-      const rowOutcome = worstLegRowOutcome(stageCells.map((c) => c.cell));
-      const nonStarter = row.start === false;
-
-      let tier: 0 | 1 | 2 | null = null;
-      let statusLabel: string | null = null;
-      if (totalMs != null) {
-        tier = 0;
-      } else if (nonStarter || rowOutcome === "DNS") {
-        // Omit DNS from official final — listed on After-SS / stage sheets only.
-        tier = null;
-      } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
-        tier = 1;
-        statusLabel = rowOutcome;
-      }
-
-      return { row, timeMs, penaltyMs, totalMs, tier, statusLabel };
-    })
-    .filter((x): x is RallyFinalRankRow => x.tier != null)
-    .sort((a, b) => {
-      if (a.tier !== b.tier) return a.tier - b.tier;
-      if (a.tier === 0 && b.tier === 0) {
-        const at = a.totalMs ?? 0;
-        const bt = b.totalMs ?? 0;
-        return at !== bt
-          ? at - bt
-          : a.row.startNumber - b.row.startNumber;
-      }
-      if (a.tier === 1 && b.tier === 1) {
-        const ao = a.statusLabel === "RET" ? 0 : 1;
-        const bo = b.statusLabel === "RET" ? 0 : 1;
-        if (ao !== bo) return ao - bo;
-      }
-      return a.row.startNumber - b.row.startNumber;
+  const ranked: RallyFinalRankRow[] = [];
+  for (const row of entries) {
+    const stageCells = activeStages.map((st) => {
+      const values = getRallyStageTimingValues(row, st.id);
+      const cell = resolveRallyStageCell(row, st);
+      const jumpMs = parsePenaltyDurationMs(values.penaltyValue) ?? 0;
+      const timeMs =
+        cell.durationMs != null ? cell.durationMs + jumpMs : null;
+      return { cell, timeMs };
     });
+    const allTimed = stageCells.every(
+      (c) => c.cell.outcome == null && c.timeMs != null,
+    );
+    const timeMs = allTimed
+      ? stageCells.reduce((sum, c) => sum + (c.timeMs ?? 0), 0)
+      : null;
+    const penaltyMs =
+      eventPenaltyMode === "in-stages-only"
+        ? getRallyEventPenaltyItems(row)
+            .filter((item) => stageOrders.has(item.afterStageOrder))
+            .reduce(
+              (sum, item) =>
+                sum + (parsePenaltyDurationMs(item.penalty) ?? 0),
+              0,
+            )
+        : getRallyEventPenaltyTotalMs(row, throughOrder);
+    const totalMs = timeMs != null ? timeMs + penaltyMs : null;
+    const rowOutcome = worstLegRowOutcome(stageCells.map((c) => c.cell));
+    const nonStarter = row.start === false;
+
+    let tier: 0 | 1 | null = null;
+    let statusLabel: string | null = null;
+    if (totalMs != null) {
+      tier = 0;
+    } else if (nonStarter || rowOutcome === "DNS") {
+      // Omit DNS from official final — listed on After-SS / stage sheets only.
+      continue;
+    } else if (rowOutcome === "RET" || rowOutcome === "DNF") {
+      tier = 1;
+      statusLabel = rowOutcome;
+    } else {
+      continue;
+    }
+
+    ranked.push({ row, timeMs, penaltyMs, totalMs, tier, statusLabel });
+  }
+
+  return ranked.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    if (a.tier === 0 && b.tier === 0) {
+      const at = a.totalMs ?? 0;
+      const bt = b.totalMs ?? 0;
+      return at !== bt
+        ? at - bt
+        : a.row.startNumber - b.row.startNumber;
+    }
+    if (a.tier === 1 && b.tier === 1) {
+      const ao = a.statusLabel === "RET" ? 0 : 1;
+      const bo = b.statusLabel === "RET" ? 0 : 1;
+      if (ao !== bo) return ao - bo;
+    }
+    return a.row.startNumber - b.row.startNumber;
+  });
 }
 
 /** Per-stage cell for leg classification: outcome markers vs clocked stage time. */
