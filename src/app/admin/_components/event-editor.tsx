@@ -356,11 +356,16 @@ async function fetchNearestGpsCar(input: {
       error?: string;
     };
     if (!res.ok || !data.car?.carNumber) {
+      const authHint =
+        res.status === 401 || res.status === 403
+          ? " (GPS nearest-car blocked — deploy GPS auth allowlist for /api/nearest-car)"
+          : "";
       return {
         ok: false,
         error:
-          data.error ||
-          `no GPS car within ${radiusM}m of ${data.pointLabel || input.point}`,
+          (data.error ||
+            `no GPS car within ${radiusM}m of ${data.pointLabel || input.point}`) +
+          authHint,
       };
     }
     const carNumber =
