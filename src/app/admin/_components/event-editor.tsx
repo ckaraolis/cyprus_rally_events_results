@@ -343,7 +343,7 @@ async function fetchNearestGpsCar(input: {
   if (!base) return { ok: false, error: "GPS server URL is empty" };
   const sectionId = input.sectionId.trim();
   if (!sectionId) return { ok: false, error: "GPS section ID is empty for this stage" };
-  const radiusM = input.radiusM ?? 500;
+  const radiusM = input.radiusM ?? 50;
   const url = new URL(`${base}/api/nearest-car`);
   url.searchParams.set("sectionId", sectionId);
   url.searchParams.set("point", input.point);
@@ -1532,7 +1532,7 @@ export function EventEditor({ event: initial }: Props) {
                     gpsServerUrl: mNow.gpsServerUrl ?? "",
                     sectionId: gpsSectionId,
                     point: activeTrigger,
-                    radiusM: 500,
+                    radiusM: 50,
                   });
                   if (!gpsHit.ok) {
                     setStreamInfo(
@@ -4460,10 +4460,10 @@ export function EventEditor({ event: initial }: Props) {
                   }
                 />
                 <span>
-                  <span className="font-medium">Auto car number from GPS (500m)</span>
+                  <span className="font-medium">Auto car number from GPS (50m)</span>
                   <span className="mt-0.5 block text-xs text-zinc-500 dark:text-zinc-400">
                     When on, ALGE bib is ignored. The nearest tracked car within
-                    500m of this stage&apos;s Start or Finish (GPS map) gets the
+                    50m of this stage&apos;s Start or Finish (GPS map) gets the
                     time. Requires GPS server URL + GPS section ID per stage.
                     Save with Save devices / Event details.
                   </span>

@@ -138,7 +138,7 @@ export interface RallyEvent {
   >;
   /**
    * When true, ALGE triggers ignore the clock bib and use the nearest GPS car
-   * within 500m of that stage’s start or finish (via gpsServerUrl).
+   * within 50m of that stage’s start or finish (via gpsServerUrl).
    */
   gpsAlgeAutoBib: boolean;
   /** Public base URL of the Rally GPS server (no trailing slash required). */
