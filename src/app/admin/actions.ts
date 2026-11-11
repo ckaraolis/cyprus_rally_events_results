@@ -101,6 +101,7 @@ export async function createEvent(input: {
     officialNoticeDocuments: [],
     legStartingOrders: {},
     finalResultsPublished: false,
+    speedBestMode: "fastest-run",
     gpsAlgeAutoBib: false,
     gpsServerUrl: "",
     stages: defaultStages,
@@ -134,6 +135,7 @@ export async function updateEventMeta(
     officialNoticeDocuments: RallyEvent["officialNoticeDocuments"];
     legStartingOrders: RallyEvent["legStartingOrders"];
     finalResultsPublished?: boolean;
+    speedBestMode?: "fastest-run" | "best-2-of-3";
     gpsAlgeAutoBib?: boolean;
     gpsServerUrl?: string;
   },
@@ -156,6 +158,8 @@ export async function updateEventMeta(
   e.officialNoticeDocuments = input.officialNoticeDocuments;
   e.legStartingOrders = input.legStartingOrders ?? {};
   e.finalResultsPublished = input.finalResultsPublished === true;
+  e.speedBestMode =
+    input.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run";
   e.gpsAlgeAutoBib = input.gpsAlgeAutoBib === true;
   e.gpsServerUrl = (input.gpsServerUrl ?? "").trim().replace(/\/$/, "");
   await saveRallyConfig(config);

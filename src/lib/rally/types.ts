@@ -1,6 +1,12 @@
 export type EventStatus = "draft" | "upcoming" | "live" | "completed";
 export type EventType = "rally" | "speed";
 export type SpeedRunImportStatus = "scheduled" | "live" | "completed";
+/**
+ * Speed Best Time scoring:
+ * - `fastest-run` = faster of 1st/2nd run (Trial excluded) — default
+ * - `best-2-of-3` = sum of the two fastest among Trial/1st/2nd (shown as 1st/2nd/3rd Run)
+ */
+export type SpeedBestMode = "fastest-run" | "best-2-of-3";
 export type OfficialNoticeCategory =
   | "Supplementary Regulations"
   | "Bulletins"
@@ -163,6 +169,11 @@ export interface RallyEvent {
    * Stewards publish via Admin → Official Final Results.
    */
   finalResultsPublished: boolean;
+  /**
+   * Speed events only. How Best Time / Official Final is calculated.
+   * Default `fastest-run` when unset.
+   */
+  speedBestMode?: SpeedBestMode;
   stages: Stage[];
   entries: Entry[];
 }

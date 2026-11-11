@@ -28,6 +28,7 @@ import {
   normalizeCyNational,
   normalizeRallySeries,
 } from "./dual-series";
+import { normalizeSpeedBestMode } from "./results-timing";
 
 const CONFIG_PATH = path.join(process.cwd(), "data", "rally-site.json");
 const DB_READS = process.env.RALLY_DB_READS === "1";
@@ -300,6 +301,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
       officialNoticeDocuments: [],
       legStartingOrders: {},
       finalResultsPublished: false,
+      speedBestMode: "fastest-run",
       gpsAlgeAutoBib: false,
       gpsServerUrl: "",
       stages: [],
@@ -358,6 +360,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
     ),
     legStartingOrders: normalizeLegStartingOrders(o.legStartingOrders),
     finalResultsPublished: o.finalResultsPublished === true,
+    speedBestMode: normalizeSpeedBestMode(o.speedBestMode),
     gpsAlgeAutoBib: o.gpsAlgeAutoBib === true,
     gpsServerUrl:
       typeof o.gpsServerUrl === "string" ? o.gpsServerUrl.trim().replace(/\/$/, "") : "",

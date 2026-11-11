@@ -43,6 +43,8 @@ import {
   getSpeedRunFinishMs,
   getSpeedRunOutcomeLabel,
   getSpeedRunStartMs,
+  normalizeSpeedBestMode,
+  speedRunLabels,
   legOutcomeSortKey,
   parseClockToDayMs,
   parsePenaltyDurationMs,
@@ -92,12 +94,17 @@ const OFFICIAL_NOTICE_DEFAULT_CATEGORIES = [
   "Sportity",
   "Other",
 ] as const;
-const SPEED_RUNS: ReadonlyArray<{ id: SpeedRunId; label: string }> = [
-  { id: "trial", label: "Trial" },
-  { id: "run1", label: "1st Run" },
-  { id: "run2", label: "2nd Run" },
-  { id: "best", label: "Best Time" },
-];
+function speedRunsForEvent(
+  mode: ReturnType<typeof normalizeSpeedBestMode>,
+): ReadonlyArray<{ id: SpeedRunId; label: string }> {
+  const labels = speedRunLabels(mode);
+  return [
+    { id: "trial", label: labels.trial },
+    { id: "run1", label: labels.run1 },
+    { id: "run2", label: labels.run2 },
+    { id: "best", label: labels.best },
+  ];
+}
 
 type ResultsStripItem =
   | { id: string; type: "stage"; stage: Stage }
@@ -205,6 +212,7 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
       distanceKm: s.distanceKm,
     })),
     speed: e.type === "speed" ? e.speedRunImportStatus : null,
+    speedBestMode: e.type === "speed" ? e.speedBestMode ?? "fastest-run" : null,
     entries: e.entries.map((x) => ({
       id: x.id,
       sn: x.startNumber,
@@ -417,13 +425,15 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
    * Stage strip rows: Shakedown/Qualify together, then each LEG’s SS + LEG results.
    * Compact multi-line layout — no LEG 0.
    */
+  const speedBestMode = normalizeSpeedBestMode(event.speedBestMode);
+
   const resultsStripRows = useMemo((): ResultsStripRow[] => {
     if (event.type === "speed") {
       return [
         {
           key: "speed",
           label: "Runs",
-          items: SPEED_RUNS.map((r) => ({
+          items: speedRunsForEvent(speedBestMode).map((r) => ({
             id: `sp-${r.id}`,
             type: "speedRun" as const,
             runId: r.id,
@@ -489,6 +499,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
     competitiveStagesSorted,
     event.speedRunImportStatus,
     event.type,
+    speedBestMode,
     stagesSorted,
   ]);
 
@@ -883,7 +894,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           <div className="space-y-4">
             <p className="text-sm text-[var(--ewrc-muted-2)]">
               {event.type === "speed"
-                ? "Speed mode: trial does not count in final ranking; best of 1st Run and 2nd Run counts."
+                ? speedBestMode === "best-2-of-3"
+                  ? "Speed mode: Best Time is the sum of the two fastest of the three runs."
+                  : "Speed mode: trial does not count in final ranking; best of 1st Run and 2nd Run counts."
                 : "Pick a stage or an "}
               {event.type === "rally" ? (
                 <strong className="text-[var(--ewrc-accent-text)]">end of leg</strong>
@@ -1162,7 +1175,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                     </p>
                   ) : selectedStripItem.type === "speedRun" ? (
                     selectedStripItem.runId === "best" ? (
-                      <SpeedBestTable rows={entriesForSelectedSpeedRun} />
+                      <SpeedBestTable
+                        rows={entriesForSelectedSpeedRun}
+                        mode={speedBestMode}
+                      />
                     ) : (
                       <SpeedRunTable
                         entries={entriesForSelectedSpeedRun}
@@ -1441,7 +1457,9 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
           <div className="space-y-4">
             <p className="text-sm text-[var(--ewrc-muted-2)]">
               {event.type === "speed"
-                ? "Final order uses only the faster of 1st and 2nd run. Trial is not used in final Best/Total. If both runs have no time (e.g. DNF/DNS), Best/Total shows -."
+                ? speedBestMode === "best-2-of-3"
+                  ? "Final order uses Best 2 of 3: sum of the two fastest run times. Needs at least two timed runs. If fewer than two times, Best shows -."
+                  : "Final order uses only the faster of 1st and 2nd run. Trial is not used in final Best/Total. If both runs have no time (e.g. DNF/DNS), Best/Total shows -."
                 : "Overall: stage times (incl. jump starts) plus event penalties from the Penalties tab (from their After SS onward)."}
             </p>
             <div className="ewrc-panel overflow-hidden p-0">
@@ -1457,7 +1475,10 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             <div className="ewrc-panel overflow-hidden p-0">
               <div className="overflow-x-auto">
                 {event.type === "speed" ? (
-                  <SpeedFinalTable rows={entriesForFinalResults} />
+                  <SpeedFinalTable
+                    rows={entriesForFinalResults}
+                    mode={speedBestMode}
+                  />
                 ) : (
                   <OverallClassificationTable
                     rows={entriesForFinalResults}
@@ -2370,15 +2391,29 @@ function OverallClassificationTable({
   );
 }
 
-function SpeedBestTable({ rows }: { rows: Entry[] }) {
+function SpeedBestTable({
+  rows,
+  mode = "fastest-run",
+}: {
+  rows: Entry[];
+  mode?: ReturnType<typeof normalizeSpeedBestMode>;
+}) {
   const sorted = useMemo(
     () =>
       [...rows]
         .map((row) => {
-          const bestFromRuns = getSpeedBestFromRunsMs(row);
+          const bestFromRuns = getSpeedBestFromRunsMs(row, mode);
           const trial = getSpeedRunDurationMs(row, "trial");
-          const best = bestFromRuns ?? trial;
-          const tier = bestFromRuns != null ? 0 : trial != null ? 1 : 2;
+          const best =
+            mode === "best-2-of-3"
+              ? bestFromRuns
+              : bestFromRuns ?? trial;
+          const tier =
+            bestFromRuns != null
+              ? 0
+              : mode !== "best-2-of-3" && trial != null
+                ? 1
+                : 2;
           return { row, best, bestFromRuns, tier };
         })
         .filter((x): x is { row: Entry; best: number; bestFromRuns: number | null; tier: number } => x.best != null)
@@ -2389,7 +2424,7 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
               ? a.best - b.best
               : a.row.startNumber - b.row.startNumber,
         ),
-    [rows],
+    [rows, mode],
   );
   const leaderBest = sorted.find((x) => x.bestFromRuns != null)?.bestFromRuns ?? sorted[0]?.best ?? null;
 
@@ -2431,8 +2466,18 @@ function SpeedBestTable({ rows }: { rows: Entry[] }) {
   );
 }
 
-function SpeedFinalTable({ rows }: { rows: Entry[] }) {
-  const sorted = useMemo(() => buildSpeedFinalRanking(rows), [rows]);
+function SpeedFinalTable({
+  rows,
+  mode = "fastest-run",
+}: {
+  rows: Entry[];
+  mode?: ReturnType<typeof normalizeSpeedBestMode>;
+}) {
+  const sorted = useMemo(
+    () => buildSpeedFinalRanking(rows, mode),
+    [rows, mode],
+  );
+  const labels = speedRunLabels(mode);
   const leaderBest = sorted.find((x) => x.tier === 0)?.bestFromRuns ?? null;
 
   return (
@@ -2444,10 +2489,10 @@ function SpeedFinalTable({ rows }: { rows: Entry[] }) {
           <th className="min-w-[10rem]">Driver</th>
           <th className="min-w-[8rem] text-center">Car</th>
           <th className="w-20 text-center">Class</th>
-          <th className="w-24 text-center">Trial</th>
-          <th className="w-24 text-center">1st Run</th>
-          <th className="w-24 text-center">2nd Run</th>
-          <th className="w-24 text-center">Best</th>
+          <th className="w-24 text-center">{labels.trial}</th>
+          <th className="w-24 text-center">{labels.run1}</th>
+          <th className="w-24 text-center">{labels.run2}</th>
+          <th className="w-24 text-center">{labels.best}</th>
           <th className="w-24 text-center">Diff</th>
         </tr>
       </thead>

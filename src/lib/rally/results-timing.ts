@@ -7,7 +7,9 @@ import {
   parseStageTimingBlobEntry,
   type StageTimingBlobEntry,
 } from "./shakedown-passes";
-import type { Entry, Stage } from "./types";
+import type { Entry, SpeedBestMode, Stage } from "./types";
+
+export type { SpeedBestMode };
 
 export function stageChipLabel(stage: Stage, allStages: Stage[]): string {
   if (stage.kind === "shakedown") return "Shakedown";
@@ -555,8 +557,52 @@ export function getSpeedRunOutcomeLabel(
   return null;
 }
 
-/** Faster of 1st / 2nd run when timed; one run if the other has no duration; null if neither has a time. */
-export function getSpeedBestFromRunsMs(row: Entry): number | null {
+export function normalizeSpeedBestMode(raw: unknown): SpeedBestMode {
+  return raw === "best-2-of-3" ? "best-2-of-3" : "fastest-run";
+}
+
+/** UI / print labels for the three speed timing slots + Best column. */
+export function speedRunLabels(mode: SpeedBestMode = "fastest-run"): {
+  trial: string;
+  run1: string;
+  run2: string;
+  best: string;
+} {
+  if (mode === "best-2-of-3") {
+    return {
+      trial: "1st Run",
+      run1: "2nd Run",
+      run2: "3rd Run",
+      best: "Best 2 of 3",
+    };
+  }
+  return {
+    trial: "Trial",
+    run1: "1st Run",
+    run2: "2nd Run",
+    best: "Best Time",
+  };
+}
+
+/**
+ * Best Time for classification:
+ * - `fastest-run`: faster of 1st / 2nd (Trial excluded)
+ * - `best-2-of-3`: sum of the two fastest among all three timed runs (needs ≥2 times)
+ */
+export function getSpeedBestFromRunsMs(
+  row: Entry,
+  mode: SpeedBestMode = "fastest-run",
+): number | null {
+  if (mode === "best-2-of-3") {
+    const times = (
+      ["trial", "run1", "run2"] as const
+    )
+      .map((id) => getSpeedRunDurationMs(row, id))
+      .filter((t): t is number => t != null)
+      .sort((a, b) => a - b);
+    if (times.length < 2) return null;
+    return times[0]! + times[1]!;
+  }
   const r1 = getSpeedRunDurationMs(row, "run1");
   const r2 = getSpeedRunDurationMs(row, "run2");
   if (r1 == null && r2 == null) return null;
@@ -571,7 +617,7 @@ export type SpeedFinalRankRow = {
   run1: number | null;
   run2: number | null;
   bestFromRuns: number | null;
-  /** Final Best/Total shown in the table (runs only; trial excluded). */
+  /** Final Best/Total shown in the table. */
   bestDisplay: number | null;
   tier: 0 | 1 | 2 | 3;
   hasResult: boolean;
@@ -579,12 +625,14 @@ export type SpeedFinalRankRow = {
 };
 
 /**
- * Final order: (0) classified by faster of 1st/2nd run, (1) started but no run time
- * (including DNF/DNS or blank on both runs).
+ * Final order: (0) classified by Best Time, (1) started but no Best yet.
  * Non-starters (Start=No) are omitted from official final.
- * Trial is displayed for reference only and never used for Best/Total ranking.
+ * Scoring depends on `mode` (`fastest-run` vs `best-2-of-3`).
  */
-export function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
+export function buildSpeedFinalRanking(
+  rows: Entry[],
+  mode: SpeedBestMode = "fastest-run",
+): SpeedFinalRankRow[] {
   return rows
     .map((row) => {
       const nonStarter = row.start === false;
@@ -598,7 +646,7 @@ export function buildSpeedFinalRanking(rows: Entry[]): SpeedFinalRankRow[] {
         getSpeedRunOutcomeLabel(row, "trial") != null ||
         getSpeedRunOutcomeLabel(row, "run1") != null ||
         getSpeedRunOutcomeLabel(row, "run2") != null;
-      const bestFromRuns = getSpeedBestFromRunsMs(row);
+      const bestFromRuns = getSpeedBestFromRunsMs(row, mode);
       let tier: 0 | 1 | 2 | 3;
       if (nonStarter) tier = 3;
       else if (bestFromRuns != null) tier = 0;

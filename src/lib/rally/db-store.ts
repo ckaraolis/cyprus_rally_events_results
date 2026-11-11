@@ -226,6 +226,7 @@ function toEvent(row: {
             k !== "__shakedownPassCounts" &&
             k !== "__entrySeriesFlags" &&
             k !== "__finalResultsPublished" &&
+            k !== "__speedBestMode" &&
             k !== "__gpsAlgeAutoBib" &&
             k !== "__gpsServerUrl" &&
             k !== "__configUpdatedAt",
@@ -237,6 +238,8 @@ function toEvent(row: {
     officialNoticeDocuments: officialDocs,
     legStartingOrders: normalizeLegStartingOrders(legStartingOrdersRaw),
     finalResultsPublished: algeMap.__finalResultsPublished === true,
+    speedBestMode:
+      algeMap.__speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run",
     gpsAlgeAutoBib: algeMap.__gpsAlgeAutoBib === true,
     gpsServerUrl:
       typeof algeMap.__gpsServerUrl === "string"
@@ -449,6 +452,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
             ),
             __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
             __finalResultsPublished: e.finalResultsPublished === true,
+            __speedBestMode:
+              e.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run",
             __gpsAlgeAutoBib: e.gpsAlgeAutoBib === true,
             __gpsServerUrl: (e.gpsServerUrl ?? "").trim().replace(/\/$/, ""),
             /** Bumps on every save so public poll `updatedAt` always moves with timing edits. */
@@ -487,6 +492,8 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
             ),
             __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
             __finalResultsPublished: e.finalResultsPublished === true,
+            __speedBestMode:
+              e.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run",
             __gpsAlgeAutoBib: e.gpsAlgeAutoBib === true,
             __gpsServerUrl: (e.gpsServerUrl ?? "").trim().replace(/\/$/, ""),
             __configUpdatedAt: config.updatedAt,

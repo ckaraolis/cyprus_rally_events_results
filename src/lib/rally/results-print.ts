@@ -41,11 +41,13 @@ import {
   isStageSettledForLeg,
   resolveRallyStageCell,
   stageAllowsRally2,
+  normalizeSpeedBestMode,
+  speedRunLabels,
   stageChipLabel,
   stageHeadingLabel,
   worstLegRowOutcome,
 } from "./results-timing";
-import type { Entry, Stage } from "./types";
+import type { Entry, SpeedBestMode, Stage } from "./types";
 
 function escapeHtml(raw: string): string {
   return raw
@@ -570,11 +572,15 @@ type PrintBase = {
   entries: Entry[];
 };
 
-function buildSpeedBestTableRows(rows: Entry[]): {
+function buildSpeedBestTableRows(
+  rows: Entry[],
+  mode: SpeedBestMode = "fastest-run",
+): {
   columns: string[];
   tableRows: string[][];
 } {
-  const ranked = buildSpeedFinalRanking(rows);
+  const ranked = buildSpeedFinalRanking(rows, mode);
+  const labels = speedRunLabels(mode);
   const leaderBest = ranked.find((x) => x.tier === 0)?.bestFromRuns ?? null;
   const columns = [
     "Pos",
@@ -582,10 +588,10 @@ function buildSpeedBestTableRows(rows: Entry[]): {
     "Driver",
     "Car",
     "Class",
-    "Trial",
-    "1st Run",
-    "2nd Run",
-    "Best Time",
+    labels.trial,
+    labels.run1,
+    labels.run2,
+    labels.best,
     "Diff",
   ];
   const tableRows = ranked.map(
@@ -786,9 +792,11 @@ export async function printSpeedRunResultsPdf(
     runId: SpeedPrintRunId;
     /** Heading shown on the sheet (e.g. "1st Run"). */
     label: string;
+    speedBestMode?: SpeedBestMode;
   },
 ): Promise<boolean> {
   const logoUrl = normalizePrintLogoUrl(input.logoUrl);
+  const mode = normalizeSpeedBestMode(input.speedBestMode);
   const defaultSubject = input.label.trim() || "Results";
   const printOpts = {
     landscape: true as const,
@@ -800,11 +808,15 @@ export async function printSpeedRunResultsPdf(
       ({ subject, series }) => {
         const { columns, tableRows } = buildSpeedBestTableRows(
           entriesForPrint(input.entries, series),
+          mode,
         );
         return buildLandscapeResultsPdfHtml({
           eventName: input.eventName,
           subtitle: subject,
-          modeLabel: "Best Time classification",
+          modeLabel:
+            mode === "best-2-of-3"
+              ? "Best 2 of 3 classification"
+              : "Best Time classification",
           columns,
           tableRows,
           logoUrl,
@@ -845,21 +857,29 @@ export async function printSpeedRunResultsPdf(
   );
 }
 
-/** Speed Official Final Results (ordered by best of 1st / 2nd run). */
+/** Speed Official Final Results (ordered by Best Time scoring mode). */
 export async function printSpeedFinalResultsPdf(
-  input: PrintBase & { sheetTitle?: string },
+  input: PrintBase & {
+    sheetTitle?: string;
+    speedBestMode?: SpeedBestMode;
+  },
 ): Promise<boolean> {
+  const mode = normalizeSpeedBestMode(input.speedBestMode);
   const defaultSubject =
     input.sheetTitle?.trim() || "Official Final Results";
   return printHtmlDocument(
     ({ subject, series }) => {
       const { columns, tableRows } = buildSpeedBestTableRows(
         entriesForPrint(input.entries, series),
+        mode,
       );
       return buildLandscapeResultsPdfHtml({
         eventName: input.eventName,
         subtitle: subject,
-        modeLabel: "Ordered by Best Time",
+        modeLabel:
+          mode === "best-2-of-3"
+            ? "Ordered by Best 2 of 3"
+            : "Ordered by Best Time",
         columns,
         tableRows,
         logoUrl: normalizePrintLogoUrl(input.logoUrl),

@@ -15,6 +15,7 @@ import type {
   EventType,
   LegStartingOrder,
   RallyEvent,
+  SpeedBestMode,
   SpeedRunImportStatus,
   Stage,
   StageProgressStatus,
@@ -68,7 +69,10 @@ import {
   type StageTimingBlobEntry,
 } from "@/lib/rally/shakedown-passes";
 import { AdminCountrySelect } from "./admin-country-select";
-import { stageAllowsRally2 } from "@/lib/rally/results-timing";
+import {
+  speedRunLabels,
+  stageAllowsRally2,
+} from "@/lib/rally/results-timing";
 import {
   buildOfficialFinalResultRows,
   exportRallyAfterSsExcel,
@@ -306,10 +310,14 @@ function normalizePenaltyInput(raw: string): string {
   return raw.replace(/[^0-9:]/g, "").slice(0, 6);
 }
 
-function speedRunIdLabel(run: SpeedTimingRun): string {
-  if (run === "trial") return "Trial";
-  if (run === "run1") return "1st Run";
-  return "2nd Run";
+function speedRunIdLabel(
+  run: SpeedTimingRun,
+  mode: SpeedBestMode = "fastest-run",
+): string {
+  const labels = speedRunLabels(mode);
+  if (run === "trial") return labels.trial;
+  if (run === "run1") return labels.run1;
+  return labels.run2;
 }
 
 function parseRallyStageTimingBlob(raw: string): RallyStageTimingBlob {
@@ -425,6 +433,9 @@ export function EventEditor({ event: initial }: Props) {
     officialNoticeDocuments: initial.officialNoticeDocuments ?? [],
     legStartingOrders: initial.legStartingOrders ?? {},
     finalResultsPublished: initial.finalResultsPublished === true,
+    speedBestMode: (initial.speedBestMode === "best-2-of-3"
+      ? "best-2-of-3"
+      : "fastest-run") as SpeedBestMode,
     gpsAlgeAutoBib: initial.gpsAlgeAutoBib === true,
     gpsServerUrl: (initial.gpsServerUrl ?? "").trim().replace(/\/$/, ""),
   });
@@ -1479,7 +1490,7 @@ export function EventEditor({ event: initial }: Props) {
                 if (!algeTriggersAllowed) {
                   const runOrStageHint =
                     mNow.type === "speed"
-                      ? `${speedRunIdLabel(timingRunRef.current)} import status is not Live (ALGE only when Live; use manual entry when Completed or Scheduled)`
+                      ? `${speedRunIdLabel(timingRunRef.current, mNow.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run")} import status is not Live (ALGE only when Live; use manual entry when Completed or Scheduled)`
                       : (() => {
                           const sid = (
                             sub.stageId ?? rallyTimingStageIdRef.current
@@ -2233,12 +2244,15 @@ export function EventEditor({ event: initial }: Props) {
     }
   }
 
+  const speedBestMode: SpeedBestMode =
+    meta.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run";
+  const speedLabels = speedRunLabels(speedBestMode);
   const timingRunLabel =
     timingRun === "trial"
-      ? "Trial"
+      ? speedLabels.trial
       : timingRun === "run1"
-        ? "1st Run"
-        : "2nd Run";
+        ? speedLabels.run1
+        : speedLabels.run2;
   const selectedRallyTimingStage =
     meta.type === "rally"
       ? sortedStages.find((s) => s.id === rallyTimingStageId) ?? sortedStages[0] ?? null
@@ -2323,6 +2337,7 @@ export function EventEditor({ event: initial }: Props) {
       entries: entries.filter((e) => e.start !== false),
       runId,
       label,
+      speedBestMode,
     });
   }
   const getTimingValuesForEntry = (
@@ -2908,6 +2923,36 @@ export function EventEditor({ event: initial }: Props) {
               <option value="speed">Speed</option>
             </select>
           </div>
+          {meta.type === "speed" ? (
+            <div>
+              <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Best Time scoring
+              </label>
+              <select
+                className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+                value={meta.speedBestMode}
+                onChange={(e) =>
+                  setMeta((m) => ({
+                    ...m,
+                    speedBestMode: (e.target.value === "best-2-of-3"
+                      ? "best-2-of-3"
+                      : "fastest-run") as SpeedBestMode,
+                  }))
+                }
+              >
+                <option value="fastest-run">
+                  Fastest of 1st / 2nd Run (Trial excluded)
+                </option>
+                <option value="best-2-of-3">
+                  Best 2 of 3 (sum of two fastest runs)
+                </option>
+              </select>
+              <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
+                Best 2 of 3 uses all three runs (shown as 1st / 2nd / 3rd Run).
+                Example: 1:50.11 + 1:48.24 (drops 1:52.20).
+              </p>
+            </div>
+          ) : null}
           <div>
             <label className="text-xs font-medium uppercase tracking-wide text-zinc-500">
               Status
@@ -4128,7 +4173,7 @@ export function EventEditor({ event: initial }: Props) {
                       : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
                   }`}
                 >
-                  Trial
+                  {speedLabels.trial}
                 </button>
                 <button
                   type="button"
@@ -4139,7 +4184,7 @@ export function EventEditor({ event: initial }: Props) {
                       : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
                   }`}
                 >
-                  1st Run
+                  {speedLabels.run1}
                 </button>
                 <button
                   type="button"
@@ -4150,7 +4195,7 @@ export function EventEditor({ event: initial }: Props) {
                       : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
                   }`}
                 >
-                  2nd Run
+                  {speedLabels.run2}
                 </button>
               </>
             ) : sortedStages.length > 0 ? (
@@ -5271,10 +5316,10 @@ export function EventEditor({ event: initial }: Props) {
                 </button>
                 <button
                   type="button"
-                  onClick={() => printSpeedRun("best", "Best Time")}
+                  onClick={() => printSpeedRun("best", speedLabels.best)}
                   className="rounded-lg border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-100 dark:hover:bg-zinc-800"
                 >
-                  Print Best Time PDF
+                  Print {speedLabels.best} PDF
                 </button>
               </>
             )}
@@ -5679,6 +5724,7 @@ export function EventEditor({ event: initial }: Props) {
                     logoUrl: meta.logoUrl ?? "",
                     // Includes Start = No crews (listed as NON STARTER).
                     entries,
+                    speedBestMode,
                   });
                 }}
                 className="rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-semibold text-zinc-800 hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-950 dark:text-zinc-100 dark:hover:bg-zinc-800"
