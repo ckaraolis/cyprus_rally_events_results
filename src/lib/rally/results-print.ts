@@ -563,7 +563,7 @@ function buildRallyLegPdfSheet(
   return { columns, tableRows, footnote: null };
 }
 
-export type SpeedPrintRunId = "trial" | "run1" | "run2" | "best";
+export type SpeedPrintRunId = "trial" | "run1" | "run2" | "run3" | "best";
 
 type PrintBase = {
   eventName: string;
@@ -581,6 +581,7 @@ function buildSpeedBestTableRows(
 } {
   const ranked = buildSpeedFinalRanking(rows, mode);
   const labels = speedRunLabels(mode);
+  const showRun3 = mode === "best-2-of-3";
   const leaderBest = ranked.find((x) => x.tier === 0)?.bestFromRuns ?? null;
   const columns = [
     "Pos",
@@ -591,11 +592,12 @@ function buildSpeedBestTableRows(
     labels.trial,
     labels.run1,
     labels.run2,
+    ...(showRun3 ? [labels.run3] : []),
     labels.best,
     "Diff",
   ];
   const tableRows = ranked.map(
-    ({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => [
+    ({ row, trial, run1, run2, run3, bestFromRuns, bestDisplay, nonStarter }, i) => [
       String(i + 1),
       String(row.startNumber),
       formatNameWithNationality(row.driver, row.driverCountryCode),
@@ -610,6 +612,13 @@ function buildSpeedBestTableRows(
       nonStarter
         ? "—"
         : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2),
+      ...(showRun3
+        ? [
+            nonStarter
+              ? "—"
+              : getSpeedRunOutcomeLabel(row, "run3") ?? formatDurationMs(run3),
+          ]
+        : []),
       nonStarter
         ? "NON STARTER"
         : bestDisplay != null

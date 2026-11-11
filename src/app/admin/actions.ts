@@ -94,6 +94,7 @@ export async function createEvent(input: {
       trial: "scheduled",
       run1: "scheduled",
       run2: "scheduled",
+      run3: "scheduled",
     },
     algeTriggerCountByKey: {},
     rallyStageAlgeConfig: {},
@@ -128,6 +129,7 @@ export async function updateEventMeta(
       trial: SpeedRunImportStatus;
       run1: SpeedRunImportStatus;
       run2: SpeedRunImportStatus;
+      run3: SpeedRunImportStatus;
     };
     algeTriggerCountByKey: Record<string, number>;
     rallyStageAlgeConfig: RallyEvent["rallyStageAlgeConfig"];
@@ -151,7 +153,12 @@ export async function updateEventMeta(
   e.dateEnd = input.dateEnd;
   e.location = input.location.trim();
   e.status = input.status;
-  e.speedRunImportStatus = input.speedRunImportStatus;
+  e.speedRunImportStatus = {
+    trial: input.speedRunImportStatus.trial,
+    run1: input.speedRunImportStatus.run1,
+    run2: input.speedRunImportStatus.run2,
+    run3: input.speedRunImportStatus.run3 ?? "scheduled",
+  };
   e.algeTriggerCountByKey = input.algeTriggerCountByKey;
   e.rallyStageAlgeConfig = input.rallyStageAlgeConfig ?? {};
   e.officialNoticeCustomCategories = input.officialNoticeCustomCategories;
@@ -289,9 +296,14 @@ export async function pollAlgeTriggerForSpeedRun(input: {
         ? { ...e, run1StartTime: clockValue }
         : { ...e, run1FinishTime: clockValue };
     }
+    if (input.runId === "run2") {
+      return input.triggerKind === "start"
+        ? { ...e, run2StartTime: clockValue }
+        : { ...e, run2FinishTime: clockValue };
+    }
     return input.triggerKind === "start"
-      ? { ...e, run2StartTime: clockValue }
-      : { ...e, run2FinishTime: clockValue };
+      ? { ...e, run3StartTime: clockValue }
+      : { ...e, run3FinishTime: clockValue };
   });
 
   event.algeTriggerCountByKey = {
@@ -518,6 +530,7 @@ export async function saveRallyTimingControl(
         trial: SpeedRunImportStatus;
         run1: SpeedRunImportStatus;
         run2: SpeedRunImportStatus;
+        run3: SpeedRunImportStatus;
       };
       algeTriggerCountByKey: Record<string, number>;
       rallyStageAlgeConfig: RallyEvent["rallyStageAlgeConfig"];

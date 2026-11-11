@@ -7,8 +7,17 @@ import {
   normalizeEntrySeriesFlagsMap,
 } from "./dual-series";
 import { normalizeShakedownPassCount } from "./shakedown-passes";
+import {
+  applyRun3Times,
+  buildRun3TimesMap,
+  normalizeRun3TimesMap,
+} from "./results-timing";
 import { parseStageKindMeta, serializeStageKindMeta } from "./stage-kind";
 import type { Entry, RallyEvent, RallySiteConfig, SiteSettings, Stage } from "./types";
+
+function normalizeSpeedImportStatus(raw: string): "scheduled" | "live" | "completed" {
+  return raw === "live" || raw === "completed" ? raw : "scheduled";
+}
 
 function toSite(row: {
   resultsPageTitle: string;
@@ -82,7 +91,11 @@ function toEntry(row: {
   driverCountryCode: string;
   coDriverCountryCode: string;
 }): Entry {
-  return { ...row };
+  return {
+    ...row,
+    run3StartTime: "",
+    run3FinishTime: "",
+  };
 }
 
 function toEvent(row: {
@@ -205,15 +218,14 @@ function toEvent(row: {
         ? row.status
         : "draft",
     speedRunImportStatus: {
-      trial: row.speedRunImportStatusTrial === "live" || row.speedRunImportStatusTrial === "completed"
-        ? row.speedRunImportStatusTrial
-        : "scheduled",
-      run1: row.speedRunImportStatusRun1 === "live" || row.speedRunImportStatusRun1 === "completed"
-        ? row.speedRunImportStatusRun1
-        : "scheduled",
-      run2: row.speedRunImportStatusRun2 === "live" || row.speedRunImportStatusRun2 === "completed"
-        ? row.speedRunImportStatusRun2
-        : "scheduled",
+      trial: normalizeSpeedImportStatus(row.speedRunImportStatusTrial),
+      run1: normalizeSpeedImportStatus(row.speedRunImportStatusRun1),
+      run2: normalizeSpeedImportStatus(row.speedRunImportStatusRun2),
+      run3: normalizeSpeedImportStatus(
+        typeof algeMap.__speedRunImportStatusRun3 === "string"
+          ? algeMap.__speedRunImportStatusRun3
+          : "scheduled",
+      ),
     },
     algeTriggerCountByKey: Object.fromEntries(
       Object.entries(algeMap)
@@ -225,6 +237,8 @@ function toEvent(row: {
             k !== "__stageKinds" &&
             k !== "__shakedownPassCounts" &&
             k !== "__entrySeriesFlags" &&
+            k !== "__run3Times" &&
+            k !== "__speedRunImportStatusRun3" &&
             k !== "__finalResultsPublished" &&
             k !== "__speedBestMode" &&
             k !== "__gpsAlgeAutoBib" &&
@@ -262,7 +276,11 @@ function toEvent(row: {
       const flags = normalizeEntrySeriesFlagsMap(algeMap.__entrySeriesFlags)[
         entry.id
       ];
-      return applyEntrySeriesFlags(entry, flags);
+      const withFlags = applyEntrySeriesFlags(entry, flags);
+      return applyRun3Times(
+        withFlags,
+        normalizeRun3TimesMap(algeMap.__run3Times),
+      );
     }),
   };
 }
@@ -368,6 +386,7 @@ export async function patchEventEntriesInDb(
         : {};
     algeMap.__configUpdatedAt = configUpdatedAt;
     algeMap.__entrySeriesFlags = buildEntrySeriesFlagsMap(entries);
+    algeMap.__run3Times = buildRun3TimesMap(entries);
 
     await tx.event.update({
       where: { id: eventId },
@@ -451,6 +470,9 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
                 ]),
             ),
             __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
+            __run3Times: buildRun3TimesMap(e.entries),
+            __speedRunImportStatusRun3:
+              e.speedRunImportStatus.run3 ?? "scheduled",
             __finalResultsPublished: e.finalResultsPublished === true,
             __speedBestMode:
               e.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run",
@@ -491,6 +513,9 @@ export async function saveConfigToDb(config: RallySiteConfig): Promise<void> {
                 ]),
             ),
             __entrySeriesFlags: buildEntrySeriesFlagsMap(e.entries),
+            __run3Times: buildRun3TimesMap(e.entries),
+            __speedRunImportStatusRun3:
+              e.speedRunImportStatus.run3 ?? "scheduled",
             __finalResultsPublished: e.finalResultsPublished === true,
             __speedBestMode:
               e.speedBestMode === "best-2-of-3" ? "best-2-of-3" : "fastest-run",

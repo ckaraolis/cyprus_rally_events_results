@@ -95,7 +95,7 @@ type AdminTab =
   | "notice-board"
   | "official-final"
   | "cyprus-championship";
-type SpeedTimingRun = "trial" | "run1" | "run2";
+type SpeedTimingRun = "trial" | "run1" | "run2" | "run3";
 type SpeedTimingOutcome = "ret" | "dnf" | null;
 type AssignStartTimeRule = {
   id: string;
@@ -274,6 +274,7 @@ function timingSignature(meta: {
     trial: SpeedRunImportStatus;
     run1: SpeedRunImportStatus;
     run2: SpeedRunImportStatus;
+    run3: SpeedRunImportStatus;
   };
   rallyStageAlgeConfig?: RallyEvent["rallyStageAlgeConfig"];
 }, entries: Entry[]): string {
@@ -288,6 +289,8 @@ function timingSignature(meta: {
       run1FinishTime: e.run1FinishTime ?? "",
       run2StartTime: e.run2StartTime ?? "",
       run2FinishTime: e.run2FinishTime ?? "",
+      run3StartTime: e.run3StartTime ?? "",
+      run3FinishTime: e.run3FinishTime ?? "",
     })),
   });
 }
@@ -317,7 +320,8 @@ function speedRunIdLabel(
   const labels = speedRunLabels(mode);
   if (run === "trial") return labels.trial;
   if (run === "run1") return labels.run1;
-  return labels.run2;
+  if (run === "run2") return labels.run2;
+  return labels.run3;
 }
 
 function parseRallyStageTimingBlob(raw: string): RallyStageTimingBlob {
@@ -420,10 +424,11 @@ export function EventEditor({ event: initial }: Props) {
     dateEnd: initial.dateEnd ?? initial.dateStart,
     location: initial.location,
     status: initial.status,
-    speedRunImportStatus: initial.speedRunImportStatus ?? {
-      trial: "scheduled",
-      run1: "scheduled",
-      run2: "scheduled",
+    speedRunImportStatus: {
+      trial: initial.speedRunImportStatus?.trial ?? "scheduled",
+      run1: initial.speedRunImportStatus?.run1 ?? "scheduled",
+      run2: initial.speedRunImportStatus?.run2 ?? "scheduled",
+      run3: initial.speedRunImportStatus?.run3 ?? "scheduled",
     },
     algeTriggerCountByKey: initial.algeTriggerCountByKey ?? {},
     rallyStageAlgeConfig: normalizeInitialRallyStageAlgeConfig(
@@ -472,6 +477,8 @@ export function EventEditor({ event: initial }: Props) {
       run1FinishTime: e.run1FinishTime ?? "",
       run2StartTime: e.run2StartTime ?? "",
       run2FinishTime: e.run2FinishTime ?? "",
+      run3StartTime: e.run3StartTime ?? "",
+      run3FinishTime: e.run3FinishTime ?? "",
       driverCountryCode: e.driverCountryCode ?? "",
       coDriverCountryCode: e.coDriverCountryCode ?? "",
       series: normalizeRallySeries(e.series),
@@ -1263,6 +1270,8 @@ export function EventEditor({ event: initial }: Props) {
         run1FinishTime: "",
         run2StartTime: "",
         run2FinishTime: "",
+        run3StartTime: "",
+        run3FinishTime: "",
       };
     }
 
@@ -1277,9 +1286,14 @@ export function EventEditor({ event: initial }: Props) {
         ? { ...row, run1StartTime: triggerTime }
         : { ...row, run1FinishTime: triggerTime };
     }
+    if (activeRun === "run2") {
+      return trigger === "start"
+        ? { ...row, run2StartTime: triggerTime }
+        : { ...row, run2FinishTime: triggerTime };
+    }
     return trigger === "start"
-      ? { ...row, run2StartTime: triggerTime }
-      : { ...row, run2FinishTime: triggerTime };
+      ? { ...row, run3StartTime: triggerTime }
+      : { ...row, run3FinishTime: triggerTime };
   }
 
   async function connectStompStream() {
@@ -1738,6 +1752,8 @@ export function EventEditor({ event: initial }: Props) {
         run1FinishTime: "",
         run2StartTime: "",
         run2FinishTime: "",
+        run3StartTime: "",
+        run3FinishTime: "",
         driver: "",
         coDriver: "",
         car: "",
@@ -1894,6 +1910,8 @@ export function EventEditor({ event: initial }: Props) {
           run1FinishTime: "",
           run2StartTime: "",
           run2FinishTime: "",
+          run3StartTime: "",
+          run3FinishTime: "",
           driver: toStringValue(readCell(row, ["Driver", "Driver Name"])),
           coDriver: toStringValue(
             readCell(row, ["Co-driver", "Codriver", "Co Driver", "Navigator"]),
@@ -2252,7 +2270,9 @@ export function EventEditor({ event: initial }: Props) {
       ? speedLabels.trial
       : timingRun === "run1"
         ? speedLabels.run1
-        : speedLabels.run2;
+        : timingRun === "run2"
+          ? speedLabels.run2
+          : speedLabels.run3;
   const selectedRallyTimingStage =
     meta.type === "rally"
       ? sortedStages.find((s) => s.id === rallyTimingStageId) ?? sortedStages[0] ?? null
@@ -2287,13 +2307,17 @@ export function EventEditor({ event: initial }: Props) {
       ? "trialStartTime"
       : timingRun === "run1"
         ? "run1StartTime"
-        : "run2StartTime";
+        : timingRun === "run2"
+          ? "run2StartTime"
+          : "run3StartTime";
   const timingFinishField: keyof Entry =
     timingRun === "trial"
       ? "trialFinishTime"
       : timingRun === "run1"
         ? "run1FinishTime"
-        : "run2FinishTime";
+        : timingRun === "run2"
+          ? "run2FinishTime"
+          : "run3FinishTime";
   const timingRunStatus = meta.speedRunImportStatus[timingRun];
   /** Competitive stages grouped by LEG (for LEG print buttons). */
   const rallyPrintLegs = useMemo(() => {
@@ -2436,6 +2460,8 @@ export function EventEditor({ event: initial }: Props) {
       run1FinishTime: "",
       run2StartTime: "",
       run2FinishTime: "",
+      run3StartTime: "",
+      run3FinishTime: "",
     };
   };
   const updateEntryTimingPenaltyValues = (
@@ -2474,6 +2500,8 @@ export function EventEditor({ event: initial }: Props) {
       run1FinishTime: "",
       run2StartTime: "",
       run2FinishTime: "",
+      run3StartTime: "",
+      run3FinishTime: "",
     };
   };
   const setRally2ForEntry = (entryId: string, next: boolean) => {
@@ -2499,6 +2527,8 @@ export function EventEditor({ event: initial }: Props) {
           run1FinishTime: "",
           run2StartTime: "",
           run2FinishTime: "",
+          run3StartTime: "",
+          run3FinishTime: "",
         };
       }),
     );
@@ -2931,25 +2961,26 @@ export function EventEditor({ event: initial }: Props) {
               <select
                 className="mt-1 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-950"
                 value={meta.speedBestMode}
-                onChange={(e) =>
-                  setMeta((m) => ({
-                    ...m,
-                    speedBestMode: (e.target.value === "best-2-of-3"
-                      ? "best-2-of-3"
-                      : "fastest-run") as SpeedBestMode,
-                  }))
-                }
+                onChange={(e) => {
+                  const next = (e.target.value === "best-2-of-3"
+                    ? "best-2-of-3"
+                    : "fastest-run") as SpeedBestMode;
+                  setMeta((m) => ({ ...m, speedBestMode: next }));
+                  if (next !== "best-2-of-3" && timingRun === "run3") {
+                    setTimingRun("run2");
+                  }
+                }}
               >
                 <option value="fastest-run">
                   Fastest of 1st / 2nd Run (Trial excluded)
                 </option>
                 <option value="best-2-of-3">
-                  Best 2 of 3 (sum of two fastest runs)
+                  Best 2 of 3 (sum of two fastest of 1st/2nd/3rd)
                 </option>
               </select>
               <p className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-                Best 2 of 3 uses all three runs (shown as 1st / 2nd / 3rd Run).
-                Example: 1:50.11 + 1:48.24 (drops 1:52.20).
+                Trial never counts. Best 2 of 3 sums the two fastest of 1st /
+                2nd / 3rd Run. Example: 1:50.11 + 1:48.24 (drops 1:52.20).
               </p>
             </div>
           ) : null}
@@ -4197,6 +4228,19 @@ export function EventEditor({ event: initial }: Props) {
                 >
                   {speedLabels.run2}
                 </button>
+                {speedBestMode === "best-2-of-3" ? (
+                  <button
+                    type="button"
+                    onClick={() => setTimingRun("run3")}
+                    className={`rounded-lg px-3 py-1.5 text-sm ${
+                      timingRun === "run3"
+                        ? "bg-red-700 font-medium text-white dark:bg-red-600"
+                        : "border border-zinc-300 text-zinc-700 dark:border-zinc-600 dark:text-zinc-200"
+                    }`}
+                  >
+                    {speedLabels.run3}
+                  </button>
+                ) : null}
               </>
             ) : sortedStages.length > 0 ? (
               sortedStages.map((stage) => {

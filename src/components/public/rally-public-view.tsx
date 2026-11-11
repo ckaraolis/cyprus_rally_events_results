@@ -86,7 +86,7 @@ const SPEED_TABS = [
 type TabId = (typeof RALLY_TABS | typeof SPEED_TABS)[number]["id"];
 
 type ResultsSubView = "stage" | "overall";
-type SpeedRunId = "trial" | "run1" | "run2" | "best";
+type SpeedRunId = "trial" | "run1" | "run2" | "run3" | "best";
 const OFFICIAL_NOTICE_DEFAULT_CATEGORIES = [
   "Supplementary Regulations",
   "Bulletins",
@@ -98,12 +98,16 @@ function speedRunsForEvent(
   mode: ReturnType<typeof normalizeSpeedBestMode>,
 ): ReadonlyArray<{ id: SpeedRunId; label: string }> {
   const labels = speedRunLabels(mode);
-  return [
+  const runs: Array<{ id: SpeedRunId; label: string }> = [
     { id: "trial", label: labels.trial },
     { id: "run1", label: labels.run1 },
     { id: "run2", label: labels.run2 },
-    { id: "best", label: labels.best },
   ];
+  if (mode === "best-2-of-3") {
+    runs.push({ id: "run3", label: labels.run3 });
+  }
+  runs.push({ id: "best", label: labels.best });
+  return runs;
 }
 
 type ResultsStripItem =
@@ -232,6 +236,8 @@ function fingerprintEventForLivePoll(e: RallyEvent): string {
       run1FinishTime: x.run1FinishTime,
       run2StartTime: x.run2StartTime,
       run2FinishTime: x.run2FinishTime,
+      run3StartTime: x.run3StartTime ?? "",
+      run3FinishTime: x.run3FinishTime ?? "",
     })),
     noticeCategories: e.officialNoticeCustomCategories ?? [],
     noticeDocs: (e.officialNoticeDocuments ?? []).map((d) => ({
@@ -619,13 +625,19 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
         (row) =>
           getSpeedRunDurationMs(row, "run1") != null ||
           getSpeedRunDurationMs(row, "run2") != null ||
+          getSpeedRunDurationMs(row, "run3") != null ||
           getSpeedRunDurationMs(row, "trial") != null ||
           getSpeedRunOutcomeLabel(row, "trial") != null ||
           getSpeedRunOutcomeLabel(row, "run1") != null ||
-          getSpeedRunOutcomeLabel(row, "run2") != null,
+          getSpeedRunOutcomeLabel(row, "run2") != null ||
+          getSpeedRunOutcomeLabel(row, "run3") != null,
       );
     }
-    const runId = selectedStripItem.runId as "trial" | "run1" | "run2";
+    const runId = selectedStripItem.runId as
+      | "trial"
+      | "run1"
+      | "run2"
+      | "run3";
     return entriesForStageResults.filter(
       (row) =>
         getSpeedRunDurationMs(row, runId) != null ||
@@ -895,8 +907,8 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             <p className="text-sm text-[var(--ewrc-muted-2)]">
               {event.type === "speed"
                 ? speedBestMode === "best-2-of-3"
-                  ? "Speed mode: Best Time is the sum of the two fastest of the three runs."
-                  : "Speed mode: trial does not count in final ranking; best of 1st Run and 2nd Run counts."
+                  ? "Speed mode: Trial does not count; Best Time is the sum of the two fastest of 1st / 2nd / 3rd Run."
+                  : "Speed mode: Trial does not count in final ranking; best of 1st Run and 2nd Run counts."
                 : "Pick a stage or an "}
               {event.type === "rally" ? (
                 <strong className="text-[var(--ewrc-accent-text)]">end of leg</strong>
@@ -1458,7 +1470,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
             <p className="text-sm text-[var(--ewrc-muted-2)]">
               {event.type === "speed"
                 ? speedBestMode === "best-2-of-3"
-                  ? "Final order uses Best 2 of 3: sum of the two fastest run times. Needs at least two timed runs. If fewer than two times, Best shows -."
+                  ? "Final order uses Best 2 of 3: sum of the two fastest of 1st / 2nd / 3rd Run. Trial never counts. Needs at least two timed competitive runs."
                   : "Final order uses only the faster of 1st and 2nd run. Trial is not used in final Best/Total. If both runs have no time (e.g. DNF/DNS), Best/Total shows -."
                 : "Overall: stage times (incl. jump starts) plus event penalties from the Penalties tab (from their After SS onward)."}
             </p>
@@ -2224,7 +2236,7 @@ function SpeedRunTable({
   runId,
 }: {
   entries: Entry[];
-  runId: "trial" | "run1" | "run2";
+  runId: "trial" | "run1" | "run2" | "run3";
 }) {
   const sorted = useMemo(
     () =>
@@ -2478,6 +2490,7 @@ function SpeedFinalTable({
     [rows, mode],
   );
   const labels = speedRunLabels(mode);
+  const showRun3 = mode === "best-2-of-3";
   const leaderBest = sorted.find((x) => x.tier === 0)?.bestFromRuns ?? null;
 
   return (
@@ -2492,12 +2505,15 @@ function SpeedFinalTable({
           <th className="w-24 text-center">{labels.trial}</th>
           <th className="w-24 text-center">{labels.run1}</th>
           <th className="w-24 text-center">{labels.run2}</th>
+          {showRun3 ? (
+            <th className="w-24 text-center">{labels.run3}</th>
+          ) : null}
           <th className="w-24 text-center">{labels.best}</th>
           <th className="w-24 text-center">Diff</th>
         </tr>
       </thead>
       <tbody>
-        {sorted.map(({ row, trial, run1, run2, bestFromRuns, bestDisplay, nonStarter }, i) => (
+        {sorted.map(({ row, trial, run1, run2, run3, bestFromRuns, bestDisplay, nonStarter }, i) => (
           <tr key={row.id} className={i % 2 === 1 ? "ewrc-row-alt" : ""}>
             <td className="align-top text-center font-mono text-[var(--ewrc-pos)]">
               {i + 1}
@@ -2527,6 +2543,13 @@ function SpeedFinalTable({
                 ? "-"
                 : getSpeedRunOutcomeLabel(row, "run2") ?? formatDurationMs(run2)}
             </td>
+            {showRun3 ? (
+              <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
+                {nonStarter
+                  ? "-"
+                  : getSpeedRunOutcomeLabel(row, "run3") ?? formatDurationMs(run3)}
+              </td>
+            ) : null}
             <td className="align-middle text-center font-mono text-[var(--ewrc-strong)]">
               {nonStarter
                 ? "NON STARTER"

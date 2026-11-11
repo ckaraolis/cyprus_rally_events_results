@@ -1,6 +1,6 @@
 import type { RallyEvent } from "@/lib/rally/types";
 
-export type SpeedRunIdForImport = "trial" | "run1" | "run2";
+export type SpeedRunIdForImport = "trial" | "run1" | "run2" | "run3";
 
 /** Only runs in `live` import status accept ALGE pulls; `completed` / `scheduled` are manual-only. */
 export function canImportAlgeTimesForRun(

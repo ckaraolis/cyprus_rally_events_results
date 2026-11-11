@@ -257,6 +257,9 @@ function normalizeEntry(raw: unknown): Entry {
   const run2StartTime = typeof o.run2StartTime === "string" ? o.run2StartTime : "";
   const run2FinishTime =
     typeof o.run2FinishTime === "string" ? o.run2FinishTime : "";
+  const run3StartTime = typeof o.run3StartTime === "string" ? o.run3StartTime : "";
+  const run3FinishTime =
+    typeof o.run3FinishTime === "string" ? o.run3FinishTime : "";
   return {
     id: typeof o.id === "string" ? o.id : crypto.randomUUID(),
     startNumber: sn,
@@ -268,6 +271,8 @@ function normalizeEntry(raw: unknown): Entry {
     run1FinishTime,
     run2StartTime,
     run2FinishTime,
+    run3StartTime,
+    run3FinishTime,
     driver: typeof o.driver === "string" ? o.driver : "",
     coDriver: typeof o.coDriver === "string" ? o.coDriver : "",
     car: typeof o.car === "string" ? o.car : "",
@@ -294,6 +299,7 @@ function normalizeEvent(raw: unknown): RallyEvent {
         trial: "scheduled",
         run1: "scheduled",
         run2: "scheduled",
+        run3: "scheduled",
       },
       algeTriggerCountByKey: {},
       rallyStageAlgeConfig: {},
@@ -337,6 +343,9 @@ function normalizeEvent(raw: unknown): RallyEvent {
       ),
       run2: normalizeSpeedRunImportStatus(
         (o.speedRunImportStatus as Record<string, unknown> | undefined)?.run2,
+      ),
+      run3: normalizeSpeedRunImportStatus(
+        (o.speedRunImportStatus as Record<string, unknown> | undefined)?.run3,
       ),
     },
     algeTriggerCountByKey:

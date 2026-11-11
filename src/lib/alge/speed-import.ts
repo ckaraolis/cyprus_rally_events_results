@@ -1,6 +1,6 @@
 import type { Entry } from "@/lib/rally/types";
 
-export type SpeedImportRunId = "trial" | "run1" | "run2";
+export type SpeedImportRunId = "trial" | "run1" | "run2" | "run3";
 
 type ParsedRow = {
   startNumber: number;
@@ -85,7 +85,10 @@ export function mergeImportedSpeedTimes(
     if (runId === "run1") {
       return { ...e, run1StartTime: row.startTime, run1FinishTime: row.finishTime };
     }
-    return { ...e, run2StartTime: row.startTime, run2FinishTime: row.finishTime };
+    if (runId === "run2") {
+      return { ...e, run2StartTime: row.startTime, run2FinishTime: row.finishTime };
+    }
+    return { ...e, run3StartTime: row.startTime, run3FinishTime: row.finishTime };
   });
 
   for (const r of rows) {

@@ -2,11 +2,13 @@ export type EventStatus = "draft" | "upcoming" | "live" | "completed";
 export type EventType = "rally" | "speed";
 export type SpeedRunImportStatus = "scheduled" | "live" | "completed";
 /**
- * Speed Best Time scoring:
- * - `fastest-run` = faster of 1st/2nd run (Trial excluded) — default
- * - `best-2-of-3` = sum of the two fastest among Trial/1st/2nd (shown as 1st/2nd/3rd Run)
+ * Speed Best Time scoring (Trial never counts in either mode):
+ * - `fastest-run` = faster of 1st/2nd run — default
+ * - `best-2-of-3` = sum of the two fastest among 1st/2nd/3rd Run
  */
 export type SpeedBestMode = "fastest-run" | "best-2-of-3";
+/** Timed speed slots (Trial + up to three competitive runs). */
+export type SpeedRunId = "trial" | "run1" | "run2" | "run3";
 export type OfficialNoticeCategory =
   | "Supplementary Regulations"
   | "Bulletins"
@@ -75,6 +77,10 @@ export interface Entry {
   run2StartTime: string;
   /** Speed event (2nd run) finish time entered by admin. */
   run2FinishTime: string;
+  /** Speed event (3rd run) start — used when Best Time scoring is best-2-of-3. */
+  run3StartTime: string;
+  /** Speed event (3rd run) finish — used when Best Time scoring is best-2-of-3. */
+  run3FinishTime: string;
   driver: string;
   coDriver: string;
   car: string;
@@ -127,6 +133,7 @@ export interface RallyEvent {
     trial: SpeedRunImportStatus;
     run1: SpeedRunImportStatus;
     run2: SpeedRunImportStatus;
+    run3: SpeedRunImportStatus;
   };
   /** Last observed ALGE trigger counts per polling key. */
   algeTriggerCountByKey: Record<string, number>;

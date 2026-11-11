@@ -501,9 +501,11 @@ export function legOutcomeSortKey(o: "DNS" | "DNF" | "RET"): number {
   return 2;
 }
 
+export type SpeedTimedRunId = "trial" | "run1" | "run2" | "run3";
+
 export function getSpeedRunDurationMs(
   row: Entry,
-  runId: "trial" | "run1" | "run2",
+  runId: SpeedTimedRunId,
 ): number | null {
   if (getSpeedRunOutcomeLabel(row, runId)) return null;
   const startMs = getSpeedRunStartMs(row, runId);
@@ -514,44 +516,40 @@ export function getSpeedRunDurationMs(
   return diff;
 }
 
-export function getSpeedRunStartMs(row: Entry, runId: "trial" | "run1" | "run2"): number | null {
-  const startRaw =
-    runId === "trial"
-      ? row.trialStartTime
-      : runId === "run1"
-        ? row.run1StartTime
-        : row.run2StartTime;
-  return parseClockToDayMs(startRaw ?? "");
+function speedRunStartRaw(row: Entry, runId: SpeedTimedRunId): string {
+  if (runId === "trial") return row.trialStartTime ?? "";
+  if (runId === "run1") return row.run1StartTime ?? "";
+  if (runId === "run2") return row.run2StartTime ?? "";
+  return row.run3StartTime ?? "";
 }
 
-export function getSpeedRunFinishMs(row: Entry, runId: "trial" | "run1" | "run2"): number | null {
-  const finishRaw =
-    runId === "trial"
-      ? row.trialFinishTime
-      : runId === "run1"
-        ? row.run1FinishTime
-        : row.run2FinishTime;
-  return parseClockToDayMs(finishRaw ?? "");
+function speedRunFinishRaw(row: Entry, runId: SpeedTimedRunId): string {
+  if (runId === "trial") return row.trialFinishTime ?? "";
+  if (runId === "run1") return row.run1FinishTime ?? "";
+  if (runId === "run2") return row.run2FinishTime ?? "";
+  return row.run3FinishTime ?? "";
+}
+
+export function getSpeedRunStartMs(
+  row: Entry,
+  runId: SpeedTimedRunId,
+): number | null {
+  return parseClockToDayMs(speedRunStartRaw(row, runId));
+}
+
+export function getSpeedRunFinishMs(
+  row: Entry,
+  runId: SpeedTimedRunId,
+): number | null {
+  return parseClockToDayMs(speedRunFinishRaw(row, runId));
 }
 
 export function getSpeedRunOutcomeLabel(
   row: Entry,
-  runId: "trial" | "run1" | "run2",
+  runId: SpeedTimedRunId,
 ): "DNS" | "DNF" | null {
-  const startRaw =
-    runId === "trial"
-      ? row.trialStartTime
-      : runId === "run1"
-        ? row.run1StartTime
-        : row.run2StartTime;
-  const finishRaw =
-    runId === "trial"
-      ? row.trialFinishTime
-      : runId === "run1"
-        ? row.run1FinishTime
-        : row.run2FinishTime;
-  const start = (startRaw ?? "").trim().toUpperCase();
-  const finish = (finishRaw ?? "").trim().toUpperCase();
+  const start = speedRunStartRaw(row, runId).trim().toUpperCase();
+  const finish = speedRunFinishRaw(row, runId).trim().toUpperCase();
   if (start === "DNS" || finish === "DNS") return "DNS";
   if (start === "DNF" || finish === "DNF") return "DNF";
   return null;
@@ -561,42 +559,34 @@ export function normalizeSpeedBestMode(raw: unknown): SpeedBestMode {
   return raw === "best-2-of-3" ? "best-2-of-3" : "fastest-run";
 }
 
-/** UI / print labels for the three speed timing slots + Best column. */
+/** UI / print labels for speed timing slots + Best column. Trial never counts. */
 export function speedRunLabels(mode: SpeedBestMode = "fastest-run"): {
   trial: string;
   run1: string;
   run2: string;
+  run3: string;
   best: string;
 } {
-  if (mode === "best-2-of-3") {
-    return {
-      trial: "1st Run",
-      run1: "2nd Run",
-      run2: "3rd Run",
-      best: "Best 2 of 3",
-    };
-  }
   return {
     trial: "Trial",
     run1: "1st Run",
     run2: "2nd Run",
-    best: "Best Time",
+    run3: "3rd Run",
+    best: mode === "best-2-of-3" ? "Best 2 of 3" : "Best Time",
   };
 }
 
 /**
- * Best Time for classification:
- * - `fastest-run`: faster of 1st / 2nd (Trial excluded)
- * - `best-2-of-3`: sum of the two fastest among all three timed runs (needs ≥2 times)
+ * Best Time for classification (Trial always excluded):
+ * - `fastest-run`: faster of 1st / 2nd
+ * - `best-2-of-3`: sum of the two fastest among 1st / 2nd / 3rd (needs ≥2 times)
  */
 export function getSpeedBestFromRunsMs(
   row: Entry,
   mode: SpeedBestMode = "fastest-run",
 ): number | null {
   if (mode === "best-2-of-3") {
-    const times = (
-      ["trial", "run1", "run2"] as const
-    )
+    const times = (["run1", "run2", "run3"] as const)
       .map((id) => getSpeedRunDurationMs(row, id))
       .filter((t): t is number => t != null)
       .sort((a, b) => a - b);
@@ -616,6 +606,7 @@ export type SpeedFinalRankRow = {
   trial: number | null;
   run1: number | null;
   run2: number | null;
+  run3: number | null;
   bestFromRuns: number | null;
   /** Final Best/Total shown in the table. */
   bestDisplay: number | null;
@@ -627,7 +618,7 @@ export type SpeedFinalRankRow = {
 /**
  * Final order: (0) classified by Best Time, (1) started but no Best yet.
  * Non-starters (Start=No) are omitted from official final.
- * Scoring depends on `mode` (`fastest-run` vs `best-2-of-3`).
+ * Scoring depends on `mode` (`fastest-run` vs `best-2-of-3`). Trial never counts.
  */
 export function buildSpeedFinalRanking(
   rows: Entry[],
@@ -639,13 +630,16 @@ export function buildSpeedFinalRanking(
       const trial = getSpeedRunDurationMs(row, "trial");
       const run1 = getSpeedRunDurationMs(row, "run1");
       const run2 = getSpeedRunDurationMs(row, "run2");
+      const run3 = getSpeedRunDurationMs(row, "run3");
       const hasResult =
         trial != null ||
         run1 != null ||
         run2 != null ||
+        run3 != null ||
         getSpeedRunOutcomeLabel(row, "trial") != null ||
         getSpeedRunOutcomeLabel(row, "run1") != null ||
-        getSpeedRunOutcomeLabel(row, "run2") != null;
+        getSpeedRunOutcomeLabel(row, "run2") != null ||
+        getSpeedRunOutcomeLabel(row, "run3") != null;
       const bestFromRuns = getSpeedBestFromRunsMs(row, mode);
       let tier: 0 | 1 | 2 | 3;
       if (nonStarter) tier = 3;
@@ -659,6 +653,7 @@ export function buildSpeedFinalRanking(
         trial,
         run1,
         run2,
+        run3,
         bestFromRuns,
         bestDisplay,
         tier,
@@ -675,6 +670,49 @@ export function buildSpeedFinalRanking(
       }
       return a.row.startNumber - b.row.startNumber;
     });
+}
+
+/** Persist 3rd-run clocks in Event.algeTriggerCountByKey (no Prisma column). */
+export type Run3TimesMap = Record<string, { start: string; finish: string }>;
+
+export function normalizeRun3TimesMap(raw: unknown): Run3TimesMap {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const out: Run3TimesMap = {};
+  for (const [id, value] of Object.entries(raw as Record<string, unknown>)) {
+    const entryId = id.trim();
+    if (!entryId || !value || typeof value !== "object" || Array.isArray(value)) {
+      continue;
+    }
+    const o = value as Record<string, unknown>;
+    out[entryId] = {
+      start: typeof o.start === "string" ? o.start : "",
+      finish: typeof o.finish === "string" ? o.finish : "",
+    };
+  }
+  return out;
+}
+
+export function buildRun3TimesMap(entries: Entry[]): Run3TimesMap {
+  const out: Run3TimesMap = {};
+  for (const e of entries) {
+    const start = e.run3StartTime ?? "";
+    const finish = e.run3FinishTime ?? "";
+    if (!start && !finish) continue;
+    out[e.id] = { start, finish };
+  }
+  return out;
+}
+
+export function applyRun3Times(
+  entry: Entry,
+  map: Run3TimesMap | undefined,
+): Entry {
+  const t = map?.[entry.id];
+  return {
+    ...entry,
+    run3StartTime: t?.start ?? entry.run3StartTime ?? "",
+    run3FinishTime: t?.finish ?? entry.run3FinishTime ?? "",
+  };
 }
 
 /**
