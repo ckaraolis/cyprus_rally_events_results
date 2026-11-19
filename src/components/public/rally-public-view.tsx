@@ -747,8 +747,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
               <img
                 src={normalizedLogoUrl}
                 alt={`${event.name} logo`}
-                className="mb-4 h-auto w-full max-w-[300px] rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1 object-contain"
-                style={{ aspectRatio: "1333 / 537" }}
+                className="mb-4 h-auto max-h-48 w-auto max-w-[300px] rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1 object-contain"
                 loading="lazy"
               />
             ) : null}
@@ -806,8 +805,7 @@ export function RallyPublicView({ site, event: initialEvent, topCrumb }: Props) 
                 <img
                   src={normalizedLogoUrl}
                   alt={`${event.name} logo`}
-                  className="mt-2 h-auto w-full max-w-[300px] rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1 object-contain"
-                  style={{ aspectRatio: "1333 / 537" }}
+                  className="mt-2 h-auto max-h-48 w-auto max-w-[300px] rounded border border-[var(--ewrc-border)] bg-[var(--ewrc-surface-raised)] p-1 object-contain"
                   loading="lazy"
                 />
               ) : null}

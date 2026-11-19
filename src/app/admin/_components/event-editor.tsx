@@ -3057,7 +3057,7 @@ export function EventEditor({ event: initial }: Props) {
               <img
                 src={meta.logoUrl.trim()}
                 alt="Rally logo preview"
-                className="mt-3 h-16 w-auto rounded border border-zinc-200 bg-white p-1 dark:border-zinc-700"
+                className="mt-3 h-auto max-h-40 w-auto max-w-[280px] rounded border border-zinc-200 bg-white p-1 object-contain dark:border-zinc-700"
                 loading="lazy"
               />
             ) : null}
